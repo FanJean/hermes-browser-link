@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><title>复杂界面夹具</title>
+<body>
+<section id="spa"><button id="replace">更新行</button><button id="save">保存</button></section>
+<section id="shadow"><div id="component"></div></section>
+<section id="frames"><iframe id="inner" title="同源内页"></iframe><iframe title="跨域内页" src="https://cross-origin.example.test/"></iframe></section>
+<section id="inferred"><div id="pointer" style="cursor:pointer">推断点击</div><div style="cursor:pointer"><span>继承指针</span></div><a href="#x"><span style="cursor:pointer">链接内文字</span></a></section>
+<section id="custom"><div id="combo" role="combobox" aria-label="地区" aria-controls="options" aria-expanded="false">选择地区</div><div id="options" role="listbox"><div role="option" data-value="cn">中国</div></div></section>
+<section id="fields"><input id="controlled" aria-label="受控输入"><div id="editor" contenteditable="true" aria-label="正文"></div></section>
+<section id="virtual"><div role="listbox" style="height:80px;overflow:auto"><div role="option">项目一</div></div></section>
+<section id="tables"><div role="grid"><div role="row"><div role="gridcell">编号</div><div role="gridcell">名称</div></div></div><div data-ui-name="Body.Row"><span>1</span><span>示例</span></div></section>
+<section id="expanded"><details><summary>更多信息</summary><button>折叠内容</button></details><button aria-expanded="false">展开菜单</button></section>
+<section id="canvas"><canvas width="100" height="50"></canvas></section>
+</body></html>

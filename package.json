@@ -1,0 +1,53 @@
+{
+  "name": "hermes-browser-link",
+  "version": "1.4.4",
+  "private": true,
+  "description": "Hermes Agent plugin for authorized automation in existing Chrome and Edge browsers over local Native Messaging.",
+  "type": "module",
+  "author": "FanJean",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FanJean/hermes-browser-link.git"
+  },
+  "homepage": "https://github.com/FanJean/hermes-browser-link#readme",
+  "bugs": {
+    "url": "https://github.com/FanJean/hermes-browser-link/issues"
+  },
+  "keywords": [
+    "hermes",
+    "browser-automation",
+    "chrome-extension",
+    "native-messaging",
+    "ai-agent",
+    "edge-extension",
+    "hermes-plugin",
+    "local-browser"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "python3 scripts/test-core.py",
+    "check:js": "node scripts/check-runtime.mjs",
+    "check:manifest": "node scripts/check-runtime.mjs --manifest",
+    "check:docs": "node scripts/check-bridge-docs.mjs",
+    "lint": "eslint .",
+    "build": "node native-extension/build.mjs",
+    "dev:sync": "node scripts/dev-sync-local.mjs",
+    "dev:watch": "node scripts/dev-watch-desktop.mjs",
+    "package": "node scripts/package-executor.mjs",
+    "verify": "python3 scripts/verify-v1.1-offline.py",
+    "check:public": "bash scripts/check-public-release.sh"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "@tanstack/react-query": "5.101.2",
+    "eslint": "^9",
+    "eslint-plugin-security": "^4.0.1",
+    "jsdom": "^30.0.1",
+    "linkedom": "0.18.12",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  }
+}

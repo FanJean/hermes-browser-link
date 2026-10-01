@@ -1,0 +1,105 @@
+// UI coordinator only. The native/extension authority must validate live scope and
+// register approval-panel.html as a trusted sender before dispatching any decision.
+const PANEL = 'approval-panel.html';
+// 中文注释：调试命令可能附带多个子框架来源，审批按钮须保留可见空间。
+const WIDTH = 420, HEIGHT = 450;
+
+export function isApprovalPanelSender(sender, runtimeId, panelWindowId, panelTabId) {
+ return !!sender && sender.id === runtimeId && sender.url === `chrome-extension://${runtimeId}/${PANEL}`
+  && Number.isInteger(panelWindowId) && sender.tab?.windowId === panelWindowId
+  && sender.tab?.id === panelTabId;
+}
+
+function valid(r, instanceId) {
+ if (!r || typeof r !== 'object' || typeof r.id !== 'string' || !r.id || r.id.length > 128
+  || r.instanceId !== instanceId || typeof r.taskId !== 'string' || !r.taskId
+  || !Number.isSafeInteger(r.generation) || r.generation < 1
+  || (r.modeGeneration!==undefined && (!Number.isSafeInteger(r.modeGeneration)||r.modeGeneration<1))
+  || (r.tabId!==null&&(!Number.isInteger(r.tabId)||r.tabId<0)) || !Number.isInteger(r.windowId)
+  || typeof r.action !== 'string' || !r.action || typeof r.digest !== 'string' || !r.digest
+  || !['本次操作','此任务','本任务此网站读取'].includes(r.scope) || !Number.isFinite(r.expiresAt)
+  || (r.mode!==undefined && r.mode!=='smart')
+  || (r.kind!==undefined && !(r.kind==='manual_input' && ['password','payment','otp','sensitive'].includes(r.fieldKind)))
+  || typeof r.taskTitle !== 'string' || !r.taskTitle) return false;
+ try { const u = new URL(r.origin); const read=r.readOrigin===undefined?null:new URL(r.readOrigin);return ['http:','https:'].includes(u.protocol) && !u.username&&!u.password&&u.origin===r.origin
+  &&(!read||['http:','https:'].includes(read.protocol)&&!read.username&&!read.password&&read.origin===r.readOrigin); }
+ catch { return false; }
+}
+const identity = r => JSON.stringify([r.instanceId,r.taskId,r.generation,r.modeGeneration,r.tabId,r.windowId,r.origin,r.readOrigin,r.action,r.scope,r.expiresAt,r.digest,r.taskTitle,r.kind,r.fieldKind]);
+
+export function createApprovalNotifier({chrome,instanceId,now=()=>Date.now(),panelPath=PANEL}={}) {
+ if (!chrome?.runtime?.id || panelPath !== PANEL || !instanceId) throw Error('invalid notifier setup');
+ const requests = new Map(), attempted = new Map(), settled = new Map(); let active=null, panel=null, serial=Promise.resolve(), disposed=false;
+ const badge = async () => { const count=requests.size,unknown=[...requests.values()].some(r=>r.unknown);await chrome.action?.setBadgeText?.({text:unknown?'!':count?String(count):''}); await chrome.action?.setTitle?.({title:unknown?'浏览器批准结果待核查':count?'有待处理的浏览器批准':'Hermes 浏览器'}); };
+ const close = async () => { const old=panel;panel=null;if(old)try{await chrome.windows.remove(old.windowId);}catch{} };
+ async function display() {
+  if(disposed || active || panel)return;
+  const r=[...requests.values()].find(x=>!x.later&&!attempted.has(x.id));
+  if(!r)return;
+  active=r.id;attempted.set(r.id,identity(r));
+  try {
+   // 中文注释：新建工作页尚无租约标签，审批仅绑定当前浏览器窗口与任务。
+   if(r.tabId!==null){const tab=await chrome.tabs.get(r.tabId);if(tab?.windowId!==r.windowId||new URL(tab.url).origin!==r.origin)throw Error('tab scope changed');}
+   const target=await chrome.windows.get(r.windowId);
+   if(target.id!==r.windowId||target.type!=='normal')throw Error('wrong target window');
+   const focused=await chrome.windows.update(r.windowId,{focused:true});
+   if(focused?.id!==r.windowId||focused.focused!==true)throw Error('focus unverified');
+   const manual=r.kind==='manual_input';
+   // The person must type into the page: show that tab and keep the field visible.
+   if(manual&&r.tabId!==null)await chrome.tabs.update(r.tabId,{active:true});
+   const created=await chrome.windows.create({url:chrome.runtime.getURL(PANEL),type:'popup',focused:true,width:WIDTH,height:HEIGHT,
+    left:Math.round(manual?target.left+target.width-WIDTH-24:target.left+(target.width-WIDTH)/2),
+    top:Math.round(manual?target.top+80:target.top+(target.height-HEIGHT)/2)});
+   if(!Number.isInteger(created?.id)||!Number.isInteger(created.tabs?.[0]?.id)||created.focused!==true){
+    if(Number.isInteger(created?.id))try{await chrome.windows.remove(created.id);}catch{}
+    throw Error('panel not verifiable');
+   }
+   panel={windowId:created.id,tabId:created.tabs[0].id};
+  }catch { active=null; /* Badge remains the fallback; do not claim focus. */ }
+ }
+ const run=fn=>{const result=serial.catch(()=>{}).then(fn);serial=result.catch(()=>{});return result;};
+ return {
+  sync(incoming) {return run(async()=>{
+   if(disposed)throw Error('notifier disposed');
+   if(!Array.isArray(incoming))throw Error('invalid request list');
+   const next=new Map();for(const r of incoming){if(!valid(r,instanceId))throw Error('invalid approval scope');if(r.expiresAt<=now())continue;if(next.has(r.id)&&identity(next.get(r.id))!==identity(r))throw Error('conflicting approval id');next.set(r.id,{...r});}
+   for(const [id,old] of requests){const fresh=next.get(id);if(fresh&&identity(fresh)===identity(old))fresh.later=old.later;else if(active===id){await close();active=null;}}
+   for(const [id,stamp] of attempted)if(!next.has(id)||identity(next.get(id))!==stamp)attempted.delete(id);
+   for(const [id,entry] of settled)if(!next.has(id)||identity(next.get(id))!==entry.stamp)settled.delete(id);
+   requests.clear();for(const [id,r] of next){
+    if(settled.get(id)?.state==='done')continue;
+    if(settled.get(id)?.state==='unknown'){r.unknown=true;r.later=true;}
+    requests.set(id,r);
+   }
+   await badge();await display();
+  });},
+  view(){const r=requests.get(active);return r?{...r}:null;},
+  viewFor(sender){
+   if(!panel||!isApprovalPanelSender(sender,chrome.runtime.id,panel.windowId,panel.tabId))return null;
+   const r=requests.get(active);if(!r||r.expiresAt<=now())return null;
+   const {id,taskTitle,origin,readOrigin,action,scope,expiresAt,kind,fieldKind}=r;
+   return {id,taskTitle,origin,action,scope,expiresAt,...(readOrigin?{readOrigin}:{}),...(kind?{kind,fieldKind}:{})};
+  },
+  panel(){return panel&&{...panel};},
+  pending(){return [...requests.values()].map(r=>({...r}));},
+  status(){return {kind:[...requests.values()].some(r=>r.unknown)?'unknown':requests.size?'waiting':'idle',pendingCount:requests.size,panelOpen:!!panel};},
+  isSender(sender){return !!panel && isApprovalPanelSender(sender,chrome.runtime.id,panel.windowId,panel.tabId);},
+  decide({sender,requestId,decision,verify,dispatch}={}) {return run(async()=>{
+   if(!panel||!isApprovalPanelSender(sender,chrome.runtime.id,panel.windowId,panel.tabId))throw Error('untrusted panel sender');
+   const r=requests.get(requestId);if(!r||active!==requestId||r.expiresAt<=now())throw Error('stale approval');
+   if(!['approve','reject','later'].includes(decision))throw Error('invalid decision');
+   if(decision!=='later'){
+    if(typeof verify!=='function'||typeof dispatch!=='function'||await verify({...r})!==true)throw Error('stale approval scope');
+    // No replay on missing response: a dispatched decision may have taken effect.
+    settled.set(r.id,{stamp:identity(r),state:'unknown'});
+    try{await dispatch({...r},decision);settled.set(r.id,{stamp:identity(r),state:'done'});}catch(e){r.later=true;r.unknown=true;await close();active=null;await badge();await display();throw e;}
+    requests.delete(r.id);
+   }else r.later=true;
+   await close();active=null;await badge();await display();
+   return {decision,requestId};
+  });},
+  panelClosed(windowId){return run(async()=>{if(panel?.windowId!==windowId)return;panel=null;active=null;await display();});},
+  openPending(id){return run(async()=>{const r=requests.get(id);if(!r||r.expiresAt<=now())throw Error('stale approval');if(r.unknown)throw Error('unknown outcome; reconcile first');r.later=false;attempted.delete(id);if(active){await close();active=null;}await display();});},
+  dispose(){return run(async()=>{disposed=true;requests.clear();attempted.clear();settled.clear();active=null;await close();await badge();});}
+ };
+}

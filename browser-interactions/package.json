@@ -1,0 +1,1 @@
+{"name":"hermes-browser-interactions","private":true,"type":"module","scripts":{"test":"node --test test/*.test.mjs","acceptance":"node test/acceptance.mjs"},"devDependencies":{"playwright-core":"^1.58.0"}}

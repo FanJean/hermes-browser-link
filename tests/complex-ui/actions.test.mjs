@@ -1,0 +1,104 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {JSDOM} from 'jsdom';
+import {semanticWorldDeclaration} from '../../native-extension/core.mjs';
+const html=readFileSync(new URL('./fixture.html',import.meta.url),'utf8');
+function setup(){
+ const dom=new JSDOM(html,{url:'https://fixture.example.test/',runScripts:'outside-only',pretendToBeVisual:true});
+ const {window}=dom,document=window.document;
+ Object.defineProperty(window,'innerWidth',{configurable:true,value:800});Object.defineProperty(window,'innerHeight',{configurable:true,value:600});
+ window.HTMLElement.prototype.getBoundingClientRect=()=>({left:20,top:20,right:120,bottom:50,width:100,height:30});
+ window.HTMLElement.prototype.getClientRects=()=>[{width:100,height:30}];
+ window.HTMLElement.prototype.scrollIntoView=function(){};
+ let hit=null;document.elementFromPoint=()=>hit;
+ const call=window.eval(`(${semanticWorldDeclaration})`),binding={taskId:'task',documentId:'loader',leaseId:'lease'};
+ const find=(name,roles)=>{const page=call('semantic_snapshot',{binding,options:{mode:'interactive',query:name,roles,budget:5000}});const item=page.items.find(row=>row.name===name);assert.ok(item,name);hit=document.querySelector(`#${({地区:'combo',受控输入:'controlled',正文:'editor',保存:'save'})[name]}`)||null;return {binding,snapshotId:page.snapshotId,ref:item.ref};};
+ return {dom,window,document,call,binding,find,setHit:node=>{hit=node;},close(){dom.window.close();}};
+}
+
+test('受控输入与富文本填写派发事件并核对读回值，回执不含输入内容',()=>{
+ const f=setup();try{
+  let events=0;f.document.querySelector('#controlled').addEventListener('input',()=>events++);
+  const input=f.find('受控输入',['textbox']);const result=f.call('ref_fill',{...input,text:'私有测试值'});
+  assert.equal(result.verified,true);assert.equal(events,1);assert.equal(f.document.querySelector('#controlled').value,'私有测试值');
+  assert.doesNotMatch(JSON.stringify(result),/私有测试值/);
+  const editor=f.find('正文',['textbox']);f.setHit(f.document.querySelector('#editor'));
+  const rich=f.call('ref_fill',{...editor,text:'编辑内容'});assert.equal(rich.verified,true);
+  assert.equal(f.document.querySelector('#editor').textContent,'编辑内容');
+ }finally{f.close();}
+});
+
+test('portal 组合框选项定位和同文档引用重定位',()=>{
+ const f=setup();try{
+  const combo=f.find('地区',['combobox']);f.setHit(f.document.querySelector('#combo'));
+  const plan=f.call('plan_ref_select_option',{...combo,by:'value',values:['cn']});assert.equal(plan.kind,'aria');
+  const save=f.find('保存',['button']);f.document.querySelector('#save').outerHTML='<button id="save">保存</button>';
+  f.setHit(f.document.querySelector('#save'));assert.equal(f.call('confirm_ref',save).confirmed,true);
+  assert.equal(f.call('ref_relocation',save).relocated,true);
+ }finally{f.close();}
+});
+
+test('不可见目标居中滚动，固定在视口外的浮层目标直接拒绝',()=>{
+ // 中文注释：滚动只发生在目标初始不可操作时，且固定浮层不能靠页面滚动修复。
+ const f=setup();try{
+  const save=f.find('保存',['button']),button=f.document.querySelector('#save');
+  let top=700,blocks=[];
+  button.getBoundingClientRect=()=>({left:20,top,right:120,bottom:top+30,width:100,height:30});
+  button.scrollIntoView=options=>{blocks.push(options.block);top=250;};
+  f.setHit(button);
+  const revealed=f.call('reveal_ref',save);
+  assert.equal(revealed.scrolled,true);assert.deepEqual(blocks,['center']);
+  f.call('reveal_ref',save);assert.deepEqual(blocks,['center']);
+  top=700;button.style.position='fixed';
+  assert.throws(()=>f.call('reveal_ref',save),/TARGET_OUT_OF_VIEWPORT/);
+  assert.deepEqual(blocks,['center']);
+ }finally{f.close();}
+});
+
+test('开放 Shadow DOM 与同源 iframe 中的按钮可通过目标命中确认',()=>{
+ const f=setup();try{
+  const host=f.document.querySelector('#component'),shadow=host.attachShadow({mode:'open'});
+  shadow.innerHTML='<button aria-label="影子操作">影子操作</button>';
+  const shadowButton=shadow.querySelector('button');shadow.elementFromPoint=()=>shadowButton;
+  let page=f.call('semantic_snapshot',{binding:f.binding,options:{mode:'interactive',composed:true,query:'影子操作',budget:5000}});
+  f.setHit(host);assert.equal(f.call('confirm_ref',{binding:f.binding,snapshotId:page.snapshotId,ref:page.items[0].ref}).confirmed,true);
+  const frame=f.document.querySelector('#inner');frame.contentDocument.body.innerHTML='<button aria-label="框架操作">框架操作</button>';
+  frame.contentDocument.defaultView.HTMLElement.prototype.getBoundingClientRect=()=>({left:20,top:20,right:120,bottom:50,width:100,height:30});
+  frame.contentDocument.defaultView.HTMLElement.prototype.getClientRects=()=>[{width:100,height:30}];
+  Object.defineProperty(frame,'offsetWidth',{value:100});Object.defineProperty(frame,'offsetHeight',{value:30});
+  frame.contentDocument.elementFromPoint=()=>frame.contentDocument.querySelector('button');
+  page=f.call('semantic_snapshot',{binding:f.binding,options:{mode:'interactive',composed:true,query:'框架操作',budget:5000}});
+  f.setHit(frame);assert.equal(f.call('confirm_ref',{binding:f.binding,snapshotId:page.snapshotId,ref:page.items[0].ref}).confirmed,true);
+ }finally{f.close();}
+});
+
+test('推断点击、虚拟选项、表格行和折叠入口均可解析并确认',()=>{
+ const f=setup();try{
+  const cases=[['推断点击','button','#pointer'],['项目一','option','#virtual [role=option]'],['更多信息','button','summary']];
+  for(const [name,role,selector] of cases){
+   const page=f.call('semantic_snapshot',{binding:f.binding,options:{mode:'interactive',query:name,roles:[role],budget:5000}});
+   const item=page.items.find(row=>row.name===name);assert.ok(item,name);
+   f.setHit(f.document.querySelector(selector));
+   assert.equal(f.call('confirm_ref',{binding:f.binding,snapshotId:page.snapshotId,ref:item.ref}).confirmed,true);
+  }
+  const rows=f.call('semantic_snapshot',{binding:f.binding,options:{mode:'table',query:'示例',budget:5000}});
+  const row=rows.items.find(item=>item.cells?.includes('示例'));assert.ok(row);
+  f.setHit(f.document.querySelector('[data-ui-name="Body.Row"]'));
+  assert.equal(f.call('confirm_ref',{binding:f.binding,snapshotId:rows.snapshotId,ref:row.ref}).confirmed,true);
+ }finally{f.close();}
+});
+
+test('遮挡和不可操作状态在派发前拒绝，遮挡摘要不含输入值',()=>{
+ const f=setup();try{
+  const save=f.find('保存',['button']),block=f.document.createElement('div');
+  block.setAttribute('role','dialog');block.innerHTML='<button aria-label="关闭">关闭</button><input value="SECRET_VALUE">';f.document.body.append(block);
+  f.setHit(block);assert.throws(()=>f.call('confirm_ref',save),error=>{
+   if(!error.message.startsWith('TARGET_OCCLUDED')||error.message.includes('SECRET_VALUE'))return false;
+   const summary=JSON.parse(decodeURIComponent(error.message.split('|')[1]));
+   return summary.role==='dialog'&&summary.closeButton?.name==='关闭'&&typeof summary.closeButton.ref==='string';
+  });
+  f.setHit(f.document.querySelector('#save'));f.document.querySelector('#save').setAttribute('aria-disabled','true');
+  assert.throws(()=>f.call('confirm_ref',save),/TARGET_DISABLED/);
+ }finally{f.close();}
+});

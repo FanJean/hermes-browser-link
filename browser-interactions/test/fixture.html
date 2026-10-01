@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>Interactions isolated acceptance fixture</title>
+<style>body{margin:0;height:2200px;font:16px sans-serif}#source,#drop,#htmlSource,#htmlDrop,#secret,#covered,#cover{position:absolute;box-sizing:border-box}#source{left:80px;top:700px;width:90px;height:70px;background:#49b;touch-action:none}#drop{left:360px;top:700px;width:140px;height:100px;border:3px solid green}#htmlSource{left:80px;top:850px;width:90px;height:60px;background:orange}#htmlDrop{left:360px;top:850px;width:140px;height:80px;border:3px solid purple}#secret{left:550px;top:700px;width:150px;height:40px}#covered,#cover{left:550px;top:800px;width:100px;height:70px}#cover{background:gray;z-index:5}</style>
+<div id="source">Pointer</div><div id="drop">Pointer target</div><div id="htmlSource" draggable="true">HTML5</div><div id="htmlDrop">HTML5 target</div><input id="secret" type="password"><button id="covered">Covered</button><div id="cover">Overlay</div>
+<script>
+window.results={pointer:false,html5:false,events:[]};let active=false;
+source.addEventListener('pointerdown',e=>{active=true;source.setPointerCapture(e.pointerId);results.events.push({type:e.type,trusted:e.isTrusted,x:e.clientX,y:e.clientY});});
+source.addEventListener('pointermove',e=>{if(active)results.events.push({type:e.type,trusted:e.isTrusted,x:e.clientX,y:e.clientY});});
+source.addEventListener('pointerup',e=>{if(!active)return;active=false;const r=drop.getBoundingClientRect();results.pointer=e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom;results.events.push({type:e.type,trusted:e.isTrusted,x:e.clientX,y:e.clientY});drop.textContent=results.pointer?'Pointer OK':'Pointer failed';});
+htmlSource.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain','fixture-only');results.events.push({type:e.type,trusted:e.isTrusted});});
+htmlDrop.addEventListener('dragover',e=>e.preventDefault());
+htmlDrop.addEventListener('drop',e=>{e.preventDefault();results.html5=e.dataTransfer.getData('text/plain')==='fixture-only';results.events.push({type:e.type,trusted:e.isTrusted});htmlDrop.textContent=results.html5?'HTML5 OK':'HTML5 failed';});
+</script>

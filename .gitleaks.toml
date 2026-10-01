@@ -1,0 +1,30 @@
+title = "Hermes Browser Link secret scanning"
+[extend]
+useDefault = true
+
+# 中文注释：只豁免已核对的固定合成测试值，不忽略整个测试目录或凭据规则。
+[[allowlists]]
+description = "Fixed synthetic download IDs and temporary Vault fixtures"
+condition = "AND"
+regexTarget = "secret"
+targetRules = ["generic-api-key"]
+paths = ['''(^|/)tests/v1\.1-advanced/(downloads\.test\.mjs|test_advanced\.py|test_downloads\.py|real-official\.mjs)$''']
+regexes = ['''^(0123456789abcdef|fedcba9876543210|JBSWY3DPEHPK3PXP|synthetic-vault-password-2026|foreign-secret-2026|saved-secret-2026|adv-secret-2026)$''']
+
+# 中文注释：仅豁免该 manifest 中固定扩展 ID 使用的完整公钥，不豁免其他字段。
+[[allowlists]]
+description = "Fixed extension identity public key"
+condition = "AND"
+regexTarget = "secret"
+targetRules = ["generic-api-key"]
+paths = ['''^native-extension/manifest\.json$''']
+regexes = ['''^MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2sE/OUnb3h/Xji1/55NeU/P\+ER81LNaaqgcCxf10CMVUEiENVgi1MGwkInekbI1iMUWtdGv1wSXd5PIEfiQJJaytHOBFONHkHQA\+g92B3xxLl0UtCAG38sNegv41zlUgfm6nHoyd3GprdQEKH9S76NqMSeQNloPYodTfyQ2JNKZ2GfYpiSwfClD5nsVC3RDn9WTbVcgyWGO8m2vCbl2Pa47FjNbiqPBZ0serHX\+RLpJ3yfxxbDWVYH2aMIMy1bjHa6Cp1GEQI1WhOLvGaTtn9DFYtVxWKpqjVHOfoscLZHqRNBIK2OBDWlz4C4iga9yYGWUaQceoiQWzeCDX/cq\+PwIDAQAB$''']
+
+# 中文注释：只放行这些已核对的固定夹具值；真实凭据仍触发原规则。
+[[allowlists]]
+description = "Fixed synthetic native download and Vault fixtures"
+condition = "AND"
+regexTarget = "secret"
+targetRules = ["generic-api-key"]
+paths = ['''^tests/native-v2/real-helper\.py$''', '''^native-bridge/tests/test_fd_lifecycle\.py$''', '''^tests/v1\.1-advanced/real-files-vault\.mjs$''']
+regexes = ['''^(synthetic-vault-password-2026|0123456789abcdef)$''']

@@ -1,0 +1,64 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not include real cookies, passwords, screenshots of real accounts or personal file paths.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "1.4.4 or a commit hash"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, browser and version, Hermes version
+      placeholder: "macOS 16.1, Chrome 153, Hermes 0.21.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Connection / installation
+        - Authorization / approvals
+        - Page reading (snapshots)
+        - Page actions
+        - Overlay / highlight
+        - Python scripting
+        - Uploads / downloads
+        - Advanced mode / official tool overrides
+        - Hermes Desktop page
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include the tool call, the returned `code` and whether `outcome_unknown` was set.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: A minimal page or public site plus the steps, if possible.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Relevant structured diagnostic codes. Review and redact paths and identifiers before attaching logs.
+      render: text

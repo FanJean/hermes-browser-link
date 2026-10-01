@@ -1,0 +1,58 @@
+name: browser-link
+version: 1.4.4
+manifest_version: 2
+api_version: 1
+requires_hermes: ">=0.21.4"
+description: Connect Hermes to existing Chrome and Edge browsers through an authorized Native Messaging bridge.
+author: FanJean
+license: MIT
+tags: [browser, automation, native-messaging, desktop]
+provides_tools:
+  - browser_shared_health
+  - browser_shared_browsers
+  - browser_shared_create
+  - browser_shared_list
+  - browser_shared_get
+  - browser_shared_artifacts
+  - browser_shared_run
+  - browser_shared_cancel
+  - browser_shared_resume
+  - browser_shared_close
+  - browser_shared_downloads
+  - browser_shared_open
+  - browser_shared_use_tab
+  - browser_shared_script
+  - browser_site_search
+  - browser_site_manage
+  - browser_site_run
+  - browser_shared_reference
+  - browser_shared_doctor
+hooks:
+  - pre_tool_call
+  # 中文注释：轮次完成启动宽限；中断、会话与子代理结束按实际钩子清理。
+  - on_session_finalize
+  - subagent_stop
+  - on_session_end
+  - agent_loop_stopped
+provides_hooks:
+  - pre_tool_call
+  - on_session_finalize
+  - subagent_stop
+  - on_session_end
+  - agent_loop_stopped
+python_dependencies: []
+external_dependencies: []
+# Optional, and never implied by installing: when the operator grants this
+# plugin tools.override (Hermes consent flow, or plugins.entries.browser-link
+# .allow_tool_override: true), Hermes' official browser_* tools are routed to the
+# session's bound native task. Unbound sessions keep Hermes' built-in behavior.
+# No Hermes source is patched.
+capabilities:
+  - tools.override
+# 中文注释：Vault 接管需要操作者单独开启；默认关闭。
+config_schema:
+  vault_tools.enabled:
+    type: bool
+    default: false
+    label: 接管官方 Vault 工具
+    description: 默认关闭；启用时还需 tools.override 授权和已就绪的浏览器任务。

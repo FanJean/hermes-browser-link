@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser.diagnostics/v1",
+  "title": "Browser diagnostics event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "timestamp",
+    "component",
+    "event_type",
+    "task_id",
+    "request_id",
+    "connection_id",
+    "generation",
+    "status",
+    "duration_ms",
+    "error_code",
+    "action",
+    "stage"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "browser.diagnostics/v1"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "component": {
+      "enum": [
+        "native_bridge",
+        "mv3_background",
+        "mv3_content",
+        "diagnostics"
+      ]
+    },
+    "event_type": {
+      "enum": [
+        "task_state",
+        "request_state",
+        "connection_state",
+        "action_state",
+        "buffer_state",
+        "sink_state"
+      ]
+    },
+    "task_id": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+        }
+      ]
+    },
+    "request_id": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+        }
+      ]
+    },
+    "connection_id": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+        }
+      ]
+    },
+    "generation": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+        }
+      ]
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "unknown",
+        "connected",
+        "disconnected",
+        "dropped",
+        "rotated",
+        "recovered"
+      ]
+    },
+    "duration_ms": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400000
+        }
+      ]
+    },
+    "error_code": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "enum": [
+            "UNCLASSIFIED_ERROR",
+            "TIMEOUT",
+            "CANCELLED",
+            "DISCONNECTED",
+            "PROTOCOL_ERROR",
+            "VALIDATION_ERROR",
+            "PERMISSION_DENIED",
+            "NOT_FOUND",
+            "CONFLICT",
+            "RATE_LIMITED",
+            "INTERNAL_ERROR",
+            "TRANSPORT_ERROR"
+          ]
+        }
+      ]
+    },
+    "action": {
+      "enum": [
+        null,
+        "tabs",
+        "new_tab",
+        "navigate",
+        "snapshot",
+        "click",
+        "fill",
+        "press",
+        "screenshot",
+        "page.parse",
+        "semantic_snapshot",
+        "frame_catalog",
+        "ref_click",
+        "ref_fill",
+        "ref_press",
+        "ref_set_checked",
+        "ref_select_option",
+        "files.upload",
+        "interaction.capture",
+        "interaction.bounds",
+        "interaction.click",
+        "interaction.drag_coordinates",
+        "interaction.drag_elements",
+        "official.ready_state",
+        "official.goto_url",
+        "official.new_tab",
+        "scroll",
+        "back",
+        "js.evaluate",
+        "cdp.send",
+        "cdp.events",
+        "network.inspect",
+        "images",
+        "console",
+        "dialog"
+      ]
+    },
+    "stage": {
+      "enum": [
+        null,
+        "queue_wait",
+        "settle_wait",
+        "overlay",
+        "target_settle",
+        "highlight",
+        "dispatch",
+        "post_check"
+      ]
+    }
+  }
+}

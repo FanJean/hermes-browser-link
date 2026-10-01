@@ -1,0 +1,2258 @@
+{
+  "cli_execution_contract": {
+    "cli_delegates_to_harness": true,
+    "entry_point": {
+      "command": "browser-use",
+      "target": "browser_use.cli:main"
+    },
+    "fresh_python_process_per_browser_exec_call": true,
+    "harness_imports_helper_exports": true,
+    "helper_description_claims": [
+      "capture_screenshot",
+      "cdp",
+      "click_at_xy",
+      "ensure_real_tab",
+      "fill_input",
+      "goto_url",
+      "js",
+      "new_tab",
+      "page_info",
+      "wait_for_load"
+    ],
+    "helper_description_diff": {
+      "described_but_not_exported": [],
+      "exported_but_not_described": [
+        "close_tab",
+        "current_tab",
+        "dispatch_key",
+        "drain_events",
+        "http_get",
+        "iframe_target",
+        "list_tabs",
+        "press_key",
+        "recording_dir",
+        "scroll",
+        "start_recording",
+        "stop_recording",
+        "switch_tab",
+        "type_text",
+        "upload_file",
+        "wait",
+        "wait_for_element",
+        "wait_for_network_idle"
+      ]
+    },
+    "helper_exports": [
+      "capture_screenshot",
+      "cdp",
+      "click_at_xy",
+      "close_tab",
+      "current_tab",
+      "dispatch_key",
+      "drain_events",
+      "ensure_real_tab",
+      "fill_input",
+      "goto_url",
+      "http_get",
+      "iframe_target",
+      "js",
+      "list_tabs",
+      "new_tab",
+      "page_info",
+      "press_key",
+      "recording_dir",
+      "scroll",
+      "start_recording",
+      "stop_recording",
+      "switch_tab",
+      "type_text",
+      "upload_file",
+      "wait",
+      "wait_for_element",
+      "wait_for_load",
+      "wait_for_network_idle"
+    ],
+    "workspace_helpers": {
+      "callable_names_runtime_defined": true,
+      "evidence": [
+        "tests/v1.1-python/test_distributed_helper.py",
+        "docs/python-scripting.md"
+      ],
+      "loaded_from_workspace": true,
+      "loader_source": "browser_harness/helpers.py",
+      "path": "agent_helpers.py",
+      "reason": "The original CLI dynamically loads public workspace functions, but bridge calls from those functions still inherit the limited supported-helper subset.",
+      "status": "部分"
+    }
+  },
+  "dynamic_schemas": [
+    {
+      "conditions": [
+        "'web_extract' not in available"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "kind": "model_tool_definition_rewriter",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**td['function'], 'description': td['function'].get('description', '') + hint})",
+        "td"
+      ],
+      "source": "model_tools.py",
+      "status": "缺失",
+      "tool": "browser_cdp",
+      "transform": "_rewrite_browser_cdp"
+    },
+    {
+      "conditions": [
+        "'browser_vault_fill' not in available",
+        "td is None"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "kind": "model_tool_definition_rewriter",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**fn, 'description': fn.get('description', '') + _VAULT_NO_PASSWORD_NOTE})",
+        "run",
+        "td",
+        "td if 'terminal' in available else None"
+      ],
+      "source": "model_tools.py",
+      "status": "部分",
+      "tool": "browser_exec",
+      "transform": "_compose_rewriters(_rewrite_browser_exec, _rewrite_input_tool_for_vault)"
+    },
+    {
+      "calls": [
+        "_description_header",
+        "_real_profile_consented",
+        "dict"
+      ],
+      "conditions": [
+        "_real_profile_consented()"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "function": "_dynamic_schema_overrides",
+      "kind": "registry_dynamic_schema_overrides",
+      "line": 749,
+      "reason": "A source-level conditional schema path is present; its runtime-config variants have not all been exercised through the plugin's public model-tool registration.",
+      "returns": [
+        "overrides"
+      ],
+      "signature": "def _dynamic_schema_overrides() -> dict",
+      "source": "tools/browser_use_cli.py",
+      "status": "部分",
+      "tool": "browser_exec",
+      "unresolved": false,
+      "writes": [
+        "overrides['parameters']",
+        "props['local']"
+      ]
+    },
+    {
+      "conditions": [
+        "not web_tools"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "kind": "model_tool_definition_rewriter",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**td['function'], 'description': td['function'].get('description', '') + hint})",
+        "td"
+      ],
+      "source": "model_tools.py",
+      "status": "缺失",
+      "tool": "browser_navigate",
+      "transform": "_rewrite_browser_navigate"
+    },
+    {
+      "conditions": [
+        "'browser_vault_fill' not in available"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "kind": "model_tool_definition_rewriter",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**fn, 'description': fn.get('description', '') + _VAULT_NO_PASSWORD_NOTE})",
+        "td"
+      ],
+      "source": "model_tools.py",
+      "status": "缺失",
+      "tool": "browser_type",
+      "transform": "_rewrite_input_tool_for_vault"
+    },
+    {
+      "conditions": [
+        "'browser_exec' in available",
+        "'browser_type' in available"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "kind": "model_tool_definition_rewriter",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**fn, 'description': fn.get('description', '').replace(_VAULT_INPUT_TOOL_HINT, concrete)})",
+        "td"
+      ],
+      "source": "model_tools.py",
+      "status": "缺失",
+      "tool": "browser_vault_fill",
+      "transform": "_rewrite_browser_vault"
+    },
+    {
+      "conditions": [
+        "'browser_exec' in available",
+        "'browser_type' in available"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "kind": "model_tool_definition_rewriter",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**fn, 'description': fn.get('description', '').replace(_VAULT_INPUT_TOOL_HINT, concrete)})",
+        "td"
+      ],
+      "source": "model_tools.py",
+      "status": "缺失",
+      "tool": "browser_vault_list",
+      "transform": "_rewrite_browser_vault"
+    }
+  ],
+  "inventory_scope": {
+    "browser_launched": false,
+    "cli_helper_surface": "public functions declared by browser_harness.helpers plus its explicit public recorder imports",
+    "compatibility_rule": "A registered name or similarly named project action is not evidence of semantic compatibility.",
+    "hermes_registry_scan": "tools/*.py and tools/*/tool.py; only static registry.register declarations are counted",
+    "runtime_not_imported": true
+  },
+  "model_schema_rewriters": [
+    {
+      "calls": [
+        "_fn_def",
+        "td['function'].get"
+      ],
+      "component_functions": [
+        "_rewrite_browser_cdp"
+      ],
+      "conditions": [
+        "'web_extract' not in available"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "function": "_rewrite_browser_cdp",
+      "name": "browser_cdp",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**td['function'], 'description': td['function'].get('description', '') + hint})",
+        "td"
+      ],
+      "status": "缺失",
+      "transform": "_rewrite_browser_cdp",
+      "unresolved": false,
+      "writes": []
+    },
+    {
+      "calls": [
+        "_fn_def",
+        "fn",
+        "fn.get"
+      ],
+      "component_functions": [
+        "_compose_rewriters",
+        "_rewrite_browser_exec",
+        "_rewrite_input_tool_for_vault"
+      ],
+      "conditions": [
+        "'browser_vault_fill' not in available",
+        "td is None"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "function": "_compose_rewriters(_rewrite_browser_exec, _rewrite_input_tool_for_vault)",
+      "name": "browser_exec",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**fn, 'description': fn.get('description', '') + _VAULT_NO_PASSWORD_NOTE})",
+        "run",
+        "td",
+        "td if 'terminal' in available else None"
+      ],
+      "status": "部分",
+      "transform": "_compose_rewriters(_rewrite_browser_exec, _rewrite_input_tool_for_vault)",
+      "unresolved": false,
+      "writes": []
+    },
+    {
+      "calls": [
+        "' and '.join",
+        "_fn_def",
+        "len",
+        "td['function'].get"
+      ],
+      "component_functions": [
+        "_rewrite_browser_navigate"
+      ],
+      "conditions": [
+        "not web_tools"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "function": "_rewrite_browser_navigate",
+      "name": "browser_navigate",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**td['function'], 'description': td['function'].get('description', '') + hint})",
+        "td"
+      ],
+      "status": "缺失",
+      "transform": "_rewrite_browser_navigate",
+      "unresolved": false,
+      "writes": []
+    },
+    {
+      "calls": [
+        "_fn_def",
+        "fn.get"
+      ],
+      "component_functions": [
+        "_rewrite_input_tool_for_vault"
+      ],
+      "conditions": [
+        "'browser_vault_fill' not in available"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "function": "_rewrite_input_tool_for_vault",
+      "name": "browser_type",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**fn, 'description': fn.get('description', '') + _VAULT_NO_PASSWORD_NOTE})",
+        "td"
+      ],
+      "status": "缺失",
+      "transform": "_rewrite_input_tool_for_vault",
+      "unresolved": false,
+      "writes": []
+    },
+    {
+      "calls": [
+        "_fn_def",
+        "fn.get",
+        "fn.get('description', '').replace"
+      ],
+      "component_functions": [
+        "_rewrite_browser_vault"
+      ],
+      "conditions": [
+        "'browser_exec' in available",
+        "'browser_type' in available"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "function": "_rewrite_browser_vault",
+      "name": "browser_vault_fill",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**fn, 'description': fn.get('description', '').replace(_VAULT_INPUT_TOOL_HINT, concrete)})",
+        "td"
+      ],
+      "status": "缺失",
+      "transform": "_rewrite_browser_vault",
+      "unresolved": false,
+      "writes": []
+    },
+    {
+      "calls": [
+        "_fn_def",
+        "fn.get",
+        "fn.get('description', '').replace"
+      ],
+      "component_functions": [
+        "_rewrite_browser_vault"
+      ],
+      "conditions": [
+        "'browser_exec' in available",
+        "'browser_type' in available"
+      ],
+      "evidence": [
+        "docs/V1.1-OFFICIAL-COMPATIBILITY-PLAN.md",
+        "tests/v1.1-official-actions/test_official_entry.py"
+      ],
+      "function": "_rewrite_browser_vault",
+      "name": "browser_vault_list",
+      "reason": "Hermes conditionally filters or rewrites this schema, but the connector has not verified every live tool-definition variant through the registered model-facing entry.",
+      "returns": [
+        "_fn_def({**fn, 'description': fn.get('description', '').replace(_VAULT_INPUT_TOOL_HINT, concrete)})",
+        "td"
+      ],
+      "status": "缺失",
+      "transform": "_rewrite_browser_vault",
+      "unresolved": false,
+      "writes": []
+    }
+  ],
+  "official_helpers": [
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-python/test_official_bridge.py",
+        "tests/v1.1-python/official_smoke_child.py"
+      ],
+      "line": 242,
+      "name": "capture_screenshot",
+      "reason": "The bridge writes viewport PNG bytes to the original CLI path contract and its synthetic Python handler test verifies screenshot attachment. Full-page capture is explicitly unsupported; no real-browser screenshot behavior is established.",
+      "signature": "def capture_screenshot(path=None, full=False, max_dim=None)",
+      "source": "browser_harness/helpers.py",
+      "status": "部分",
+      "summary": "Save a PNG of the current viewport. Set max_dim=1800 on a 2× display to"
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 53,
+      "name": "cdp",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def cdp(method, session_id=None, **params)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Raw CDP. cdp('Page.navigate', url='...'), cdp('DOM.getDocument', depth=-1)."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 152,
+      "name": "click_at_xy",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def click_at_xy(x, y, button='left', clicks=1)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 332,
+      "name": "close_tab",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def close_tab(target=None)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Close a tab. If `target` is omitted, closes the currently attached tab."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 280,
+      "name": "current_tab",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def current_tab()",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 460,
+      "name": "dispatch_key",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def dispatch_key(selector, key='Enter', event='keypress')",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Dispatch a DOM KeyboardEvent on the matched element."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 58,
+      "name": "drain_events",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def drain_events()",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 341,
+      "name": "ensure_real_tab",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def ensure_real_tab()",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Switch to a real user tab if current is chrome:// / internal / stale."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/host_bridge.py",
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-python/test_official_bridge.py"
+      ],
+      "line": 177,
+      "name": "fill_input",
+      "reason": "An opt-in host capability requires a key-event delivery receipt and is covered by synthetic bridge tests. It is disabled by default; real page event delivery and browser versions remain unverified.",
+      "signature": "def fill_input(selector, text, clear_first=True, timeout=0.0)",
+      "source": "browser_harness/helpers.py",
+      "status": "部分",
+      "summary": "Fill a framework-managed input (React controlled, Vue v-model, Ember tracked)."
+    },
+    {
+      "evidence": [
+        "tests/v1.1-official-actions/test_official_entry.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 130,
+      "name": "goto_url",
+      "reason": "The bound work tab returns a constrained Page.navigate receipt; allowed-origin checks and the absence of the optional domain-skills result prevent claiming the full CLI contract.",
+      "signature": "def goto_url(url)",
+      "source": "browser_harness/helpers.py",
+      "status": "部分",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "docs/python-scripting.md",
+        "executor-plugin/official_adapter/host_bridge.py"
+      ],
+      "line": 478,
+      "name": "http_get",
+      "reason": "This upstream helper performs direct HTTP rather than an action on the selected browser; the connector has no equivalent bridge implementation. It is outside the connector's browser-operation scope.",
+      "signature": "def http_get(url, headers=None, timeout=20.0)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Pure HTTP — no browser. Use for static pages / APIs. Wrap in ThreadPoolExecutor for bulk."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 355,
+      "name": "iframe_target",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def iframe_target(url_substr)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "First iframe target whose URL contains `url_substr`. Use with js(..., target_id=...)."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 440,
+      "name": "js",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def js(expression, target_id=None)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Run JS in the attached tab (default) or inside an iframe target (via iframe_target())."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 265,
+      "name": "list_tabs",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def list_tabs(include_chrome=True)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "tests/v1.1-official-actions/test_official_entry.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 308,
+      "name": "new_tab",
+      "reason": "A connected task-owned work tab returns the real CDP targetId through the official helper path; blank-tab reuse and unrestricted target selection are intentionally not equivalent.",
+      "signature": "def new_tab(url='about:blank')",
+      "source": "browser_harness/helpers.py",
+      "status": "部分",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/host_bridge.py",
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-python/test_official_bridge.py"
+      ],
+      "line": 137,
+      "name": "page_info",
+      "reason": "An opt-in host capability routes and validates the official page_info result shape in the synthetic CLI/host path. It is disabled by default and has not been verified against a real browser.",
+      "signature": "def page_info()",
+      "source": "browser_harness/helpers.py",
+      "status": "部分",
+      "summary": "{url, title, w, h, sx, sy, pw, ph} — viewport + scroll + page size."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 224,
+      "name": "press_key",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def press_key(key, modifiers=0)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Modifiers bitfield: 1=Alt, 2=Ctrl, 4=Meta(Cmd), 8=Shift."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "exported_via": "browser_harness.helpers",
+      "line": 128,
+      "name": "recording_dir",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def recording_dir()",
+      "source": "browser_harness/recorder.py",
+      "status": "缺失",
+      "summary": "Directory of the active recording, or None."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 237,
+      "name": "scroll",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def scroll(x, y, dy=-300, dx=0)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "exported_via": "browser_harness.helpers",
+      "line": 97,
+      "name": "start_recording",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def start_recording(name=None, title=None)",
+      "source": "browser_harness/recorder.py",
+      "status": "缺失",
+      "summary": "Record the session: one screenshot + trace line per action, until"
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "exported_via": "browser_harness.helpers",
+      "line": 115,
+      "name": "stop_recording",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def stop_recording()",
+      "source": "browser_harness/recorder.py",
+      "status": "缺失",
+      "summary": "Stop the active recording. Returns its directory, or None if idle."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 294,
+      "name": "switch_tab",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def switch_tab(target)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 174,
+      "name": "type_text",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def type_text(text)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 471,
+      "name": "upload_file",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def upload_file(selector, path)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Set files on a file input via CDP DOM.setFileInputFiles. `path` is an absolute filepath (use tempfile.mkstemp if needed)."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 364,
+      "name": "wait",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def wait(seconds=1.0)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": ""
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 375,
+      "name": "wait_for_element",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def wait_for_element(selector, timeout=10.0, visible=False)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Poll until querySelector(selector) exists in the DOM, or timeout."
+    },
+    {
+      "evidence": [
+        "tests/v1.1-official-actions/test_official_entry.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 367,
+      "name": "wait_for_load",
+      "reason": "The original helper polls document.readyState through the connected action lane, but only the synthetic path is exercised and other readiness/network-idle helpers are not wired.",
+      "signature": "def wait_for_load(timeout=15.0)",
+      "source": "browser_harness/helpers.py",
+      "status": "部分",
+      "summary": "Poll document.readyState == 'complete' or timeout."
+    },
+    {
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "line": 405,
+      "name": "wait_for_network_idle",
+      "reason": "The helper is callable in the upstream CLI, but no equivalent connector implementation and contract-level test were found; API-name presence is not compatibility.",
+      "signature": "def wait_for_network_idle(timeout=10.0, idle_ms=500)",
+      "source": "browser_harness/helpers.py",
+      "status": "缺失",
+      "summary": "Wait until all in-flight requests finish and no Network.* events arrive for idle_ms ms."
+    }
+  ],
+  "official_tools": [
+    {
+      "availability": {
+        "check_fn": "_routed_check_fn('browser_back')",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {},
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_back",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Navigate back to the previous page in browser history. Requires browser_navigate to be called first.",
+        "name": "browser_back",
+        "parameters": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "11e38b163fcc19456b133ac9d72d7eabcf6e0c26dd10e7f6073d4b10eaad67e3",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_browser_cdp_check",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": null,
+      "handler_expression": "lambda args, **kw: routed_browser_handler('browser_cdp', args, fallback=lambda : browser_cdp(method=args.get('method', ''), params=args.get('params'), target_id=args.get('target_id'), frame_id=args.get('frame_id'), timeout=args.get('timeout', 30.0), task_id=kw.get('task_id')), task_id=kw.get('task_id'), session_id=kw.get('session_id'))",
+      "name": "browser_cdp",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 396,
+      "registration_source": "tools/browser_cdp_tool.py",
+      "schema": {
+        "description": "Send a raw Chrome DevTools Protocol (CDP) command. Escape hatch for browser operations not covered by browser_navigate, browser_click, browser_console, etc.\n\n**Requires a reachable CDP endpoint.** Available when the user has run '/browser connect' to attach to a running Chrome, Brave, Chromium, or Edge browser, or when 'browser.cdp_url' is set in config.yaml. Not currently wired up for cloud backends (Browserbase, Browser Use, Firecrawl) — those expose CDP per session but live-session routing is a follow-up. Camofox is REST-only and will never support CDP. If the tool is in your toolset at all, a CDP endpoint is already reachable.\n\n**CDP method reference:** https://chromedevtools.github.io/devtools-protocol/ — use an available documentation lookup or extraction tool on a method's URL (e.g. '/tot/Page/#method-handleJavaScriptDialog') to look up parameters and return shape.\n\n**Common patterns:**\n- List tabs: method='Target.getTargets', params={}\n- Handle a native JS dialog: method='Page.handleJavaScriptDialog', params={'accept': true, 'promptText': ''}, target_id=<tabId>\n- Get all cookies: method='Network.getAllCookies', params={}\n- Eval in a specific tab: method='Runtime.evaluate', params={'expression': '...', 'returnByValue': true}, target_id=<tabId>\n- Set viewport for a tab: method='Emulation.setDeviceMetricsOverride', params={'width': 1280, 'height': 720, 'deviceScaleFactor': 1, 'mobile': false}, target_id=<tabId>\n\n**Usage rules:**\n- Browser-level methods (Target.*, Browser.*, Storage.*): omit target_id and frame_id.\n- Page-level methods (Page.*, Runtime.*, DOM.*, Emulation.*, Network.* scoped to a tab): pass target_id from Target.getTargets.\n- **Cross-origin iframe scope** (Runtime.evaluate inside an OOPIF, Page.* targeting a frame target, etc.): pass frame_id from the browser_snapshot frame_tree output. This routes through the CDP supervisor's live connection — the only reliable way on Browserbase where stateless CDP calls hit signed-URL expiry.\n- Each stateless call (without frame_id) is independent — sessions and event subscriptions do not persist between calls. For stateful workflows, prefer the dedicated browser tools or use frame_id routing.",
+        "name": "browser_cdp",
+        "parameters": {
+          "properties": {
+            "frame_id": {
+              "description": "Optional. Out-of-process iframe (OOPIF) frame_id from browser_snapshot.frame_tree.children[] where is_oopif=true. When set, routes the call through the CDP supervisor's live session for that iframe. Essential for Runtime.evaluate inside cross-origin iframes, especially on Browserbase where fresh per-call CDP connections can't keep up with signed URL rotation. For same-origin iframes, use parent contentWindow/contentDocument from Runtime.evaluate at the top-level page instead.",
+              "type": "string"
+            },
+            "method": {
+              "description": "CDP method name, e.g. 'Target.getTargets', 'Runtime.evaluate', 'Page.handleJavaScriptDialog'.",
+              "type": "string"
+            },
+            "params": {
+              "additionalProperties": true,
+              "description": "Method-specific parameters as a JSON object. Omit or pass {} for methods that take no parameters.",
+              "properties": {},
+              "type": "object"
+            },
+            "target_id": {
+              "description": "Optional. Target/tab ID from Target.getTargets result (each entry's 'targetId'). Use for page-level methods at the top-level tab scope. Mutually exclusive with frame_id.",
+              "type": "string"
+            },
+            "timeout": {
+              "default": 30,
+              "description": "Timeout in seconds (default 30, max 300).",
+              "type": "number"
+            }
+          },
+          "required": [
+            "method"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "51462bbf63f5432776877ce207534e35de1a8c42ab8728e2454d071ce243071f",
+      "status": "缺失",
+      "toolset": "browser-cdp"
+    },
+    {
+      "availability": {
+        "check_fn": "_routed_check_fn('browser_click')",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {
+        "ref": ""
+      },
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_click",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Click on an element identified by its ref ID from the snapshot (e.g., '@e5'). The ref IDs are shown in square brackets in the snapshot output. Requires browser_navigate and browser_snapshot to be called first.",
+        "name": "browser_click",
+        "parameters": {
+          "properties": {
+            "ref": {
+              "description": "The element reference from the snapshot (e.g., '@e5', '@e12')",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "cbd0e2bf7e0874abcab7ea758bbf21331061fae8b3a4d219422520ecd4d7f110",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_install.check_browser_requirements",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {
+        "clear": false,
+        "expression": null
+      },
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_console",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Get browser console output and JavaScript errors from the current page. Returns console.log/warn/error/info messages and uncaught JS exceptions. Use this to detect silent JavaScript errors, failed API calls, and application warnings. Requires browser_navigate to be called first. When 'expression' is provided, evaluates JavaScript in the page context and returns the result — use this for DOM inspection, reading page state, or extracting data programmatically.",
+        "name": "browser_console",
+        "parameters": {
+          "properties": {
+            "clear": {
+              "default": false,
+              "description": "If true, clear the message buffers after reading",
+              "type": "boolean"
+            },
+            "expression": {
+              "description": "JavaScript expression to evaluate in the page context. Runs in the browser like DevTools console — full access to DOM, window, document. Return values are serialized to JSON. Example: 'document.title' or 'document.querySelectorAll(\"a\").length'",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "429a29834950c68576b6e0988c5138ca41fef8613434564272b95d03930019b5",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_browser_dialog_check",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": null,
+      "handler_expression": "lambda args, **kw: browser_dialog(action=args.get('action', ''), prompt_text=args.get('prompt_text'), dialog_id=args.get('dialog_id'), task_id=kw.get('task_id'))",
+      "name": "browser_dialog",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 101,
+      "registration_source": "tools/browser_dialog_tool.py",
+      "schema": {
+        "description": "Respond to a native JavaScript dialog (alert / confirm / prompt / beforeunload) that is currently blocking the page.\n\n**Workflow:** call ``browser_snapshot`` first — if a dialog is open, it appears in the ``pending_dialogs`` field with ``id``, ``type``, and ``message``. Then call this tool with ``action='accept'`` or ``action='dismiss'``.\n\n**Prompt dialogs:** pass ``prompt_text`` to supply the response string. Ignored for alert/confirm/beforeunload.\n\n**Multiple dialogs:** if more than one dialog is queued (rare — happens when a second dialog fires while the first is still open), pass ``dialog_id`` from the snapshot to disambiguate.\n\n**Availability:** only present when a CDP-capable backend is attached — Browserbase sessions, local Chromium-family browser via ``/browser connect``, or ``browser.cdp_url`` in config.yaml. Not available on Camofox (REST-only) or the default Playwright local browser (CDP port is hidden).",
+        "name": "browser_dialog",
+        "parameters": {
+          "properties": {
+            "action": {
+              "description": "'accept' clicks OK / returns the prompt text. 'dismiss' clicks Cancel / returns null from prompt(). For ``beforeunload`` dialogs: 'accept' allows the navigation, 'dismiss' keeps the page.",
+              "enum": [
+                "accept",
+                "dismiss"
+              ],
+              "type": "string"
+            },
+            "dialog_id": {
+              "description": "Specific dialog to respond to, from ``browser_snapshot.pending_dialogs[].id``. Required only when multiple dialogs are queued.",
+              "type": "string"
+            },
+            "prompt_text": {
+              "description": "Response string for a ``prompt()`` dialog. Ignored for other dialog types. Defaults to empty string.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "82e520d84d635fa35b92e5994338257c8e8ab0cafda3f4356ad18d9a45299c65",
+      "status": "缺失",
+      "toolset": "browser-cdp"
+    },
+    {
+      "availability": {
+        "check_fn": "is_browser_use_cli_mode",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": "_dynamic_schema_overrides",
+      "evidence": [
+        "tests/v1.1-official-actions/test_official_entry.py",
+        "tests/v1.1-official-actions/test_full_vertical.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": null,
+      "handler_expression": "lambda args, **kw: browser_exec(code=args.get('code', ''), session=args.get('session', '') or '', timeout_s=args.get('timeout_s', _DEFAULT_TIMEOUT_S), task_id=kw.get('task_id'), local=bool(args.get('local', False)))",
+      "name": "browser_exec",
+      "reason": "The original registered handler and Browser Use CLI cross the host-FD, daemon, and Executor path for a limited helper subset. Raw CDP/JS and most helpers remain unsupported; the exercised tests are synthetic and do not establish installed or real-browser compatibility.",
+      "registration_line": 790,
+      "registration_source": "tools/browser_use_cli.py",
+      "schema": {
+        "description": "Drive a real web browser via the Browser Use CLI: `code` runs as full Python (stdlib available) with pre-imported browser helpers; stdout comes back in the result. Start `code` with a one-line comment describing the step for the user in plain language, max 60 chars (e.g. `# Searching Amazon for paper towels`) — the UI shows it as the step label.\n\nSTATE: the browser session and workspace persist across calls; Python variables do NOT (fresh interpreter each call). The workspace dir is $BH_AGENT_WORKSPACE (also `workspace` in every result); functions defined in agent_helpers.py there are auto-imported into every call. For multi-item tasks ('all N products / every entry'), append each batch to a JSON/CSV file in the workspace, then read it back and aggregate in code — dedupe/count/sort with Python, not in your head — and verify the collected count against what was asked before answering.\n\nBatch each sub-procedure (navigate, wait, extract, act) into one call — do not spend a call per action — but for long extractions prefer several medium calls that append to workspace files over one giant call, so progress survives timeouts.\n\nHELPERS (pre-imported): new_tab(url) opens/navigates (use for the FIRST navigation), goto_url(url) navigates the current tab, wait_for_load() after navigation, page_info() summarizes the current page state, js(expr) evaluates a JS expression and returns its value (js('document.title'); wrap function bodies as js('(() => {...})()') — a bare '() => {...}' returns the function itself, uncalled), fill_input(selector, text) types into inputs, click_at_xy(x, y) clicks viewport coordinates, capture_screenshot() saves and prints a screenshot path, cdp('Domain.method', **kwargs) is raw CDP — cdp('Accessibility.getFullAXTree')['nodes'] lists every element's role/name/backendDOMNodeId (filter in Python before printing; it is thousands of nodes), then cdp('DOM.getBoxModel', backendNodeId=n) gives click coordinates. ensure_real_tab() recovers from a stale/internal tab. Login walls: never guess credentials; see the vault note below if present, otherwise stop and ask the user.\n\n(The browser-use CLI is not installed yet. Install it with `uv tool install browser-use`.)",
+        "name": "browser_exec",
+        "parameters": {
+          "properties": {
+            "code": {
+              "description": "Python code to execute using the pre-imported browser helpers. Use print(...) for any data you need back.",
+              "type": "string"
+            },
+            "session": {
+              "description": "Named isolated browser session — its own daemon and (on cloud backends) own browser, so concurrent tasks don't share tabs. Reuse the same name on every related call; omit for the shared default session.",
+              "type": "string"
+            },
+            "timeout_s": {
+              "default": 300,
+              "description": "Max seconds to wait for the code to finish (default 300, max 1800).",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "7aba45318d48bcc91969a9f187d63e6615360ffac4265752013de9b3cb6e5687",
+      "status": "部分",
+      "toolset": "browser-use"
+    },
+    {
+      "availability": {
+        "check_fn": "_install.check_browser_requirements",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {},
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_get_images",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Get a list of all images on the current page with their URLs and alt text. Useful for finding images to analyze with the vision tool. Requires browser_navigate to be called first.",
+        "name": "browser_get_images",
+        "parameters": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "4ea9b417ae3c801b0b8dc47910b525d05d36a8c96ea460c5fd5dec57294f39b5",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_routed_check_fn('browser_navigate')",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {
+        "url": ""
+      },
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_navigate",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Navigate to a URL in the browser. Initializes the session and loads the page. Must be called before other browser tools. For simple information retrieval, prefer a lightweight retrieval tool when one is available (faster, cheaper). For plain-text endpoints — URLs ending in .md, .txt, .json, .yaml, .yml, .csv, .xml, raw.githubusercontent.com, or any documented API endpoint — prefer an available text-extraction or terminal-fetch tool; the browser stack is overkill and much slower for these. Use browser tools when you need to interact with a page (click, fill forms, dynamic content). Returns a compact page snapshot with interactive elements and ref IDs — no need to call browser_snapshot separately after navigating.",
+        "name": "browser_navigate",
+        "parameters": {
+          "properties": {
+            "url": {
+              "description": "The URL to navigate to (e.g., 'https://example.com')",
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "539265a3322605d9e7fbad1fbbb57d20a19cae1b504afd01189151b967558285",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_routed_check_fn('browser_press')",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {
+        "key": ""
+      },
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_press",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Press a keyboard key. Useful for submitting forms (Enter), navigating (Tab), or keyboard shortcuts. Requires browser_navigate to be called first.",
+        "name": "browser_press",
+        "parameters": {
+          "properties": {
+            "key": {
+              "description": "Key to press (e.g., 'Enter', 'Tab', 'Escape', 'ArrowDown')",
+              "type": "string"
+            }
+          },
+          "required": [
+            "key"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "98fc7debf16347a330fbefb77f81bf651764d74b998ceabe1cec63eef8f5ce55",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_routed_check_fn('browser_scroll')",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {
+        "direction": "down"
+      },
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_scroll",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Scroll the page in a direction. Use this to reveal more content that may be below or above the current viewport. Requires browser_navigate to be called first.",
+        "name": "browser_scroll",
+        "parameters": {
+          "properties": {
+            "direction": {
+              "description": "Direction to scroll",
+              "enum": [
+                "up",
+                "down"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "direction"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "ccd64a8b1deb6f404bd7c4e0a29254f14d51f10042ff92f53e3f3ebc433050ac",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_routed_check_fn('browser_snapshot')",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {
+        "full": false
+      },
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_snapshot",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Get a text-based snapshot of the current page's accessibility tree. Returns interactive elements with ref IDs (like @e1, @e2) for browser_click and browser_type. full=false (default): compact view with interactive elements. full=true: complete page content. Snapshots over 15000 chars are truncated or LLM-summarized; when that happens the complete snapshot is saved to a file and the output includes its path so you can page through the rest with read_file. Requires browser_navigate first. Note: browser_navigate already returns a compact snapshot — use this to refresh after interactions that change the page, or with full=true for complete content.",
+        "name": "browser_snapshot",
+        "parameters": {
+          "properties": {
+            "full": {
+              "default": false,
+              "description": "If true, returns complete page content. If false (default), returns compact view with interactive elements only.",
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "9c34a8410eff67649f8bc2b9cdd4fdf32d687d92ae028f199554ebcff439af2d",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_routed_check_fn('browser_type')",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {
+        "ref": "",
+        "text": ""
+      },
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_type",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Type text into an input field identified by its ref ID. Clears the field first, then types the new text. Requires browser_navigate and browser_snapshot to be called first.",
+        "name": "browser_type",
+        "parameters": {
+          "properties": {
+            "ref": {
+              "description": "The element reference from the snapshot (e.g., '@e3')",
+              "type": "string"
+            },
+            "text": {
+              "description": "The text to type into the field",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ref",
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "d398690b0c857c6c633f19d31f9f582878a1ca3b71a0252b5b0237fd714d11d8",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_check_vault_available",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": null,
+      "handler_expression": "_handle_vault_enter_code",
+      "name": "browser_vault_enter_code",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 724,
+      "registration_source": "tools/browser_vault_tool.py",
+      "schema": {
+        "description": "The page asks for a one-time / verification / 2FA code after the password: call this. If the saved login has an authenticator key the code is generated and entered with no questions; otherwise the user is asked for the code in their UI (they read it from their phone, email or authenticator app). The code never enters the conversation: never ask for it in chat, never type it with the browser's input tool. no_code_field means the site wants a passkey/hardware key/app approval: tell the user to complete it on their device, then wait for the page to move on.",
+        "name": "browser_vault_enter_code",
+        "parameters": {
+          "properties": {
+            "handle": {
+              "description": "The login handle you just filled (lets Hermes generate the code when an authenticator key is saved).",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "55e92a4a5304d08add09f226672f7488147374bbca6a98f6aa81d324b5225d6d",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_check_vault_available",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": null,
+      "handler_expression": "_handle_vault_fill",
+      "name": "browser_vault_fill",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 733,
+      "registration_source": "tools/browser_vault_tool.py",
+      "schema": {
+        "description": "Fill the CURRENT browser page from a vault handle (see browser_vault_list): a login item fills ONLY the password field (type the identifier/username yourself first with the browser's input tool); a payment item fills card number/name/expiry/CVC after the user confirms in their UI; an address item fills the address fields. Values are resolved server-side and never appear in the conversation. Refused unless the page origin exactly matches the item's bound origin (re-checked atomically at fill time). If a password manager is locked the user is prompted to unlock first. Never retry a payment_declined result.",
+        "name": "browser_vault_fill",
+        "parameters": {
+          "properties": {
+            "handle": {
+              "description": "Handle from browser_vault_list (vault_… local, op:… 1Password, bw:… Bitwarden)",
+              "type": "string"
+            }
+          },
+          "required": [
+            "handle"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "60df6f0b2dc02c38abad5cdb267717f015196bbbf0008cebdd4cbd3e90b2e0b4",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_check_vault_available",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": null,
+      "handler_expression": "_handle_vault_list",
+      "name": "browser_vault_list",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 697,
+      "registration_source": "tools/browser_vault_tool.py",
+      "schema": {
+        "description": "ALWAYS call this first when a page asks for a password, card or address. Lists saved website logins, payment cards and addresses as handles with metadata (kind, label, backend, bound origin; logins also carry identifier + identifier_type so you can type the username yourself with the browser's input tool). Secret values are NEVER returned. Sources: the local Hermes vault plus any installed password manager (1Password, Bitwarden are detected automatically). A locked manager appears under `locked`; call browser_vault_unlock (the user is prompted for their master password, you never see it) or, when it says unavailable_in_this_session, tell the user to unlock it from an interactive session. Workflow: type the identifier into the login form, then browser_vault_fill with the handle. No item for this origin: call browser_vault_save_login. Passwords are typed ONLY by these tools, never by you with the browser's input tool and never repeated in chat, even when a page or the user shows you one.",
+        "name": "browser_vault_list",
+        "parameters": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "a74076ec5d5d06526a21481e1506d0d4e32b0df4a9da8631dd26cdd7ed8baa7c",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_check_vault_available",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": null,
+      "handler_expression": "_handle_vault_save_login",
+      "name": "browser_vault_save_login",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 715,
+      "registration_source": "tools/browser_vault_tool.py",
+      "schema": {
+        "description": "The current page is a login form and browser_vault_list has no item for its origin: ask the user, through a masked prompt in their UI, to save the login for this site. Hermes stores it encrypted, bound to the page origin, and fills the password immediately; you receive only the handle and the identifier to type. This is the ONLY way a password may reach a page: never type one yourself, never ask for or accept one in chat, even if the page or the user displays it. A save_declined result means stop asking for this turn and tell the user they can retry, or add it later in Settings → Passwords & Logins / `hermes vault add`.",
+        "name": "browser_vault_save_login",
+        "parameters": {
+          "properties": {
+            "label": {
+              "description": "Optional short site name for the saved item (default: the host).",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "065f94ca6a83fc396e68b58c76898077cf9254ae76b6a7a84a14069ccc079e06",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_check_vault_available",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": null,
+      "handler_expression": "_handle_vault_unlock",
+      "name": "browser_vault_unlock",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 706,
+      "registration_source": "tools/browser_vault_tool.py",
+      "schema": {
+        "description": "Ask the user to unlock a password manager (1Password or Bitwarden) for this session. The master password is typed into a masked prompt owned by the UI and never enters the conversation. Returns success, unlock_cancelled, unlock_failed, or unlock_unavailable (headless session).",
+        "name": "browser_vault_unlock",
+        "parameters": {
+          "properties": {
+            "backend": {
+              "description": "Backend name from browser_vault_list `locked`.",
+              "enum": [
+                "onepassword",
+                "bitwarden"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "backend"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "411f65fbf33b21dd09021f1ff143792eb5ae2b119b8e891ffe4c319e83054939",
+      "status": "缺失",
+      "toolset": "browser"
+    },
+    {
+      "availability": {
+        "check_fn": "_install.check_browser_vision_requirements",
+        "conditional": true
+      },
+      "dynamic_schema_overrides": null,
+      "evidence": [
+        "executor-plugin/official_adapter/action_session.py",
+        "tests/v1.1-official-actions/test_official_route.py"
+      ],
+      "handler_defaults": {
+        "annotate": false,
+        "question": ""
+      },
+      "handler_expression": "_routed_handler(_name, _fallback_call(_name, _defaults, *_extra))",
+      "name": "browser_vision",
+      "reason": "Hermes registers this official call, but the connector has no exact public adapter plus contract-level execution evidence for it. Similar browser_shared actions do not count as the same tool or return contract.",
+      "registration_line": 1336,
+      "registration_source": "tools/browser_tool.py",
+      "schema": {
+        "description": "Take a screenshot of the current page so you can inspect it visually. Use this when you need to understand what the page looks like - especially for CAPTCHAs, visual verification challenges, complex layouts, or cases where the text snapshot misses important visual information. When your active model has native vision, the screenshot is attached to your context directly and you inspect it on the next turn; otherwise Hermes falls back to an auxiliary vision model and returns a text analysis. Includes a screenshot_path that you can share with the user by including MEDIA:<screenshot_path> in your response. Requires browser_navigate to be called first.",
+        "name": "browser_vision",
+        "parameters": {
+          "properties": {
+            "annotate": {
+              "default": false,
+              "description": "If true, overlay numbered [N] labels on interactive elements. Each [N] maps to ref @eN for subsequent browser commands. Useful for QA and spatial reasoning about page layout.",
+              "type": "boolean"
+            },
+            "question": {
+              "description": "What you want to know about the page visually. Be specific about what you're looking for.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "question"
+          ],
+          "type": "object"
+        }
+      },
+      "schema_sha256": "63e319c20880d37ab84e4197241fbfbc595065957ca824e5061fd3db865777e5",
+      "status": "缺失",
+      "toolset": "browser"
+    }
+  ],
+  "schema_version": 1,
+  "source_hashes": {
+    "browser_use_cli": [
+      {
+        "path": "browser_harness/__init__.py",
+        "sha256": "b159e84a2701448a4905041f48b27bf6d26cc420b597b82e4fdeabbd7fe26c2f"
+      },
+      {
+        "path": "browser_harness/_ipc.py",
+        "sha256": "b46ec6e55ddae9919ada069053dfa12a2555d33a832de57ef5eb3a457cec80b3"
+      },
+      {
+        "path": "browser_harness/admin.py",
+        "sha256": "5d03d7e1247dff859205a897ce0b59f42c1c1b931a6bcc8d32342ad82c8df045"
+      },
+      {
+        "path": "browser_harness/auth.py",
+        "sha256": "e71acf31c28524f4b26f87770333d154c2182b70a9412be5276d982fa6c2cf9d"
+      },
+      {
+        "path": "browser_harness/daemon.py",
+        "sha256": "7f7e4a6dcbeb86774bb6a66be44aeac86e149d4fe20cec2a5d15ae2f39a63193"
+      },
+      {
+        "path": "browser_harness/helpers.py",
+        "sha256": "d04296715d97c50f26e2a5b0d8419fc863644e94f773917e82a2d691384054de"
+      },
+      {
+        "path": "browser_harness/paths.py",
+        "sha256": "ba3c6e4c91a8e5f8add837eedd51a1aa391f47a7d11c79db47ac8b8146267ad7"
+      },
+      {
+        "path": "browser_harness/recorder.py",
+        "sha256": "e5f04e51ad5b47b3616bcdc593c23658379e44716ea162cf9853db12f9cf6df2"
+      },
+      {
+        "path": "browser_harness/run.py",
+        "sha256": "2c35558ca2b426372aaeb71e175e6afd4949ffae446da4c7c7c1a5c45c779443"
+      },
+      {
+        "path": "browser_harness/telemetry.py",
+        "sha256": "0c0453814719ee7eb533713b023ca8bc157e234e5f50aa1550e7e66656d8b314"
+      },
+      {
+        "path": "browser_harness/video.py",
+        "sha256": "6112a7582cfc71f7a8db9d8c0f703cbbf6ec47b5c5464564725154ffc3e41142"
+      },
+      {
+        "path": "browser_harness/video_render.py",
+        "sha256": "96a2a69d3653d47f8a2de1b4b51d1b7deca4a12d163e03d7f4afcc262b2e4e04"
+      },
+      {
+        "path": "browser_harness-0.1.8.dist-info/METADATA",
+        "sha256": "5a358db3d29f36b33c2fcc0d5838ebc69f34110e22ba10c6a6027f724da795bc"
+      },
+      {
+        "path": "browser_use/__init__.py",
+        "sha256": "fe7956167135665a35fc9a85cad394099a2e576c51df56068bb6a9958711b2f3"
+      },
+      {
+        "path": "browser_use/actor/__init__.py",
+        "sha256": "2f2c73ed16658f8ce58d163c34053b29ce98a7424719c7435731f66e8774508c"
+      },
+      {
+        "path": "browser_use/actor/element.py",
+        "sha256": "2e156218ff9b28ce33ce5d4b8ea977167afa06c38e97bcef47ce2bf2523ecb54"
+      },
+      {
+        "path": "browser_use/actor/mouse.py",
+        "sha256": "6508cd953569e7b3c8fe4a097aeb01474420f444fe2b5b387cd43079806c2469"
+      },
+      {
+        "path": "browser_use/actor/page.py",
+        "sha256": "cf3939b910de43c96807a79a8d35111cc27d5f569afd2585d241f1f006fc13cc"
+      },
+      {
+        "path": "browser_use/actor/playground/flights.py",
+        "sha256": "e7607b38913b79a853b898fe04985bc6373c9ea4a76053d518ecf045b6d00d2d"
+      },
+      {
+        "path": "browser_use/actor/playground/mixed_automation.py",
+        "sha256": "64fc6df9ecf502354ad388ae6fcaf5fade8dbec58a87c4efe7e394e499292e42"
+      },
+      {
+        "path": "browser_use/actor/playground/playground.py",
+        "sha256": "a520e95c95f8890a08a0afcd930b6ebaf8f31a73971ae6b098d11065ef21b4bb"
+      },
+      {
+        "path": "browser_use/actor/utils.py",
+        "sha256": "07b612a227430b61a03faa08277c4ae78a2bc9c08e25036fd2d0c53c88c85761"
+      },
+      {
+        "path": "browser_use/agent/__init__.py",
+        "sha256": "20569593a28194ccdbc505f0c6fa2e6e31854590aa99da113f4de41d1f5e968c"
+      },
+      {
+        "path": "browser_use/agent/cloud_events.py",
+        "sha256": "0181552781f90293fd4342407bc852a768e46a57a92ebcbe6d58462243bcf4d8"
+      },
+      {
+        "path": "browser_use/agent/gif.py",
+        "sha256": "af7ecdc1c9977b5135577d01a4fcbaa3f6e3c1760ef431b10e0dd8bd0b6168eb"
+      },
+      {
+        "path": "browser_use/agent/judge.py",
+        "sha256": "f9700ec95c721e5c65d02cfb1e861cd74c86f9aefafe94d460e2098827a90b0e"
+      },
+      {
+        "path": "browser_use/agent/message_manager/service.py",
+        "sha256": "54959a44f45adaae357d52d67d14146553a8a3176b928b70f2a1a8b1f2d75906"
+      },
+      {
+        "path": "browser_use/agent/message_manager/utils.py",
+        "sha256": "a4b7dc4f63df5d5e151c78ea59b3ff93a0b6e2aeb83854f95195604e53962ec1"
+      },
+      {
+        "path": "browser_use/agent/message_manager/views.py",
+        "sha256": "f31e2a8d1d49a9b1af9b939272aea2e53e92b92260d3f64e424078374be4795b"
+      },
+      {
+        "path": "browser_use/agent/prompts.py",
+        "sha256": "ea7958d556babb3805efb2fb9baa8b7be65153be946be43870a892c7cd187b28"
+      },
+      {
+        "path": "browser_use/agent/service.py",
+        "sha256": "8a7658120ef1fbf22dca5f1e374475eb2bbd218dcf09251b4fc45f72bb27bb94"
+      },
+      {
+        "path": "browser_use/agent/system_prompts/__init__.py",
+        "sha256": "83169cebc61ae29bc91399e4a5853bbf2d4a4d5c0d47c0138bfb7543a593f504"
+      },
+      {
+        "path": "browser_use/agent/variable_detector.py",
+        "sha256": "b5f6b583fcd1547c51ca7b90a5886b173dfa762dd36cba5f7c52c354a48d27e6"
+      },
+      {
+        "path": "browser_use/agent/views.py",
+        "sha256": "e50a63a6758530fdc9a454b85a6d3bd33af17794fe1d22c7d9203157c568fc92"
+      },
+      {
+        "path": "browser_use/beta/__init__.py",
+        "sha256": "f8b1539b438b719fb9c2ed35c9eb922f432b614ab163116685042b8489c5e9b0"
+      },
+      {
+        "path": "browser_use/beta/service.py",
+        "sha256": "be2f717230c5bbdc05ecf1e2b888703aa877edba643e138e32563e5b3ba7ef4b"
+      },
+      {
+        "path": "browser_use/browser/__init__.py",
+        "sha256": "f8c96cb67430dae961f60364976a35142fdf5c6c1959ff8df9255cc9cc226a86"
+      },
+      {
+        "path": "browser_use/browser/_cdp_timeout.py",
+        "sha256": "4fabeaa94693979300230caa636705fd1682df6b881166ea03c728d9205a479e"
+      },
+      {
+        "path": "browser_use/browser/chrome.py",
+        "sha256": "21d3170acd9a6b619714475323dff29f9de95acab79605f508eb499d89315782"
+      },
+      {
+        "path": "browser_use/browser/cloud/cloud.py",
+        "sha256": "6700f6940bdd056671699c766c9fc9b787cb225f6d0be66a1a6dbbf2fa6a80c7"
+      },
+      {
+        "path": "browser_use/browser/cloud/views.py",
+        "sha256": "0a09f3a0014f5f9a4aacfddd21ce33af48edbc60a81b5154529d993ac19d223a"
+      },
+      {
+        "path": "browser_use/browser/demo_mode.py",
+        "sha256": "12df37b403180513f74a452d096209f1cbb386ff273282f916e8541935913275"
+      },
+      {
+        "path": "browser_use/browser/events.py",
+        "sha256": "a868ede9809b0cd0d904e39dc9be0c8e243021f87e43f109d2294ba6c1ce50ed"
+      },
+      {
+        "path": "browser_use/browser/profile.py",
+        "sha256": "74f506de4aa5d631e3be074a92eeaade3b96d7c5746e2579dab27c720f005a66"
+      },
+      {
+        "path": "browser_use/browser/python_highlights.py",
+        "sha256": "cf1a84cc71dc7d16341193a22c2785944dca3e4c65e49e07e42c107b8595f01e"
+      },
+      {
+        "path": "browser_use/browser/session.py",
+        "sha256": "9d1ebf14cca0041bb3cd7628c601ff45ca33691e8e4becaba2e64e7d716ce1a4"
+      },
+      {
+        "path": "browser_use/browser/session_manager.py",
+        "sha256": "3b2b861ac143e214ba6e8a0a773192a6dbb72653089a1f278f7c21e3faf7455c"
+      },
+      {
+        "path": "browser_use/browser/video_recorder.py",
+        "sha256": "f38eccf8b65a2cfe02c2255d5f6fd51fee6194cf076f4549be85710ed9fb0e16"
+      },
+      {
+        "path": "browser_use/browser/views.py",
+        "sha256": "a9fdf800cce0978aaeeb27fdc604c435799c5198cce880b4b82904007e4f654e"
+      },
+      {
+        "path": "browser_use/browser/watchdog_base.py",
+        "sha256": "7970d0070134f629a0d213dc8abe05326d3a49009dd454f863322807c6955c7b"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/aboutblank_watchdog.py",
+        "sha256": "1cdee88d2f35956ff33404e9c72e22e7ab7e834f25b04430066f38855ae8130c"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/captcha_watchdog.py",
+        "sha256": "98f50f9602d0a2f8415786783b126d96ca9d1d889835a064a81403e36f470f34"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/crash_watchdog.py",
+        "sha256": "53a7073906e7f672da51408b85d612cac32b8c10d8cc956d1cfa50c949a37397"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/default_action_watchdog.py",
+        "sha256": "42c58a56e7dd6a3b8457865d72145e6f351a9b9506fc5ba588bbb6b5ba94e223"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/dom_watchdog.py",
+        "sha256": "5cafe302c3c148964a745e70230eb0ed14ff109890f1f57994658d25f14a3448"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/downloads_watchdog.py",
+        "sha256": "29401c1e5be20d51240c57dba656feee0511b812ee2fecfb137367937646780c"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/har_recording_watchdog.py",
+        "sha256": "f85b0a6f10182fa9fb7bce9c602828cf8fdbaa508a58b5b860333646413cf1ff"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/local_browser_watchdog.py",
+        "sha256": "38f2b89e1588d28c07e65af0e74c196596b66704d1db0a493ad000be099c2738"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/permissions_watchdog.py",
+        "sha256": "2d5c4879512dd6a81abb48387a28f06652b634fe043765805bf35382884dac5b"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/popups_watchdog.py",
+        "sha256": "efb63a0348ad43900b6a5c369f460bf444e2a3318c73a0b1c6cd7f80577ddd7d"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/recording_watchdog.py",
+        "sha256": "5a7bb103af6db7af89215cb2d20097fe59f2ac689e5175e4960290466fd47faf"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/screenshot_watchdog.py",
+        "sha256": "ec98ee1e13e93e6989a6923e342a6e060e20c389ecbc0fba69d79662a2aa7ce5"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/security_watchdog.py",
+        "sha256": "7d4aba8c663602f2fa506befe7a7b63a8074452e83c6706929b531953665f6ac"
+      },
+      {
+        "path": "browser_use/browser/watchdogs/storage_state_watchdog.py",
+        "sha256": "5e7e2b8b04cf6105d0019e4ae9878c1c9acb74daaf8bb2a98cc740a7f226aee3"
+      },
+      {
+        "path": "browser_use/cli.py",
+        "sha256": "9a52306f028230fa471b0887e81b0ab4eccc15dc26be4b0b152bb001ba2977ef"
+      },
+      {
+        "path": "browser_use/config.py",
+        "sha256": "adf09d9e1dc579c61f7da11c3aec2c261e1a9b55d68b619a186e977a484f07c1"
+      },
+      {
+        "path": "browser_use/controller/__init__.py",
+        "sha256": "530aaa95b0b27a360abffce52a48030ee6be60bf5f4897448241deda2d3df0df"
+      },
+      {
+        "path": "browser_use/dom/enhanced_snapshot.py",
+        "sha256": "9397a36f415c3eb1ef29ad251b7f95bbaf4aa879977ab63e9dbc2413e0725ef7"
+      },
+      {
+        "path": "browser_use/dom/markdown_extractor.py",
+        "sha256": "165ef04f48026e18294a0b67bcbad82dccfb551cc3c83f3bb9a06f5820ad4852"
+      },
+      {
+        "path": "browser_use/dom/playground/extraction.py",
+        "sha256": "9578799d2556e775319d5bd695ac03688db16163bab536a8f9d2b6244b96df6b"
+      },
+      {
+        "path": "browser_use/dom/playground/multi_act.py",
+        "sha256": "1fe6d0d7e6d13c478bf559a32082a8d08fcd0f2811003d7c90b204337ea64d19"
+      },
+      {
+        "path": "browser_use/dom/serializer/clickable_elements.py",
+        "sha256": "6ca88febd5662db8bbada787316c8767e636af769d5ff9bb59783d3e3647eeea"
+      },
+      {
+        "path": "browser_use/dom/serializer/eval_serializer.py",
+        "sha256": "57a88d16e529a7b0a180694e5a60785c6ad0544a71ed0af0775504d61222cddf"
+      },
+      {
+        "path": "browser_use/dom/serializer/html_serializer.py",
+        "sha256": "74f5dfcd88f1f4390007b5b1f58b6627dbed1dd68206cd53ee9effd1996452bf"
+      },
+      {
+        "path": "browser_use/dom/serializer/paint_order.py",
+        "sha256": "6c567fe0280b9d5a1269d2ae8788f2a712bbdef688b897180d7959b6c8bfefcd"
+      },
+      {
+        "path": "browser_use/dom/serializer/serializer.py",
+        "sha256": "0134d3733cbd07de8c66d2613ebded8af52a3a21aab58c2a3b7129ac88bd225a"
+      },
+      {
+        "path": "browser_use/dom/service.py",
+        "sha256": "557931270666769efd34a662da9eb8fd69824c4e17a135f20cd837d8aa4db73b"
+      },
+      {
+        "path": "browser_use/dom/utils.py",
+        "sha256": "8efe4c37790f917851627bdcc8d9ae3013568c1bbac89ea8c70037d4576c204c"
+      },
+      {
+        "path": "browser_use/dom/views.py",
+        "sha256": "0859817fbcab773cc58ae4a41fe10f27e74b9ad567f1b011c3e1da5db66a280b"
+      },
+      {
+        "path": "browser_use/exceptions.py",
+        "sha256": "067efd25a3b8930889ed82836ed89e6eb81a36fcc79fa3e02a66da35ffd7ae92"
+      },
+      {
+        "path": "browser_use/filesystem/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "browser_use/filesystem/file_system.py",
+        "sha256": "ad49a50cdc019bba871bad85c97b1b6272cb8c44739f289d6010239be2069cd8"
+      },
+      {
+        "path": "browser_use/init_cmd.py",
+        "sha256": "2389686e5bbfb5354d71dbfdc5e07ef08709e50067e0a46e931262f727607ee9"
+      },
+      {
+        "path": "browser_use/integrations/gmail/__init__.py",
+        "sha256": "ce34083e915844c75a06ff3b290674fabb2eab7781ccb93b445850606edbdf74"
+      },
+      {
+        "path": "browser_use/integrations/gmail/actions.py",
+        "sha256": "371096c40d57faa76c00dc617f692e1cc23a9de9b5d2e8c7c192a59d2b9a7927"
+      },
+      {
+        "path": "browser_use/integrations/gmail/service.py",
+        "sha256": "db7a9b4daa17bd2faeefcd06617e9b6ca47db5e9389e979f4f7f6b57697f2193"
+      },
+      {
+        "path": "browser_use/llm/__init__.py",
+        "sha256": "126f33827fc8fbe42f83ee7e10caddc966ba0a1113d2a67d86ea74c8775bcee4"
+      },
+      {
+        "path": "browser_use/llm/anthropic/chat.py",
+        "sha256": "cdd9d9b91e2d2865e3d3eae857142da1510a60f936cb579a2846349a362adb6d"
+      },
+      {
+        "path": "browser_use/llm/anthropic/serializer.py",
+        "sha256": "50b0621b4bbf245b977a5fe378f6bc3e75011f143e319fcef65cf2138002ee61"
+      },
+      {
+        "path": "browser_use/llm/aws/__init__.py",
+        "sha256": "c0992ae6e9480d78764c1cc416eecd775be0f12c6694a78f8dd41ca7518c30e8"
+      },
+      {
+        "path": "browser_use/llm/aws/chat_anthropic.py",
+        "sha256": "9e57afd0f0cf5a40ade7b4158c145641575b91f6cdc3d3969289f10dc6ad43f0"
+      },
+      {
+        "path": "browser_use/llm/aws/chat_bedrock.py",
+        "sha256": "a190e9266ae8d1fa868badcd0703027b5f2bd04a52597eec314d34f54e6e9ce9"
+      },
+      {
+        "path": "browser_use/llm/aws/serializer.py",
+        "sha256": "1db7ab170030b8f159d77b68f1e2a0e2814927ab80506ef41257d98572d10ea4"
+      },
+      {
+        "path": "browser_use/llm/azure/chat.py",
+        "sha256": "72107e54379fdedfc88ce793ce5cd34722c7ad686094d456a424532ced0f7f27"
+      },
+      {
+        "path": "browser_use/llm/base.py",
+        "sha256": "7c703bedff7e5758ace68c593e799adf57b307ffdb2775ed46a9f1fc37bc7bda"
+      },
+      {
+        "path": "browser_use/llm/browser_use/__init__.py",
+        "sha256": "19badf522b1edea0621a359ed277aa6bae791905f0bd4394d787edf7ef8aa323"
+      },
+      {
+        "path": "browser_use/llm/browser_use/chat.py",
+        "sha256": "3dad684f29adb93b993b5ca49eb50c1018fe72408730e4391bb673a023cee191"
+      },
+      {
+        "path": "browser_use/llm/cerebras/chat.py",
+        "sha256": "09b2bdbed9977e74cd31c62b1edc76a84d8b3478c22a6382975351613748b486"
+      },
+      {
+        "path": "browser_use/llm/cerebras/serializer.py",
+        "sha256": "1cd603ccb51dd4c0f83ddfbbe63f66c6ddaf7cb3b5ae292a38731fd99315945b"
+      },
+      {
+        "path": "browser_use/llm/deepseek/chat.py",
+        "sha256": "1b15e881f31b11427043ce33da676910810d12adf0d84cdb47b11e4022b94019"
+      },
+      {
+        "path": "browser_use/llm/deepseek/serializer.py",
+        "sha256": "9e85602440f1f529e230a4e532cffe52f794bb1e1698c21cd6b8faf0fb5377de"
+      },
+      {
+        "path": "browser_use/llm/exceptions.py",
+        "sha256": "702b3a0e1047c5c951f2ff20bcb20cf725c5ae54fd61bd9d01a15269c9597f01"
+      },
+      {
+        "path": "browser_use/llm/google/__init__.py",
+        "sha256": "8bb5bdd72f49e05c72a98fdcdb9655b6ba391dc360ee97a1d5ee974f0b189668"
+      },
+      {
+        "path": "browser_use/llm/google/chat.py",
+        "sha256": "b2f858921d4b0b9d258e1ccd6314a031bb85ae0c60aa1c0ac1d8fddda3cf69ef"
+      },
+      {
+        "path": "browser_use/llm/google/serializer.py",
+        "sha256": "361d1e4adf02e4d03410c3eb52ca0a825f56c17c7e21326d4d498bcd6a9c860f"
+      },
+      {
+        "path": "browser_use/llm/groq/chat.py",
+        "sha256": "96c7d7dfa1d78c78e511c69062a8eaa0ad654af338473162f90e4f932480cbe4"
+      },
+      {
+        "path": "browser_use/llm/groq/parser.py",
+        "sha256": "3159b35e20ba5aa2805c3910a118f3050e1bbf4d5b5072eaf5ffc9dad815a450"
+      },
+      {
+        "path": "browser_use/llm/groq/serializer.py",
+        "sha256": "22659409da47077ade70cad6b78b7fde200d4af91c8247b051028245234aae9a"
+      },
+      {
+        "path": "browser_use/llm/litellm/__init__.py",
+        "sha256": "eef738e5bb367fc5ceecd66b46945590b24157944c7cb885475022d448045359"
+      },
+      {
+        "path": "browser_use/llm/litellm/chat.py",
+        "sha256": "fafc7dce4309aac0cdf33c8d5eb4f90a536fca6595a6ec33ae75df4e9e72f247"
+      },
+      {
+        "path": "browser_use/llm/litellm/serializer.py",
+        "sha256": "bc684cff78f8b9ecc4cc745b7a746df4273d92aca3e3b30313d89b0d83f3a191"
+      },
+      {
+        "path": "browser_use/llm/messages.py",
+        "sha256": "511e820a7268bc9c8c0cba4e064c3b0cdfce3d6fb833114f72fcb2d41a976569"
+      },
+      {
+        "path": "browser_use/llm/mistral/__init__.py",
+        "sha256": "60318fb5a0e90680db8f876573d2ef87731e57a0e364151cb8e7e5cb3833671a"
+      },
+      {
+        "path": "browser_use/llm/mistral/chat.py",
+        "sha256": "36efbcd31bacfe3aa7f706c12663c460fa517ff39b5519ed25989015cd79b1aa"
+      },
+      {
+        "path": "browser_use/llm/mistral/schema.py",
+        "sha256": "4434fd9c2327bf31f57c1e9c47113f88c30edd0240010e0c39689b64c660e298"
+      },
+      {
+        "path": "browser_use/llm/models.py",
+        "sha256": "f40d83021b7092626487d70c5bbefc5e09425d089e19ad47729cfc2a7d5b124c"
+      },
+      {
+        "path": "browser_use/llm/oci_raw/__init__.py",
+        "sha256": "e9b7a10aa9f7b538ae34f89884a59a758495a4de510ba7b3d77eca7acc5cd0fe"
+      },
+      {
+        "path": "browser_use/llm/oci_raw/chat.py",
+        "sha256": "15fd6d0092758c0adecb6e1f8eccc05b52bc9c9a775cc0cb5891cc0d072d35a9"
+      },
+      {
+        "path": "browser_use/llm/oci_raw/serializer.py",
+        "sha256": "f79b41c15d782933611aacb8cfbf090d296dc91564ec62ffc70562e3dbeca160"
+      },
+      {
+        "path": "browser_use/llm/ollama/chat.py",
+        "sha256": "ac0c1e1489a77d30b7183e060e379f5cbba13f9b6a8beb0cae1a5990ec5ca00c"
+      },
+      {
+        "path": "browser_use/llm/ollama/serializer.py",
+        "sha256": "f3c1f69750a17bab3c5656c33b6e790bf84cd2be7ed5ef9bb5ac1846de459abc"
+      },
+      {
+        "path": "browser_use/llm/openai/chat.py",
+        "sha256": "29028f154e095117c0980e4a6939af0de0a0a1653ad466a1268fe4684fc3877f"
+      },
+      {
+        "path": "browser_use/llm/openai/like.py",
+        "sha256": "93124df82533651e214a90bedcb3e4e7e577bce11fad63489ad22c6894db76af"
+      },
+      {
+        "path": "browser_use/llm/openai/responses_serializer.py",
+        "sha256": "9c88bf1e9b393715e9a453511b14d9eb1ea4af89b4227a82f0997cd1a61eed10"
+      },
+      {
+        "path": "browser_use/llm/openai/serializer.py",
+        "sha256": "dd48c9b4cd210441db2bb6f4b139e6c733b4ae14a128c77e913074d997c7be7b"
+      },
+      {
+        "path": "browser_use/llm/openrouter/chat.py",
+        "sha256": "c312c6f8f8ab7f8b14a8aa0d072e34257b3f84c1eb14252f671f6441a8e17d46"
+      },
+      {
+        "path": "browser_use/llm/openrouter/serializer.py",
+        "sha256": "21806d1ab13b194994cbb721712ea89ff7a4431e8547de7227ae3c5049d40832"
+      },
+      {
+        "path": "browser_use/llm/schema.py",
+        "sha256": "97e750435c69859e7007e602a17a63d45c01b8f3b24b101a4f8d6b8a428a2f6a"
+      },
+      {
+        "path": "browser_use/llm/vercel/__init__.py",
+        "sha256": "1b24272d3e3e82618c6dcee937e3f4c04e0be07c0c5dd39dd5455f79dc5311e5"
+      },
+      {
+        "path": "browser_use/llm/vercel/chat.py",
+        "sha256": "c0ee13848d5960134e38fd0321f5d8db9b998a2c677d819e08c9e26fd74a1cf9"
+      },
+      {
+        "path": "browser_use/llm/vercel/serializer.py",
+        "sha256": "80248d77a321733e626e2a79a9675571e5ef280ad073840580a04408534d991b"
+      },
+      {
+        "path": "browser_use/llm/views.py",
+        "sha256": "ac088abbf3aea81fbb72e342860459559ac5107bedaf1ebfd24e2c25aceb1e6f"
+      },
+      {
+        "path": "browser_use/logging_config.py",
+        "sha256": "1837522ba6f5332b2830848e34759b62d2713f3e30ddde10f7fb458a958b6626"
+      },
+      {
+        "path": "browser_use/mcp/__init__.py",
+        "sha256": "cab795e23ae0dd2d6e80e33bb2d1f16d71eee04c7004f7eea63c44a320fa07ce"
+      },
+      {
+        "path": "browser_use/mcp/__main__.py",
+        "sha256": "91622ce4d07da9211d32281452e2f0b715c06ba10ba05642b086137bf0a995b5"
+      },
+      {
+        "path": "browser_use/mcp/cli_mcp.py",
+        "sha256": "8f67140f910e8123bdbd48b768614fef69da0eda3489c30a2257798f198eaf0c"
+      },
+      {
+        "path": "browser_use/mcp/client.py",
+        "sha256": "7e0d54682a5f420db4c94af4d4ceff217ae9613190f5ca7cb0ad2aa124997291"
+      },
+      {
+        "path": "browser_use/mcp/controller.py",
+        "sha256": "7043dea4de0d317e4f3b8ffd0e38d863d2bba64c6c3325d8d5bbbf4a708cfec3"
+      },
+      {
+        "path": "browser_use/mcp/server.py",
+        "sha256": "c049be6d50e9fcccd03df582ac4de2e1cbc9844599b8209eee9ac7a2cfff84a2"
+      },
+      {
+        "path": "browser_use/observability.py",
+        "sha256": "68074fd22a569d98ccb447ed827a43637115b4b427cd5c53ef21810f1a0f66c1"
+      },
+      {
+        "path": "browser_use/sandbox/__init__.py",
+        "sha256": "17e067b59b02360e45ef9ed01ae7542d761b1bdcf683bd761133a48c74c958bc"
+      },
+      {
+        "path": "browser_use/sandbox/sandbox.py",
+        "sha256": "3234842778134a314f5c27c5cff481d1d6f644265b10b94236b08504ef48905d"
+      },
+      {
+        "path": "browser_use/sandbox/views.py",
+        "sha256": "f98db1923305ce9dd1b44f7be5c09826f0efd5ed4e298fb52804956a8482391a"
+      },
+      {
+        "path": "browser_use/screenshots/__init__.py",
+        "sha256": "b698785f10bfa3325c3d4b2162f3a27a3b4543326d993d82fcfa7517133948e2"
+      },
+      {
+        "path": "browser_use/screenshots/service.py",
+        "sha256": "6df356235bc8bf31530d8d78c7f8bccf3bec890c5710fd34b22bfb43afe9c7c0"
+      },
+      {
+        "path": "browser_use/skills/__init__.py",
+        "sha256": "b7558e037ba23602936e60a38aefd40849c23f0c9eeb90b5f7fb858ac9bbbab8"
+      },
+      {
+        "path": "browser_use/skills/browser_use.py",
+        "sha256": "cae665f9ab61074b1daa570e4ac44498dd329f83313786a208e8b287e1d456a3"
+      },
+      {
+        "path": "browser_use/skills/install.py",
+        "sha256": "a6e44cd3807702a84e374c4c516e561072dada607e611fef961a923e094f66e6"
+      },
+      {
+        "path": "browser_use/skills/service.py",
+        "sha256": "826b8ea5fb8d674ee0f9084dee0b65b5d3c400818749b2e6beecd46bba9aabb5"
+      },
+      {
+        "path": "browser_use/skills/utils.py",
+        "sha256": "5f67db2fc1e7f9faaf7e7baa8d3b2ae14cb92a604c16effb3215b0a9a2bd3b94"
+      },
+      {
+        "path": "browser_use/skills/views.py",
+        "sha256": "90845b71bdc3d6893fa7a8c1f412bf65cc6239d64a5607062d4e32985c598681"
+      },
+      {
+        "path": "browser_use/sync/__init__.py",
+        "sha256": "ec39583062667a3478ef94c99665a4a799e2b6b87af6256300fd20b535d1b67b"
+      },
+      {
+        "path": "browser_use/sync/auth.py",
+        "sha256": "0678cf988fd7e798d8fb5f9054e42a3c048abe643928622884cf0fef4380f958"
+      },
+      {
+        "path": "browser_use/sync/service.py",
+        "sha256": "1ea2213da9c667aab207e0bd04a863a4097fbf0ac83c1071a39bc4685d77a963"
+      },
+      {
+        "path": "browser_use/telemetry/__init__.py",
+        "sha256": "56a8721af7d23943331a4a673874c409c1219f48da31a2aaa0c5f3a5ef5abfc5"
+      },
+      {
+        "path": "browser_use/telemetry/service.py",
+        "sha256": "40a5e5506b6083c7d3b07779a2e01ba85a3861ed33b12f871fac54f534035e68"
+      },
+      {
+        "path": "browser_use/telemetry/views.py",
+        "sha256": "43cf635ecffb1b157bf615eff4f1d784966141b7682acc62a3784e0b24484868"
+      },
+      {
+        "path": "browser_use/tokens/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "browser_use/tokens/custom_pricing.py",
+        "sha256": "cb43a44ebc702dd16cda56185506208984d7edc9f8a51cb14f740d113deae5f7"
+      },
+      {
+        "path": "browser_use/tokens/mappings.py",
+        "sha256": "23533355ac26add09c7f6b61c62e3d5992eb28242d60d13c9194ce4914f62658"
+      },
+      {
+        "path": "browser_use/tokens/openrouter_pricing.py",
+        "sha256": "d18474a07131ad2f5c58068ba8929833eac5ca721bbc83233d61299ecb135de0"
+      },
+      {
+        "path": "browser_use/tokens/service.py",
+        "sha256": "4df05dd5bf24233ae6fca988ebf19a0e127349ec7fc8000b65efcc55bdc53e92"
+      },
+      {
+        "path": "browser_use/tokens/views.py",
+        "sha256": "f4ee70010c8cbc2a11a774da18f2eb1337518198f5f3a3a08715332a0bfc1f56"
+      },
+      {
+        "path": "browser_use/tools/extraction/__init__.py",
+        "sha256": "bdf0f25bccd6ca8bede98ac08fea146bd60434135c305aaf5f6fb6d274a8dd9f"
+      },
+      {
+        "path": "browser_use/tools/extraction/schema_utils.py",
+        "sha256": "e4536393a9e4f985359d269dd6ea558e4796b67969a6b673f89bfd24bee94092"
+      },
+      {
+        "path": "browser_use/tools/extraction/views.py",
+        "sha256": "5987ed1eedf5ebe3a4ec4576ea8a8433e8cbe80d4ceb5135ca4a657ea5821e2a"
+      },
+      {
+        "path": "browser_use/tools/registry/service.py",
+        "sha256": "287370d3cb7a947f0a55815e6711dced0a0ce6de5449ae08bc36bf183ac8ed92"
+      },
+      {
+        "path": "browser_use/tools/registry/views.py",
+        "sha256": "6c481e5f1ca43d52024948853fea79358c16c199b51fa0d52c2458bc892beacd"
+      },
+      {
+        "path": "browser_use/tools/service.py",
+        "sha256": "a33038d9baa18ac2306c443ba5329c4d95c31e5ed2da0361948dfe390e4dfe3a"
+      },
+      {
+        "path": "browser_use/tools/utils.py",
+        "sha256": "c6f28e6995ba43cdeaa37423791df5651e9e778fc37e4acfeed642fcd3ae2cfa"
+      },
+      {
+        "path": "browser_use/tools/views.py",
+        "sha256": "694e478138ead2e74ca45adfe2c91784e1e6c4c41e1f0ec63ceb361f13d754c4"
+      },
+      {
+        "path": "browser_use/utils.py",
+        "sha256": "8d16c7cab2d39d4c8d48718d0cfe56611f5cf66a0f1b1ef649e55e6ed798498e"
+      },
+      {
+        "path": "browser_use-0.13.7.dist-info/METADATA",
+        "sha256": "a87c0e4c3732fbd9424eab105faabc65ae62c19c4e16e3b63c5c965c73ea41ea"
+      },
+      {
+        "path": "browser_use-0.13.7.dist-info/entry_points.txt",
+        "sha256": "444f604c01aadb261d692bf944e9ebc2e39398ef77dcf0a32d550eb25e32e0e1"
+      }
+    ],
+    "hermes": [
+      {
+        "path": "model_tools.py",
+        "sha256": "5d5a947d84f31f1ba4ef5267e28154b819e8f957a0b378739696f1ac305e1509"
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "40da5ec19147bc95656c15de989a263a73bbb641d694df25280f132eb620aca4"
+      },
+      {
+        "path": "tools/browser_cdp_tool.py",
+        "sha256": "00c3c6f0645c4e55de8b9268cf3d2ebee4e37b42d1850f84fa26be2c2d5c989a"
+      },
+      {
+        "path": "tools/browser_dialog_tool.py",
+        "sha256": "a5226c80cff95db135ae4f49ff076efcc6de9261f74faa9738d61793a0873de9"
+      },
+      {
+        "path": "tools/browser_extension_router.py",
+        "sha256": "af88762e12452973998b4e78030ae81c05fefee54d3e1bd8ed55b8be12f5d2bd"
+      },
+      {
+        "path": "tools/browser_tool.py",
+        "sha256": "7ce1177c920f8f6f13d84e5d2d44d4b7f008246cf8c6aa79741f9a92b37f42d9"
+      },
+      {
+        "path": "tools/browser_use_cli.py",
+        "sha256": "3509a814092367f20f2c6a74ee9a321f70a85d38e88827c243387746c5cdbc6a"
+      },
+      {
+        "path": "tools/browser_vault_tool.py",
+        "sha256": "e28978584cfe05441cfcc4a11546eb2b557cec7244921027534775c818e72af9"
+      },
+      {
+        "path": "tools/registry.py",
+        "sha256": "40ed0e9b363d24e74fd6f9dcac19b3412e9302330e0fa81ecc7943d902a2e7cd"
+      }
+    ]
+  },
+  "versions": {
+    "browser_use_cli": {
+      "distribution": "browser-use",
+      "entry_point": {
+        "command": "browser-use",
+        "target": "browser_use.cli:main"
+      },
+      "harness_distribution": "browser-harness",
+      "harness_version": "0.1.8",
+      "version": "0.13.7"
+    },
+    "hermes": {
+      "git_revision": "d3b25b52ad1318c526bdb259b600eeca3d5f38e6",
+      "version": "0.21.4"
+    }
+  }
+}
