@@ -71,7 +71,8 @@ class VaultPrivateTests(unittest.TestCase):
     def test_secret_uses_private_socket_and_nonce_is_single_use(self):
         # 中文注释：普通 RPC 不提供 Vault 方法；私有填写只回传数量并一次性消耗检查 nonce。
         with self.assertRaises(ProtocolError) as ordinary:
-            BridgeDaemon._dispatch_client(BridgeDaemon(self.home), "shared.vault_fill", {})
+            # 中文注释：先提供可信 owner 通过活动钩子，才能验证普通端口未注册 Vault 方法。
+            BridgeDaemon._dispatch_client(BridgeDaemon(self.home), "shared.vault_fill", {"owner": "owner"})
         self.assertEqual(ordinary.exception.code, "unknown_method")
         inspected = call(self.home, "inspect", {"scope": self.scope})
         self.assertEqual(inspected["origin"], "https://example.test")

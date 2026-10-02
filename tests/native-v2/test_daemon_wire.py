@@ -220,7 +220,7 @@ class NativeV2DaemonTests(unittest.TestCase):
         self.assertEqual(missing.exception.code, 'artifact_unavailable')
         self.assertEqual(self.calls, [])
 
-    def test_lost_response_marks_needs_sync_and_same_request_is_not_replayed(self):
+    def test_timeout_preserves_task_and_same_request_is_not_replayed(self):
         dispatches = []
 
         def timeout_call(_extension, method, _params, **_kwargs):
@@ -228,9 +228,38 @@ class NativeV2DaemonTests(unittest.TestCase):
             raise daemon_module.ProtocolError("extension_timeout", "fixture timeout")
 
         self.daemon._extension_call = timeout_call
+        # 中文注释：只读和写动作都缓存超时，但只有写动作的执行结果不确定。
+        self.task['activeMode'] = 'full'
+        for action, extra in [('screenshot', {}), ('click', {'selector': '#button'})]:
+            with self.subTest(action=action):
+                request_id = 'timeout-' + action
+                before = len(dispatches)
+                with self.assertRaises(daemon_module.ProtocolError) as first:
+                    self.run_action(request_id, action, **extra)
+                self.assertEqual(first.exception.code, 'extension_timeout')
+                if action == 'screenshot':
+                    self.assertIs(first.exception.data['outcomeUnknown'], False)
+                self.assertEqual(self.task['state'], 'ready')
+                self.assertEqual(self.task['generation'], 4)
+                self.assertEqual(self.daemon.tab_leases[('instance-v2', 7)], 'task-v2')
+                with self.assertRaises(daemon_module.ProtocolError) as replay:
+                    self.run_action(request_id, action, **extra)
+                self.assertEqual(replay.exception.code, 'extension_timeout')
+                self.assertEqual(replay.exception.data, first.exception.data)
+                self.assertEqual(dispatches[before:], ['browser.execute'])
+
+    def test_disconnection_marks_needs_sync_and_same_request_is_not_replayed(self):
+        # 中文注释：断线与单次超时不同，仍须撤销代次、释放扩展状态并拒绝重放。
+        dispatches = []
+
+        def disconnected_call(_extension, method, _params, **_kwargs):
+            dispatches.append(method)
+            raise daemon_module.ProtocolError('extension_disconnected', 'fixture disconnected')
+
+        self.daemon._extension_call = disconnected_call
         with self.assertRaises(daemon_module.ProtocolError) as first:
             self.run_action("unknown-1", "screenshot")
-        self.assertEqual(first.exception.code, "extension_timeout")
+        self.assertEqual(first.exception.code, "extension_disconnected")
         self.assertEqual(self.task["state"], "needs_sync")
         with self.assertRaises(daemon_module.ProtocolError) as replay:
             self.run_action("unknown-1", "screenshot")

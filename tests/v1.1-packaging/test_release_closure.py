@@ -38,6 +38,8 @@ class ReleaseClosure(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.source = self.root / 'source'
         self.output = self.root / 'release'
+        # 中文注释：发布夹具跟随当前包版本，仍由打包器独立核对插件和扩展版本。
+        self.version = json.loads((ROOT / 'package.json').read_text())['version']
         for relative in INPUTS:
             original, target = ROOT / relative, self.source / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -74,16 +76,16 @@ class ReleaseClosure(unittest.TestCase):
 
     def test_formal_package_records_committed_source(self):
         commit = self._commit_fixture()
-        result = subprocess.run(['node', str(ROOT / 'scripts/package-executor.mjs'), '--source', str(self.source), '--output', str(self.output), '--release', '1.4.2'], capture_output=True, text=True)
+        result = subprocess.run(['node', str(ROOT / 'scripts/package-executor.mjs'), '--source', str(self.source), '--output', str(self.output), '--release', self.version], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(commit, (self.output / 'RELEASE-STATUS.txt').read_text())
-        self.assertEqual(load_installer().release_status(self.output), 'RELEASE V1.4.2')
+        self.assertEqual(load_installer().release_status(self.output), 'RELEASE V' + self.version)
 
     def test_formal_package_refuses_ignored_untracked_runtime_input(self):
         (self.source / '.gitignore').write_text('native-extension/unreviewed.mjs\n')
         self._commit_fixture()
         (self.source / 'native-extension/unreviewed.mjs').write_text('// unreviewed input\n')
-        result = subprocess.run(['node', str(ROOT / 'scripts/package-executor.mjs'), '--source', str(self.source), '--output', str(self.output), '--release', '1.4.2'], capture_output=True, text=True)
+        result = subprocess.run(['node', str(ROOT / 'scripts/package-executor.mjs'), '--source', str(self.source), '--output', str(self.output), '--release', self.version], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('input is not tracked', result.stderr)
         self.assertFalse(self.output.exists())

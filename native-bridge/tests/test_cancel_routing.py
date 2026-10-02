@@ -40,7 +40,9 @@ class CancelRoutingTests(unittest.TestCase):
                 daemon.extensions['browser'] = {'browser': 'chrome'}
                 task = daemon._dispatch_client('shared.create', {'owner': 'owner', 'title': 'failure', 'instanceId': 'browser', 'allowedOrigins': ['https://example.test']})
                 internal = daemon.tasks[task['id']]
-                internal.update(state='ready', activeMode='full')
+                internal.update(state='ready', activeMode='full', tabIds=[7], agentTabIds=[7])
+                # 中文注释：用真实租约断言单次超时不会撤权，其他失败仍请求保留页面的清理。
+                daemon.tab_leases[('browser', 7)] = task['id']
                 releases = []
                 def extension_call(extension, method, params, timeout=15):
                     if method == 'browser.release':
@@ -57,7 +59,13 @@ class CancelRoutingTests(unittest.TestCase):
                 daemon._extension_call = extension_call
                 with self.assertRaises((ProtocolError, RuntimeError)):
                     daemon._dispatch_client('shared.run', {'owner': 'owner', 'taskId': task['id'], 'requestId': 'run', 'action': 'new_tab', 'url': 'https://example.test'})
-                self.assertTrue(releases)
+                if outcome == 'extension_timeout':
+                    self.assertEqual(releases, [])
+                    self.assertEqual(internal['state'], 'ready')
+                    self.assertEqual(internal['generation'], task['generation'])
+                    self.assertEqual(daemon.tab_leases[('browser', 7)], task['id'])
+                else:
+                    self.assertTrue(releases)
                 self.assertTrue(all(p['closeAgentTabs'] is False for p in releases))
 
     def test_approval_worker_failure_preserves_tabs(self):

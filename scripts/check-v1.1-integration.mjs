@@ -188,8 +188,8 @@ function extensionInfo(root) {
   const credentials=/m\.method\s*===\s*['"]browser\.credentials['"]/.test(bridge)&&/this\.executor\.credentials\s*\(\s*m\.params\s*\)/.test(bridge)&&/async\s+credentials\s*\(p\)/.test(core);
   const interactionImport=/import\s*\{\s*Interactions\s*,[^}]*\}\s*from\s*['"]\.\.\/browser-interactions\/index\.mjs['"]/.test(core)&&/new\s+Interactions\s*\(/.test(methodBody(core,'interactionsFor'));
   const semanticsImport=/import\s*\{\s*createPageSemantics\s*\}\s*from\s*['"]\.\.\/page-semantics\/index\.js['"]/.test(core)&&/callSemanticWorld\s*\(/.test(perform);
-  // 中文注释：从执行分支读取当前语义动作，逐项核对页面函数，避免固定三项清单误报。
-  const semanticActions=arrayLiteral(perform,"else if(['page.parse'");
+  // 中文注释：有界观察加入语义分支首项后，仍从当前执行分支取动作并逐项核对页面函数。
+  const semanticActions=arrayLiteral(perform,"else if(['page.observe'");
   const generic=/this\.callWorld\s*\([^;]*p\.action/.test(perform)&&/const\s+fn\s*=\s*action\s*===\s*['"]inspect['"]\s*\?\s*inspectPage\s*:\s*pageAction/.test(world);
   const route=action=>{
     if(!bg||!execOk||!bridgeOk)return false;

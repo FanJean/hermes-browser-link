@@ -12,7 +12,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRATCH = Path.home() / ".hermes" / "cache" / "scratch"
-EXTENSION_ORIGIN = "chrome-extension://" + "a" * 32 + "/"
+# 中文注释：固定身份的宿主只接受此来源，不能用旧随机 ID 绕过目标测试的预检。
+EXTENSION_ORIGIN = "chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/"
 
 _STAGED_DAEMON_CHECK = r'''
 import hashlib

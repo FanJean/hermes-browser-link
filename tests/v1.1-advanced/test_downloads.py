@@ -169,10 +169,11 @@ class DownloadFlowTests(unittest.TestCase):
         _, staged = self.complete()
         staged.unlink()
         persisted = []
-        self.daemon._persist_tasks = lambda: persisted.append(True)
+        # 中文注释：活动钩子也会申请持久化；核对过期后的快照内容，不依赖调用次数。
+        self.daemon._persist_tasks = lambda: persisted.append([row['state'] for row in self.task['downloads']])
         self.daemon.download_registry.clock = lambda: time.time() + downloads.STAGING_TTL_SECONDS + 5
         self.assertEqual(self.client('shared.downloads')['downloads'][0]['state'], 'expired')
-        self.assertEqual(persisted, [True])
+        self.assertEqual(persisted[-1], ['expired'])
 
     def test_lost_tracking_is_unknown_without_cancelling_or_claiming_files(self):
         # 中文注释：撤权、断线、重启或新代次都会丢失扩展下载跟踪；不能持续声称下载仍在进行。

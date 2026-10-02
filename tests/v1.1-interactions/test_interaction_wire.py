@@ -245,6 +245,8 @@ class InteractionWireTests(unittest.TestCase):
         shot=self.run_action('interaction.capture','unknown-shot')
         bound=self.run_action('interaction.bounds','unknown-bound',screenshot_id=shot['id'],selector='#button')
         args=dict(screenshot_id=shot['id'],point=bound['imageCenter'],expected_ref=bound['ref'])
+        # 中文注释：单次超时只冻结请求；保留原传输以验证新请求仍可读取同一租约页。
+        transport = self.daemon._extension_call
         sent=[]
         def dropped_response(extension,method,params,timeout=15):
             sent.append((method,params))
@@ -255,7 +257,12 @@ class InteractionWireTests(unittest.TestCase):
         self.assertEqual(first.get('bridgeCode'),'extension_timeout')
         self.assertTrue(first['outcome_unknown'])
         second=self.run_action('interaction.click','unknown-click',**args)
-        self.assertEqual(second.get('bridgeCode'),'request_outcome_unavailable')
+        self.assertEqual(second.get('bridgeCode'),'extension_timeout')
         self.assertTrue(second['outcome_unknown'])
         self.assertEqual(len(sent),1)
-        self.assertEqual(self.task['state'],'needs_sync')
+        self.assertEqual(self.task['state'],'ready')
+        self.assertEqual(self.task['generation'],4)
+        self.assertEqual(self.daemon.tab_leases[('instance-v2',7)],'task-v2')
+        self.daemon._extension_call = transport
+        self.assertIn('image',self.run_action('interaction.capture','after-timeout'))
+        self.assertEqual(self.control('noop')['commands'],0)

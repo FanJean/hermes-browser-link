@@ -38,7 +38,7 @@ test('public actions traverse their real schema, daemon, extension and package r
   });
   assert.equal(row.supported, true);
   // 中文注释：新增控件动作必须通过同一条公开 schema、daemon、扩展和打包链路。
-  for(const name of ['ref_set_checked','ref_select_option','ref_press'])assert.equal(action(report,name).supported,true);
+  for(const name of ['page.parse','semantic_snapshot','ref_fill','ref_set_checked','ref_select_option','ref_press'])assert.equal(action(report,name).supported,true);
   assert.deepEqual(api.layers, {
     declaration: true, schema: true, daemon: true, extension: true, package: true,
   });
@@ -70,4 +70,29 @@ test('negative control: leftover action mentions cannot hide a missing daemon al
   assert.equal(row.supported, false);
   assert.ok(row.gaps.some(gap => gap.code === 'missing_daemon_allowlist'));
   assert.equal(report.status, 'fail');
+});
+
+test('语义动作声明不能掩盖缺失的执行分支或页面函数', async t => {
+  // 中文注释：保留公开声明和其他同名引用，只破坏实际分支，检查器仍必须报告缺口。
+  const controls = [
+    {name: 'page.parse', needle: "else if(['page.observe','page.parse',", replacement: "else if(['page.observe',"},
+    {name: 'ref_fill', needle: "if(op==='ref_fill'){", replacement: "if(op==='removed_ref_fill'){"},
+  ];
+  for (const control of controls) {
+    await t.test(control.name, async child => {
+      const root = await fixtureRoot(child);
+      const corePath = path.join(root, 'native-extension/core.mjs');
+      const core = await readFile(corePath, 'utf8');
+      assert.ok(core.includes(control.needle), '负向夹具必须命中当前执行分支');
+      await writeFile(corePath, core.replace(control.needle, control.replacement));
+      const report = analyzeRepository(root);
+      const row = action(report, control.name);
+      assert.equal(row.layers.schema, true);
+      assert.equal(row.layers.daemon, true);
+      assert.equal(row.layers.extension, false);
+      assert.equal(row.supported, false);
+      assert.ok(row.gaps.some(gap => gap.code === 'missing_extension_route'));
+      assert.equal(report.status, 'fail');
+    });
+  }
 });

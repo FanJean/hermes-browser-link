@@ -72,6 +72,8 @@ class DiagnosticsDaemonIntegrationTests(unittest.TestCase):
         self.home = Path(self.temp.name) / "hermes-home"
         self.daemon = BridgeDaemon(self.home)
         self.daemon._prepare_data_dir()
+        # 中文注释：删除临时目录前等待合并写盘，避免计时器在已删除目录里写文件。
+        self.addCleanup(self.daemon._flush_tasks)
         notification_sender, self.notification_peer = socket.socketpair()
         self.addCleanup(notification_sender.close)
         self.addCleanup(self.notification_peer.close)
@@ -158,11 +160,24 @@ class DiagnosticsDaemonIntegrationTests(unittest.TestCase):
             if path.is_file() and (path.name == "events.jsonl" or path.name.startswith("events."))
         }
 
+    def task_file_snapshot(self, daemon):
+        # 中文注释：显式刷新后读文件，断言不依赖 100ms 合并写盘计时器是否已经运行。
+        daemon._flush_tasks()
+        return json.loads(daemon.tasks_path.read_text())
+
+    def assert_only_activity_changed(self, daemon, before):
+        # 中文注释：诊断查询会刷新活动时间；其他任务字段与持久化日志必须保持不变。
+        after = self.task_file_snapshot(daemon)
+        self.assertEqual(len(after['tasks']), 1)
+        self.assertGreaterEqual(after['tasks'][0]['lastActivityAt'], before['tasks'][0]['lastActivityAt'])
+        after['tasks'][0]['lastActivityAt'] = before['tasks'][0]['lastActivityAt']
+        self.assertEqual(after, before)
+
     def test_route_reads_real_daemon_request_events_with_bounded_pagination(self):
         self.run_snapshot("private-request-one")
         self.run_snapshot("private-request-two")
         before_logs = self.event_files_snapshot()
-        before_tasks = self.daemon.tasks_path.read_bytes()
+        before_tasks = self.task_file_snapshot(self.daemon)
 
         first = self.client.get(
             f"{PREFIX}/{TASK_ID}/diagnostics", params={"limit": "1", "cursor": "0"}
@@ -192,11 +207,13 @@ class DiagnosticsDaemonIntegrationTests(unittest.TestCase):
             self.assertNotIn(self.owner, response.text)
             self.assertNotIn("private-request-one", response.text)
             self.assertNotIn("private-request-two", response.text)
+            # 中文注释：诊断只增加白名单动作字段，仍严格拒绝多余字段和请求正文。
             self.assertTrue(all(set(row) == {
-                "timestamp", "component", "event_type", "status", "duration_ms", "error_code"
+                "timestamp", "component", "event_type", "status", "duration_ms", "error_code", "action"
             } for row in response.json()["events"]))
+            self.assertTrue(all(row['action'] == 'snapshot' for row in response.json()['events']))
         self.assertEqual(self.event_files_snapshot(), before_logs)
-        self.assertEqual(self.daemon.tasks_path.read_bytes(), before_tasks)
+        self.assert_only_activity_changed(self.daemon, before_tasks)
 
     def test_request_hash_is_derived_and_only_registered_hash_is_queryable(self):
         request_id = "raw-request-id-must-not-be-stored"
@@ -273,7 +290,9 @@ class DiagnosticsDaemonIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         event = response.json()["events"][-1]
         self.assertEqual(event["status"], "unknown")
-        self.assertEqual(event["error_code"], "TIMEOUT")
+        # 中文注释：固定协议错误码保留具体原因，不能退回会丢失原因的通用 TIMEOUT。
+        self.assertEqual(event["error_code"], "extension_timeout")
+        self.assertEqual(event['action'], 'click')
         self.assertNotIn(SECRET_URL, response.text)
         self.assertNotIn(SECRET_ERROR, response.text)
 
@@ -290,7 +309,9 @@ class DiagnosticsDaemonIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         event = response.json()["events"][-1]
         self.assertEqual(event["status"], "failed")
-        self.assertEqual(event["error_code"], "TIMEOUT")
+        # 中文注释：只读超时仍是已知失败；具体码和动作与写入诊断分别核对。
+        self.assertEqual(event["error_code"], "extension_timeout")
+        self.assertEqual(event['action'], 'snapshot')
         self.assertNotIn(SECRET_URL, response.text)
         self.assertNotIn(SECRET_ERROR, response.text)
 
@@ -353,14 +374,16 @@ class DiagnosticsDaemonIntegrationTests(unittest.TestCase):
 
     def test_read_after_daemon_restart_uses_existing_logs_without_writer_recovery(self):
         self.run_snapshot("persisted-request")
+        # 中文注释：重启夹具先落盘并取消旧实例计时器，不能让旧快照覆盖重启后的任务。
+        self.daemon._flush_tasks()
         restored = BridgeDaemon(self.home)
+        self.addCleanup(restored._flush_tasks)
         restored._load_tasks()
         self.rpc = ProductionDaemonRPC(restored)
         self.runtime._client = self.rpc
         root = restored.data_dir / "diagnostics"
         before_logs = self.event_files_snapshot(root)
-        restored._flush_tasks()
-        before_tasks = restored.tasks_path.read_bytes()
+        before_tasks = self.task_file_snapshot(restored)
 
         response = self.client.get(f"{PREFIX}/{TASK_ID}/diagnostics")
 
@@ -368,7 +391,7 @@ class DiagnosticsDaemonIntegrationTests(unittest.TestCase):
         self.assertEqual([event["status"] for event in response.json()["events"]], ["succeeded"])
         self.assertIsNone(restored.diagnostics)
         self.assertEqual(self.event_files_snapshot(root), before_logs)
-        self.assertEqual(restored.tasks_path.read_bytes(), before_tasks)
+        self.assert_only_activity_changed(restored, before_tasks)
 
 
 if __name__ == "__main__":
