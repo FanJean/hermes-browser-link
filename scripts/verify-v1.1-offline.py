@@ -105,6 +105,8 @@ PYTHON_SUITES = (
 # Some directories contain explicitly unsafe runners: select files by fixed name.
 PYTHON_FILES = {
     'tests/v1.1-interactions': ('test_interaction_wire.py',),
+    # 中文注释：1.3.6 同任务并发开页用例显式登记，避免清单检查把它当作未审阅文件。
+    'tests/v1.3.6': ('test_concurrent_tabs.py',),
     'tests/native-v2': ('test_wire_contract.py', 'test_daemon_wire.py', 'test_click_mode.py'),
     'executor-plugin/tests': ('test_native_tools.py', 'test_api_native.py',
                               'test_native_integration.py', 'test_plugin.py', 'test_open_tool.py',
