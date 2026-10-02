@@ -1,4 +1,5 @@
 """中文注释：无 socket 的 daemon 回归，仅使用临时目录和合成凭据。"""
+import os
 import contextlib
 import importlib.util
 import io
@@ -247,12 +248,18 @@ class CookieMirrorTests(unittest.TestCase):
                         data = None
                     if data is not None:
                         self.assertNotIn(SECRET.encode(), data, str(file.relative_to(home)))
-                # 中文注释：全仓源文件也不落入标记值；夹具通过分段字符串在内存构造。用 git 列文件，CI 不依赖 ripgrep。
-                scan = __import__('subprocess').run(['git', 'ls-files', '-co', '--exclude-standard'], cwd=ROOT, capture_output=True, text=True, check=True)
-                for relative in scan.stdout.splitlines():
-                    path = ROOT / relative
-                    if path.is_file() and 'node_modules' not in path.parts:
-                        self.assertNotIn(SECRET.encode(), path.read_bytes(), relative)
+                # 中文注释：全仓源文件也不落入标记值；夹具通过分段字符串在内存构造。
+                # 纯 Python 遍历：门禁在非 git 快照里运行，CI 也不一定有 ripgrep。
+                skip = {'node_modules', '.git', '.ci'}
+                for dirpath, dirnames, filenames in os.walk(ROOT):
+                    dirnames[:] = [name for name in dirnames if name not in skip]
+                    for name in filenames:
+                        path = Path(dirpath) / name
+                        try:
+                            data = path.read_bytes()
+                        except (FileNotFoundError, PermissionError, IsADirectoryError):
+                            continue
+                        self.assertNotIn(SECRET.encode(), data, str(path.relative_to(ROOT)))
             finally:
                 logging.getLogger().removeHandler(log)
 
