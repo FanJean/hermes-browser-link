@@ -14,7 +14,8 @@ async function background(){
  const executor={closingTabs:new Set(),tasks:new Map([['task',task]]),leases:new Map([[7,'task']]),attached:new Set([7]),release:async p=>{releases.push(p);task.revoked=true;await new Promise(r=>finish=r);}};
  const bridge={request:async(method,params)=>{requests.push({method,params});return {state:'cancelled'};}};
  const event=name=>({addListener:fn=>events[name]=fn});
- const chrome={runtime:{id:'ext',onMessage:event('message')},alarms:{create(){},onAlarm:event('alarm')},tabs:{onCreated:event('created'),onRemoved:event('removed'),onUpdated:event('updated')},debugger:{onDetach:event('detach')}};
+ // 中文注释：合成后台提供通知事件 API，不访问系统通知中心。
+ const chrome={notifications:{onClicked:{addListener(){}},clear:async()=>true},runtime:{id:'ext',onMessage:event('message')},alarms:{create(){},onAlarm:event('alarm')},tabs:{onCreated:event('created'),onRemoved:event('removed'),onUpdated:event('updated')},debugger:{onDetach:event('detach')}};
  let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
  source=source.replace(/^import .*;\n/gm,'').replace('const executor=new Executor(chrome,p=>bridge?.request(\'extension.tab_event\',p).catch(()=>{}));','const executor=injectedExecutor;').replace('const consent=new BrowserConsent(chrome.storage.local,executor);','const consent={load:async()=>{}};').replace(/connect\(\);\s*$/,'bridge=injectedBridge;connected=true;');
  vm.runInNewContext(source,{CookieMirror,registerWorkspaceStartup:()=>{},chrome,isUiSender,Executor:function(){return executor;},injectedExecutor:executor,injectedBridge:bridge});
@@ -68,7 +69,8 @@ test('production onCreated preserves ambiguous concurrent children and reports u
   if(method==='Runtime.callFunctionOn'){started();await gate;return {result:{value:{ok:true}}};}
  }};
  const e=new Executor(f.api),ownedEvents=[];e.onEvent=event=>ownedEvents.push(event);await e.approve(trustedTask());e.setMode({...trustedTask(),modeGeneration:2,activeMode:'full'});
- const chrome={runtime:{id:'ext',onMessage:{addListener:fn=>events.message=fn}},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{onCreated:{addListener:fn=>events.created=fn},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
+ // 中文注释：合成后台提供通知事件 API，不访问系统通知中心。
+ const chrome={notifications:{onClicked:{addListener(){}},clear:async()=>true},runtime:{id:'ext',onMessage:{addListener:fn=>events.message=fn}},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{onCreated:{addListener:fn=>events.created=fn},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
  let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
  source=source.replace(/^import .*;\n/gm,'').replace("const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}));",'const executor=injectedExecutor;').replace('const consent=new BrowserConsent(chrome.storage.local,executor);','const consent={load:async()=>{}};').replace(/connect\(\);\s*$/,'');
  vm.runInNewContext(source,{CookieMirror,registerWorkspaceStartup:()=>{},chrome,isUiSender,Executor:function(){return e;},injectedExecutor:e});

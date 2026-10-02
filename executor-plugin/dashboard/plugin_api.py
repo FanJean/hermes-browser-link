@@ -273,6 +273,120 @@ class SharedCreateBody(BaseModel):
     allowedOrigins: list[str] = Field(min_length=1, max_length=64)
 
 
+# 中文注释：镜像路由采用闭合字段和类型白名单，异常响应也不回显请求体或扩展文本。
+_COOKIE_COUNTS = ('count', 'success', 'failed', 'matched', 'missing', 'cleared', 'clearFailed')
+_COOKIE_REASONS = {'expired', 'prefix_constraint', 'partition_write_failed', 'write_failed'}
+_COOKIE_STATES = {'preparing', 'approval_required', 'executing', 'completed', 'denied', 'failed'}
+
+
+def _cookie_sites_view(value):
+    if not isinstance(value, list) or len(value) > 4096:
+        raise ValueError('invalid cookie sites')
+    rows = []
+    for item in value:
+        if (not isinstance(item, dict) or not isinstance(item.get('site'), str)
+                or len(item['site']) > 253
+                or not re.fullmatch(r'(?:[a-z0-9-]+\.)*[a-z0-9-]+|\[[0-9a-f:]{2,45}\]', item['site'])):
+            raise ValueError('invalid cookie site')
+        row = {'site': item['site']}
+        for key in _COOKIE_COUNTS:
+            if key in item:
+                if type(item[key]) is not int or not 0 <= item[key] <= 1000000:
+                    raise ValueError('invalid cookie count')
+                row[key] = item[key]
+        for key in ('httpOnly', 'session'):
+            if key in item:
+                if type(item[key]) is not bool:
+                    raise ValueError('invalid cookie flag')
+                row[key] = item[key]
+        if isinstance(item.get('reasons'), dict):
+            row['reasons'] = {key: n for key, n in item['reasons'].items()
+                              if key in _COOKIE_REASONS and type(n) is int and 0 <= n <= 1000000}
+        rows.append(row)
+    return rows
+
+
+def _cookie_mirror_view(value):
+    if not isinstance(value, dict) or value.get('status') not in _COOKIE_STATES:
+        raise ValueError('invalid cookie state')
+    result = {'status': value['status'], 'sites': _cookie_sites_view(value.get('sites'))}
+    for key in ('transferId', 'source', 'target'):
+        if not isinstance(value.get(key), str) or not re.fullmatch(r'[a-f0-9-]{32,36}', value[key]):
+            raise ValueError('invalid cookie identity')
+        result[key] = value[key]
+    expires = value.get('expiresAt')
+    if type(expires) not in (int, float) or not math.isfinite(expires) or not 0 < expires < 1e12:
+        raise ValueError('invalid cookie deadline')
+    result['expiresAt'] = expires
+    if value['status'] == 'completed' and any(key not in value for key in ('success', 'failed', 'matched', 'missing')):
+        raise ValueError('invalid cookie result')
+    for key in _COOKIE_COUNTS:
+        if key in value:
+            if type(value[key]) is not int or not 0 <= value[key] <= 1000000:
+                raise ValueError('invalid cookie count')
+            result[key] = value[key]
+    if value.get('reason') in {'transfer_failed', 'expired', 'disconnected'}:
+        result['reason'] = value['reason']
+    return result
+
+
+async def _cookie_mirror_body(request: Request):
+    try:
+        raw = await request.body()
+        if len(raw) > 128 * 1024:
+            raise ValueError('invalid cookie selection')
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) - {'source', 'target', 'sites', 'options'}:
+            raise ValueError('invalid cookie selection')
+        _native_tools()._validate('browser_shared_cookie_mirror', {'action': 'request_mirror', **body})
+        if body['source'] == body['target']:
+            raise ValueError('invalid cookie target')
+        # 中文注释：沿用站点白名单，重复站点在进入守护进程前拒绝。
+        _cookie_sites_view([{'site': site} for site in body['sites']])
+        if len(set(body['sites'])) != len(body['sites']):
+            raise ValueError('invalid cookie selection')
+        return body
+    except Exception:
+        raise HTTPException(422, 'Cookie 镜像参数无效；请选择不同的已连接浏览器和有效站点。') from None
+
+
+@router.get('/shared/browsers/{instance_id}/cookie-sites', dependencies=[Depends(_shared_http_guard)])
+def shared_cookie_sites(instance_id: str):
+    if not instance_id or len(instance_id) > 256:
+        raise HTTPException(422, '浏览器实例无效')
+    def run():
+        runtime = _native_profile_runtime()
+        value = runtime.call('browser.cookie_mirror', {
+            'action': 'list_sites', 'source': instance_id, 'owner': runtime.authority.ui_owner()})
+        rows = _cookie_sites_view(value.get('sites') if isinstance(value, dict) else None)
+        if any('count' not in row for row in rows):
+            raise ValueError('invalid cookie inventory')
+        # 中文注释：列表端点只返回站点、数量及两项标记，不透传状态或扩展对象。
+        return {'sites': [{key: row[key] for key in ('site', 'count', 'httpOnly', 'session') if key in row} for row in rows]}
+    return _shared_call(run)
+
+
+@router.post('/shared/cookie-mirror', dependencies=[Depends(_shared_http_guard)])
+def shared_cookie_mirror(body: dict = Depends(_cookie_mirror_body)):
+    def run():
+        runtime = _native_profile_runtime()
+        return _cookie_mirror_view(runtime.call('browser.cookie_mirror', {
+            'action': 'request_mirror', **body, 'owner': runtime.authority.ui_owner()}))
+    return _shared_call(run)
+
+
+@router.get('/shared/cookie-mirror/{transfer_id}', dependencies=[Depends(_shared_http_guard)])
+def shared_cookie_mirror_status(transfer_id: str):
+    if not re.fullmatch(r'[a-f0-9]{32}', transfer_id):
+        raise HTTPException(422, 'Cookie 镜像编号无效')
+    def run():
+        runtime = _native_profile_runtime()
+        # 中文注释：桌面身份只读取自身请求；不枚举模型 owner，也不保留到期状态或 Cookie。
+        return _cookie_mirror_view(runtime.call('browser.cookie_mirror', {
+            'action': 'status', 'transferId': transfer_id, 'owner': runtime.authority.ui_owner()}))
+    return _shared_call(run)
+
+
 @router.get('/shared/browsers', dependencies=[Depends(_shared_http_guard)])
 def shared_browsers():
     return _shared_call(lambda: _browser_rows(_native_profile_runtime().call('browser.list', {})))

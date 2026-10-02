@@ -21,6 +21,8 @@ const dependencyFiles = [
 ];
 const sourceCopies = [
   'manifest.json',
+  // 中文注释：四种尺寸图标必须逐字复制，发布包不能遗漏资源。
+  'icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png',
   'bridge.mjs',
   'request-ledger.mjs',
   'background.mjs',
@@ -119,6 +121,7 @@ async function assertRelativeClosure(directory) {
     manifest.side_panel?.default_path,
     manifest.devtools_page,
     ...Object.values(manifest.icons || {}),
+    ...Object.values(manifest.action?.default_icon || {}),
     ...(manifest.content_scripts || []).flatMap(script => [...(script.js || []), ...(script.css || [])]),
     ...(manifest.web_accessible_resources || []).flatMap(resource => resource.resources || []),
   ].filter(value => typeof value === 'string');
@@ -314,14 +317,14 @@ test('native build refuses to replace its source directory without changing it',
   }
 });
 
-test('1.5.0 发布入口报告同一个版本', async () => {
+test('1.5.1 发布入口报告同一个版本', async () => {
   // 中文注释：以包版本为发布基准，插件、桌面 API、扩展和 Native 握手必须一致。
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const plugin = await readFile(path.join(root, 'executor-plugin/plugin.yaml'), 'utf8');
   const version = /^version:\s*([^\s]+)$/m.exec(plugin)?.[1];
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(pkg.version, '1.5.0');
+  assert.equal(pkg.version, '1.5.1');
   assert.equal(version, pkg.version);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);
@@ -331,4 +334,17 @@ test('1.5.0 发布入口报告同一个版本', async () => {
   assert.equal(desktop.version, version);
   assert.equal(extension.version, version);
   assert.ok(background.includes(`version:'${version}'`));
+});
+
+// 中文注释：工具栏独有图标引用也必须闭包检查，不能只检查 manifest.icons。
+test('native build rejects a missing toolbar-only icon resource',async()=>{
+ const work=await mkdtemp(path.join(scratch,'toolbar-icon-'));
+ try{
+  const sourceRoot=await fixture(work),manifestPath=path.join(sourceRoot,'native-extension/manifest.json');
+  const manifest=JSON.parse(await readFile(manifestPath,'utf8'));
+  manifest.action.default_icon={'16':'missing-toolbar-icon.png'};
+  await writeFile(manifestPath,JSON.stringify(manifest));
+  const result=runBuild(sourceRoot,path.join(work,'output'));
+  assert.notEqual(result.status,0);assert.match(result.stderr,/missing referenced resource.*missing-toolbar-icon/);
+ }finally{await rm(work,{recursive:true,force:true})}
 });

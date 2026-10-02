@@ -1,5 +1,5 @@
 import { host, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA, useQuery } from '@hermes/plugin-sdk'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'browser-link'
@@ -65,11 +65,115 @@ const BROWSER_WORK_SECTION_STYLE = { display: 'flex', flexDirection: 'column', g
 const BROWSER_WORK_HEADING_STYLE = { margin: 0, color: 'var(--ui-text-primary)', fontSize: '0.875rem', fontWeight: 600 }
 const BROWSER_ROW_STYLE = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: '0.5rem 1rem', minWidth: 0, padding: '0.875rem 0', borderBottom: '1px solid var(--ui-stroke-secondary)' }
 
+// 中文注释：桌面只渲染固定的元数据；即便响应混入 Cookie 或异常文本也不进入 HTML。
+const COOKIE_ACTIVE = ['preparing', 'approval_required', 'executing']
+const COOKIE_FAILURES = { transfer_failed: '传输失败', disconnected: '浏览器已断开', expired: '已过期', unavailable: '状态查询失败，请在扩展核实，不要重复发起', prefix_constraint: 'Cookie 前缀约束', partition_write_failed: '分区写入失败', write_failed: '写入失败' }
+const cookieCount = n => { if (!Number.isInteger(n) || n < 0 || n > 1000000) throw Error('invalid cookie count'); return n }
+const cookieSite = site => typeof site === 'string' && site.length <= 253 && /^(?:[a-z0-9-]+\.)*[a-z0-9-]+$|^\[[0-9a-f:]{2,45}\]$/.test(site)
+const cookieTargets = (rows, source) => rows.filter(row => row.connected === true && row.instanceId !== source && typeof row.instanceId === 'string' && row.features?.includes('cookie_mirror_v1'))
+function cookieInventory(value) {
+  if (!Array.isArray(value?.sites) || value.sites.length > 4096 || value.sites.some(row => !cookieSite(row?.site))) throw Error('invalid cookie inventory')
+  return value.sites.map(row => ({ site: row.site, count: cookieCount(row.count), httpOnly: row.httpOnly === true, session: row.session === true }))
+}
+function cookieTransfer(value) {
+  if (!/^[a-f0-9]{32}$/.test(value?.transferId) || ![...COOKIE_ACTIVE, 'completed', 'denied', 'failed'].includes(value?.status) || !Number.isFinite(value.expiresAt)) throw Error('invalid cookie transfer')
+  return { transferId: value.transferId, status: value.status, expiresAt: value.expiresAt,
+    reason: ['transfer_failed', 'disconnected', 'expired'].includes(value.reason) ? value.reason : 'transfer_failed',
+    ...Object.fromEntries(['success', 'failed', 'matched', 'missing'].filter(key => value.status === 'completed' || value[key] !== undefined).map(key => [key, cookieCount(value[key])])),
+    sites: (Array.isArray(value.sites) ? value.sites : []).filter(row => cookieSite(row?.site)).map(row => ({ site: row.site,
+      reasons: Object.entries(row.reasons || {}).filter(([key]) => ['expired', 'prefix_constraint', 'partition_write_failed', 'write_failed'].includes(key)).map(([key, n]) => `${COOKIE_FAILURES[key]} ${cookieCount(n)}`) })) }
+}
+function cookieStatusText(value) {
+  if (!value) return ''
+  if (value.status === 'completed') return `完成：成功 ${value.success} / 失败 ${value.failed}，回读匹配 ${value.matched} / 缺失 ${value.missing}`
+  if (value.status === 'failed') return `失败：${COOKIE_FAILURES[value.reason] || COOKIE_FAILURES.transfer_failed}`
+  return ({ preparing: '正在准备，等待扩展确认', approval_required: '等待扩展确认', executing: '复制中', denied: '用户拒绝', expired: '已过期，请重新选择后发起' })[value.status] || '状态待确认'
+}
+
+const COOKIE_FIELD_CLASS = 'rounded-md border border-(--ui-stroke-secondary) bg-(--ui-bg-primary) px-3 py-2 text-sm text-(--ui-text-primary) focus-visible:outline-2 focus-visible:outline-(--ui-accent)'
+
+function CookieMirrorPanel({ browser, rows, fresh }) {
+  const [sites, setSites] = useState(null), [search, setSearch] = useState(''), [loading, setLoading] = useState(false)
+  const [selection, setSelection] = useState([]), [dialogSites, setDialogSites] = useState(null)
+  const [target, setTarget] = useState(''), [clearTarget, setClearTarget] = useState(false)
+  const [persist, setPersist] = useState(false), [days, setDays] = useState('7')
+  const [transfer, setTransfer] = useState(null), [error, setError] = useState(''), [sending, setSending] = useState(false)
+  const dialog = useRef(null), inFlight = useRef(false)
+  const targets = cookieTargets(rows, browser.instanceId)
+  const status = useQuery({ queryKey: [ID, 'cookie-mirror', transfer?.transferId || null], initialData: transfer || undefined,
+    // 中文注释：只按在途状态轮询；焦点或网络恢复不能改写已完成结果或重查未知结果。
+    enabled: !!transfer, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false,
+    refetchInterval: query => COOKIE_ACTIVE.includes(query.state.data?.status) ? 1000 : false,
+    queryFn: async () => {
+      // 中文注释：到期仅停止查询并显示过期；不重发、不延长 daemon 的 60 秒内存期限。
+      if (Date.now() >= transfer.expiresAt * 1000) return { status: 'expired' }
+      try { return cookieTransfer(await api(`/shared/cookie-mirror/${transfer.transferId}`)) }
+      catch { return { status: Date.now() >= transfer.expiresAt * 1000 ? 'expired' : 'failed', reason: 'unavailable' } }
+    } })
+  const current = status.data || transfer
+  const busy = sending || COOKIE_ACTIVE.includes(current?.status)
+  const available = fresh && browser.connected === true
+  // 中文注释：原生对话框负责焦点限制、Esc 和关闭后焦点返回，不创建另一套模态组件。
+  useEffect(() => { if (dialogSites) dialog.current.showModal(); else if (dialog.current?.open) dialog.current.close() }, [dialogSites])
+  const loadSites = async () => {
+    if (!available || loading) return
+    setLoading(true); setError('')
+    try { setSites(cookieInventory(await api(`/shared/browsers/${encodeURIComponent(browser.instanceId)}/cookie-sites`))); setSelection([]) }
+    catch { setError('站点读取失败，请检查源扩展连接后重新读取。') }
+    finally { setLoading(false) }
+  }
+  const choose = chosen => {
+    setDialogSites(chosen); setTarget(''); setClearTarget(false); setPersist(false); setDays('7'); setError('')
+  }
+  const send = async () => {
+    if (inFlight.current || busy || !available || !targets.some(row => row.instanceId === target) || !dialogSites?.length || persist && (!Number.isInteger(Number(days)) || Number(days) < 1 || Number(days) > 365)) return
+    inFlight.current = true; setSending(true); setError('')
+    try {
+      const result = cookieTransfer(await api('/shared/cookie-mirror', { method: 'POST', body: {
+        source: browser.instanceId, target, sites: dialogSites, options: { clearTarget, ...(persist ? { persistDays: Number(days) } : {}) } } }))
+      setTransfer(result); setDialogSites(null)
+    } catch { setError('镜像请求结果未确认，请在源扩展核实，不要重复发起。'); setDialogSites(null) }
+    finally { inFlight.current = false; setSending(false) }
+  }
+  const filtered = (sites || []).filter(row => row.site.includes(search.trim().toLowerCase()))
+  return jsxs('section', { 'aria-label': 'Cookie 镜像', style: { gridColumn: '1 / -1', minWidth: 0 }, children: [
+    button(loading ? '正在读取…' : '读取 Cookie 站点', loadSites, { disabled: !available || loading || busy }),
+    error ? jsx('p', { role: 'alert', className: 'mt-2 text-sm text-(--ui-text-danger)', children: error }) : null,
+    sites ? jsxs('div', { className: 'mt-3 flex flex-col gap-3', children: [
+      jsx('input', { type: 'search', 'aria-label': '搜索 Cookie 站点', placeholder: '搜索网站', value: search, onChange: e => setSearch(e.target.value), className: COOKIE_FIELD_CLASS }),
+      button(`镜像已选站点（${selection.length}）`, () => choose(selection), { disabled: !available || busy || !selection.length }),
+      !filtered.length ? jsx('p', { className: 'text-sm text-(--ui-text-secondary)', children: sites.length ? '没有匹配的站点。' : '该浏览器没有 Cookie 站点。' }) : null,
+      jsx('ul', { className: 'm-0 max-h-72 list-none overflow-auto p-0', children: filtered.map(row => jsxs('li', { className: 'flex flex-wrap items-center gap-3 border-b border-(--ui-stroke-secondary) py-2', children: [
+        jsxs('label', { className: 'flex min-w-0 flex-1 items-center gap-2 text-sm text-(--ui-text-primary)', children: [
+          jsx('input', { type: 'checkbox', checked: selection.includes(row.site), disabled: busy, 'aria-label': `选择 ${row.site}`, onChange: e => setSelection(chosen => e.target.checked ? [...chosen, row.site] : chosen.filter(site => site !== row.site)) }),
+          jsx('span', { className: 'break-all', children: row.site }) ] }),
+        jsx('span', { className: 'text-xs text-(--ui-text-secondary)', children: `${row.count} 个 Cookie${row.httpOnly ? ' · httpOnly' : ''}${row.session ? ' · 会话' : ''}` }),
+        button('镜像', () => choose([row.site]), { disabled: !available || busy }) ] }, row.site)) }) ] }) : null,
+    current ? jsxs('div', { className: 'mt-3 text-sm text-(--ui-text-secondary)', role: 'status', 'aria-live': 'polite', children: [
+      jsx('p', { children: cookieStatusText(current) }),
+      ['preparing', 'approval_required'].includes(current.status) ? jsx('p', { children: '必须在源浏览器扩展里批准。浏览器在后台时可点击系统通知打开面板；也可切到源浏览器，点扩展弹窗里的「打开待确认面板」。' }) : null,
+      ...(current.sites || []).filter(row => row.reasons.length).map(row => jsx('p', { children: `${row.site}：${row.reasons.join(' / ')}` }, row.site)) ] }) : null,
+    jsxs('dialog', { ref: dialog, onCancel: () => setDialogSites(null), 'aria-label': '镜像 Cookie 到其他浏览器', className: 'max-h-[85vh] w-full max-w-lg overflow-auto rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-primary) p-6 text-(--ui-text-primary)', children: [
+      jsx('h2', { className: 'm-0 text-lg font-semibold', children: '镜像 Cookie' }),
+      jsx('p', { className: 'text-sm', children: '批准后会把该站点登录态复制到目标浏览器。必须在源浏览器扩展里批准，全部访问也不能跳过确认。' }),
+      jsx('p', { className: 'break-all text-sm', children: (dialogSites || []).join('、') }),
+      jsxs('label', { className: 'flex flex-col gap-2 text-sm', children: ['目标浏览器 / 配置', jsx('select', { value: target, onChange: e => setTarget(e.target.value), className: COOKIE_FIELD_CLASS, children: [
+        jsx('option', { value: '', children: '请选择目标浏览器' }, 'empty'),
+        ...targets.map(row => jsx('option', { value: row.instanceId, children: `${browserLabel(row.browser)} · ${row.instanceId}` }, row.instanceId)) ] })] }),
+      !targets.length ? jsx('p', { children: '没有其他已连接且支持 Cookie 镜像的浏览器，请连接目标扩展。' }) : null,
+      jsxs('label', { className: 'mt-4 flex items-center gap-2 text-sm', children: [jsx('input', { type: 'checkbox', checked: clearTarget, onChange: e => setClearTarget(e.target.checked) }), '导入前清除目标这些站点的旧 Cookie'] }),
+      jsxs('label', { className: 'mt-3 flex items-center gap-2 text-sm', children: [jsx('input', { type: 'checkbox', checked: persist, onChange: e => setPersist(e.target.checked) }), '会话 Cookie 持久保存'] }),
+      persist ? jsxs('label', { className: 'mt-2 flex items-center gap-2 text-sm', children: [jsx('input', { type: 'number', min: 1, max: 365, value: days, 'aria-label': '持久保存天数', onChange: e => setDays(e.target.value), className: COOKIE_FIELD_CLASS }), '天（1–365）'] }) : null,
+      jsxs('div', { className: 'mt-6 flex justify-end gap-2', children: [button('取消', () => setDialogSites(null), { disabled: sending }), button(sending ? '请求中…' : '镜像', send, { disabled: !available || busy || !targets.some(row => row.instanceId === target) || persist && (!Number.isInteger(Number(days)) || Number(days) < 1 || Number(days) > 365) })] }) ] })
+  ] })
+}
+
 function BrowserWork() {
   const browsers = useQuery({ queryKey: [ID, 'browsers'], queryFn: () => collection('/shared/browsers'), retry: false, refetchInterval: POLL_MS })
   const [accessAttempts, setAccessAttempts] = useState({})
   const [primaryPending, setPrimaryPending] = useState(null)
   const [primaryError, setPrimaryError] = useState(false)
+  const [cookiePanels, setCookiePanels] = useState({})
   const rows = Array.isArray(browsers.data) ? browsers.data : []
   const browsersFresh = browserListFresh(browsers)
   // 中文注释：状态未刷新成功时不把旧数据计入在线或离线数量。
@@ -125,7 +229,11 @@ function BrowserWork() {
         browser.accessRequestSupported===true?button(compactAction,()=>requestBrowserAccess(browser),{disabled}):null,
         browser.primary===true?null:button(primaryPending===browser.instanceId?'设置中…':'设为主要链接',()=>setPrimary(browser),
           {disabled:!browsersFresh||browser.connected!==true||!!primaryPending})
-      ]})
+      ]}),
+      // 中文注释：入口单独占一行，避免在窄窗口挤压已有模式和主要链接按钮。
+      browser.connected===true&&browser.features?.includes('cookie_mirror_v1')?jsx('div',{style:{gridColumn:'1 / -1'},children:button(cookiePanels[browser.instanceId]?'收起 Cookie 镜像':'Cookie 镜像',()=>setCookiePanels(current=>({...current,[browser.instanceId]:!current[browser.instanceId]})))}):null,
+      // 中文注释：收起只隐藏面板，保留同一请求的查询和结果，避免误发第二次镜像。
+      cookiePanels[browser.instanceId]!==undefined?jsx('div',{hidden:!cookiePanels[browser.instanceId],style:{gridColumn:'1 / -1'},children:jsx(CookieMirrorPanel,{browser,rows,fresh:browsersFresh})}):null
     ]},browser.instanceId)
   }
 

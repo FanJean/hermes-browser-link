@@ -170,6 +170,8 @@ async function verifyLayout(root) {
     'browser-link/script_lane/action_session.py','browser-link/script_lane/child.py',
     'browser-link/script_lane/tool.py','browser-link/open_tool.py',
     'browser-link/skills/use-my-browser/SKILL.md','native-extension/manifest.json',
+    // 中文注释：四尺寸扩展图标是发布必需文件，构建与包清单同时验收。
+    'native-extension/icon-16.png','native-extension/icon-32.png','native-extension/icon-48.png','native-extension/icon-128.png',
     'docs/python-scripting.md','docs/CHANGELOG.md',
     'LICENSE','README.md',
     'INSTALL.txt','RELEASE-STATUS.txt','install-executor.py']) {

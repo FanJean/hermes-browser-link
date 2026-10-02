@@ -1,5 +1,5 @@
 name: browser-link
-version: 1.5.0
+version: 1.5.1
 manifest_version: 2
 api_version: 1
 requires_hermes: ">=0.21.4"

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hermes Browser Link",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "permissions": [
     "nativeMessaging",
     "debugger",
@@ -10,7 +10,8 @@
     "downloads",
     "storage",
     "alarms",
-    "cookies"
+    "cookies",
+    "notifications"
   ],
   "background": {
     "service_worker": "background.mjs",
@@ -18,7 +19,13 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Hermes Browser Link"
+    "default_title": "Hermes Browser Link",
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png",
+      "48": "icon-48.png",
+      "128": "icon-128.png"
+    }
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'"
@@ -27,5 +34,11 @@
   "short_name": "Hermes Browser Link",
   "host_permissions": [
     "<all_urls>"
-  ]
+  ],
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  }
 }

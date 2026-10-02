@@ -1,4 +1,5 @@
 // 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
+import {showPanelNotification,clearPanelNotification} from '../../native-extension/approval-notifier.mjs';
 import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,13 +7,13 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
 // Synthetic windows API: records created/focused windows; no browser starts.
-function fakeWindows({focused={id:1,left:100,top:50,width:1200,height:900},failCreate=false}={}){
+function fakeWindows({focused={id:1,left:100,top:50,width:1200,height:900},failCreate=false,popupUnfocused=false}={}){
  const created=[],updates=[],removed={listeners:[]};let next=500;
  return {created,updates,
   api:{
    getLastFocused:async()=>focused,
-   create:async options=>{if(failCreate)return {};created.push(options);return {id:next++,tabs:[{id:next}],focused:true};},
-   update:async(id,info)=>{if(!created.some((_,i)=>500+i===id))throw Error('no such window');updates.push([id,info]);return {id,focused:true};},
+   create:async options=>{if(failCreate)return {};created.push(options);return {id:next++,tabs:[{id:next}],focused:!popupUnfocused};},
+   update:async(id,info)=>{if(!created.some((_,i)=>500+i===id))throw Error('no such window');updates.push([id,info]);return {id,focused:!popupUnfocused};},
    onRemoved:{addListener(fn){removed.listeners.push(fn);}},
   },
   close:id=>{for(const fn of removed.listeners)fn(id);},
@@ -21,6 +22,8 @@ function fakeWindows({focused={id:1,left:100,top:50,width:1200,height:900},failC
 
 async function loadAccessRequestHandler({windows=fakeWindows(),bridgeRequest=async()=>({closed:true})}={}){
  const events={},executor={tasks:new Map(),leases:new Map(),diagnostics:{recordSafely(){},size:0}},chrome={
+  // 中文注释：离线记录通知创建与点击，不发系统通知。
+  notifications:{create:async(id,options)=>events.notification={id,options},clear:async id=>{(events.cleared||=[]).push(id);return true;},onClicked:{addListener(fn){events.notificationClick=fn;}}},
   runtime:{id:'extension-id',getURL:path=>`chrome-extension://extension-id/${path}`,onMessage:{addListener(fn){events.message=fn;}}},
   windows:windows.api,alarms:{create(){},onAlarm:{addListener(){}}},
   tabs:{onCreated:{addListener(){}},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},
@@ -31,7 +34,7 @@ async function loadAccessRequestHandler({windows=fakeWindows(),bridgeRequest=asy
  source=source.replace(/^import .*;\n/gm,'')
   .replace('const consent=new BrowserConsent(chrome.storage.local,executor);',"const consent={load:async()=>{},readStatus:async()=>'disabled'};")
   .replace(/connect\(\);\s*$/,"globalThis.openAccessManagementRequest=openAccessManagementRequest;bridge=injectedBridge;connected=true;connectedInstanceId='browser-a';connectedGeneration='generation-a';");
- const context={CookieMirror,chrome,Executor:function(){return executor;},registerWorkspaceStartup:()=>{},NativeWorkspaces:class{},Bridge:class{},BrowserConsent:class{},origin(){},isUiSender:()=>false,createApprovalNotifier(){},injectedBridge:{request:bridgeRequest}};
+ const context={showPanelNotification,clearPanelNotification,CookieMirror,chrome,Executor:function(){return executor;},registerWorkspaceStartup:()=>{},NativeWorkspaces:class{},Bridge:class{},BrowserConsent:class{},origin(){},isUiSender:()=>false,createApprovalNotifier(){},injectedBridge:{request:bridgeRequest}};
  vm.runInNewContext(source,context);
  return {handler:context.openAccessManagementRequest,events,chrome,windows};
 }
@@ -87,4 +90,21 @@ test('the latest request id is the one reported when the reused window closes',a
  await f.handler({...request,requestId:'request-2'});
  f.windows.close(500);
  assert.deepEqual(sent,['request-2']);
+});
+
+// 中文注释：access_request 使用独立权限窗口，后台状态也必须留窗并提醒。
+test('background access window remains open and notification click only focuses it',async()=>{
+ const windows=fakeWindows({popupUnfocused:true});const sent=[];
+ const f=await loadAccessRequestHandler({windows,bridgeRequest:async(method)=>{sent.push(method);}});
+ assert.equal((await f.handler(request)).status,'opened');
+ assert.equal(f.events.notification.id,'hermes-browser-access');
+ assert.match(f.events.notification.options.message,/网站访问/);
+ f.events.notificationClick('unrelated');assert.equal(windows.updates.length,0);
+ windows.api.update=async(id,options)=>{windows.updates.push([id,options]);return {id,focused:true};};
+ f.events.notificationClick('hermes-browser-access');await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(windows.updates.length,1);assert.equal(windows.updates[0][0],500);
+ assert.deepEqual(sent,[],'notification clicks must not grant consent');
+ assert.ok(f.events.cleared.includes('hermes-browser-access'),'focused window clears its reminder');
+ windows.close(500);f.events.notificationClick('hermes-browser-access');
+ assert.equal(windows.updates.length,1,'closed windows must not be focused');
 });

@@ -54,7 +54,7 @@ The installer refuses to overwrite an existing installation, rejects symbolic li
 The extension and the Hermes page are currently in Simplified Chinese; the original labels are shown in parentheses.
 
 1. Click the extension's toolbar icon. The connection status should read **Connected** (已连接). If it does not, click **Connect Hermes** (连接 Hermes) and check that the Native Messaging manifest lists this extension's ID.
-2. Enable **browser access** in the popup and choose **smart approval** (智能审批) for the first test. The first read of each site in each task asks once; writes, page JavaScript and debugging ask separately. **Full access** (全部访问) skips these prompts within task scope. Switching access off revokes authority. Sensitive entry uses a separate user confirmation panel. Optional page-text filtering is under **More settings** (更多设置).
+2. Enable **browser access** in the popup and choose **smart approval** (智能审批) for the first test. The first read of each site in each task asks once; writes, page JavaScript and debugging ask separately. **Full access** (全部访问) skips these prompts within task scope. Switching access off revokes authority. Sensitive entry uses a separate user confirmation panel. Simulated mouse and optional page-text filtering are shown directly as switches in the popup. Set the primary link from Hermes Desktop → **浏览器连接**.
 3. Hermes Desktop's **Browser connections** (浏览器连接) panel shows bridge state, browser connections and access mode. Clicking **Enable access** (开启访问) opens the extension confirmation. CLI users can use the popup directly. The Desktop panel is provided by the installed plugin; there is no separate desktop package to install.
 
 ## Verify the first task

@@ -107,7 +107,8 @@ test('trusted popup reports mode-storage failure without revoking tasks',async()
  const {Executor}=await import('../../native-extension/core.mjs');
  for(const storageFails of [false,true]){
   let listener;const calls=[];
-  const chrome={runtime:{id:'extension',onMessage:{addListener:fn=>{listener=fn;}}},
+  // 中文注释：合成后台提供通知事件 API，不访问系统通知中心。
+ const chrome={notifications:{onClicked:{addListener(){}},clear:async()=>true},runtime:{id:'extension',onMessage:{addListener:fn=>{listener=fn;}}},
    storage:{local:{get:async()=>({browserFullConsent:{version:1,enabled:true}}),set:async()=>{if(storageFails)throw Error('storage failed');}},session:{}},
    tabs:{onCreated:{addListener(){}},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},
    alarms:{create(){},onAlarm:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};

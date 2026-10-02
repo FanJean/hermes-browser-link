@@ -3,7 +3,7 @@
   "label": "浏览器连接",
   "description": "浏览器连接与授权状态；原生界面由 Desktop 插件提供。",
   "icon": "Globe",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "tab": {
     "path": "/browser-link",
     "position": "after:sessions",

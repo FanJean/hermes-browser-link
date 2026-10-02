@@ -26,7 +26,8 @@ function harness({focusFails=false,browserFullConsent=false,decideFails=false,co
  }
  class WorkspaceFake{constructor(){this.manager={reconcile:async()=>{}};}async status(){return [];}}
  const local={browserInstanceId:'instance-A',browserFullConsent:{version:1,enabled:browserFullConsent}};
- const chrome={cookies:{getAll:async()=>clone(cookieData)},runtime:{id:'ext-123',getURL:p=>`chrome-extension://ext-123/${p}`,onMessage:{addListener:f=>listeners.message=f},connectNative:()=>port,sendMessage:async()=>{}},
+ // 中文注释：通知回调在后台顶层注册，离线模拟点击只允许聚焦。
+ const chrome={notifications:{onClicked:{addListener:f=>listeners.notification=f},create:async()=>{},clear:async()=>true},cookies:{getAll:async()=>clone(cookieData)},runtime:{id:'ext-123',getURL:p=>`chrome-extension://ext-123/${p}`,onMessage:{addListener:f=>listeners.message=f},connectNative:()=>port,sendMessage:async()=>{}},
   storage:{local:{get:async()=>clone(local),set:async x=>Object.assign(local,x)},session:{get:async()=>({instanceId:'instance-A'}),set:async()=>{}}},
   alarms:{create(){},onAlarm:{addListener:f=>listeners.alarm=f}},
   tabs:{get:async id=>id===7?clone(tab):id===panelTab?.id?clone(panelTab):null,query:async()=>[clone(tab)],onCreated:{addListener(){}},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},
@@ -35,7 +36,7 @@ function harness({focusFails=false,browserFullConsent=false,decideFails=false,co
  vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{registerWorkspaceStartup:()=>{},NativeWorkspaces:WorkspaceFake,Executor:ExecutorFake,CookieMirror,Bridge,BrowserConsent,isUiSender,createApprovalNotifier,origin:u=>new URL(u).origin,chrome,crypto:globalThis.crypto,navigator:{userAgent:'Node'},console,setTimeout,clearTimeout});
  const sender=()=>({id:'ext-123',url:'chrome-extension://ext-123/approval-panel.html',tab:{id:panelTab?.id,windowId:panelTab?.windowId}});
  const message=(m,s=sender())=>new Promise(resolve=>{const yes=listeners.message(m,s,resolve);if(!yes)resolve({ignored:true});});
- return {sendNative:m=>receiver(m),tick,message,sender,nativeCalls,focusCalls,windowCalls,badge,disconnect:()=>disconnect?.(),windowRemoved:()=>windowRemoved?.(panelTab?.windowId),setApprovals:x=>approvals=x,setTask:x=>task={...task,...x},setTab:x=>tab={...tab,...x},executor:()=>executor,changed:()=>receiver({method:'tasks.changed'}),chrome};
+ return {sendNative:m=>receiver(m),tick,message,sender,nativeCalls,focusCalls,windowCalls,badge,notification:id=>listeners.notification(id),disconnect:()=>disconnect?.(),windowRemoved:()=>windowRemoved?.(panelTab?.windowId),setApprovals:x=>approvals=x,setTask:x=>task={...task,...x},setTab:x=>tab={...tab,...x},executor:()=>executor,changed:()=>receiver({method:'tasks.changed'}),chrome};
 }
 
 test('host pending action produces one centered trusted panel and dedupes changed snapshots',async()=>{
@@ -63,8 +64,8 @@ test('reject and later preserve existing semantics, expiry and close do not appr
  assert.equal(h.nativeCalls.filter(x=>x.method==='extension.decide').length,0);
  h.setApprovals([]);h.changed();await h.tick();assert.equal(h.badge.at(-1),'');
 });
-test('focus failure leaves badge and no fake panel; disconnect clears pending',async()=>{
- const h=harness({focusFails:true});await h.tick();assert.equal(h.windowCalls.length,0);assert.equal(h.badge.at(-1),'1');
+test('focus failure keeps the panel and badge; disconnect clears pending',async()=>{
+ const h=harness({focusFails:true});await h.tick();assert.equal(h.windowCalls.length,1);assert.equal(h.badge.at(-1),'1');
  h.disconnect();await h.tick();assert.equal(h.badge.at(-1),'');
 });
 test('full access and foreign tab cannot spawn an action approval panel',async()=>{
@@ -136,9 +137,29 @@ test('Cookie mirror requires trusted source panel even in full access',async()=>
  await h.tick();
  const view=(await h.message({type:'approval_panel_view'})).result;
  assert.equal(view.kind,'cookie_mirror');assert.equal(view.count,1);assert.equal(view.source.browser,'chrome');assert.equal(view.target.browser,'edge');assert.ok(!JSON.stringify(view).includes(secret));
+ // 中文注释：关闭面板后只能通过可信弹窗打开原请求，不能派发复制或批准。
+ const popup={id:'ext-123',url:'chrome-extension://ext-123/popup.html'};
+ h.windowRemoved();await h.tick();
+ assert.equal((await h.message({type:'cookie_mirror_pending'},{id:'ext-123',url:'https://example.test'})).ignored,true);
+ assert.equal((await h.message({type:'cookie_mirror_pending'},popup)).result.opened,true);
+ assert.equal((await h.message({type:'approval_panel_view'})).result.id,transferId);
+ for(const type of ['cookie_mirror_sites','cookie_mirror_request','cookie_mirror_status'])assert.ok((await h.message({type},popup)).error);
+ assert.equal(h.nativeCalls.some(m=>m.method==='extension.cookie_mirror.request'),false);
+ assert.equal(h.nativeCalls.some(m=>m.method==='extension.cookie_mirror.decide'),false);
  h.sendNative({id:'srv:'+'2'.repeat(32),method:'browser.cookie_mirror.take',params:{transferId,index:0}});await h.tick();assert.equal(h.nativeCalls.find(m=>m.id==='srv:'+'2'.repeat(32)).error.code,'cookie_mirror_denied');
  assert.equal((await h.message({type:'approval_panel_decision',requestId:transferId,decision:'approve'},{id:'ext-123',url:'https://example.test'})).ignored,true);
  assert.equal((await h.message({type:'approval_panel_decision',requestId:transferId,decision:'approve'})).result.decision,'approve');
  h.sendNative({id:'srv:'+'3'.repeat(32),method:'browser.cookie_mirror.take',params:{transferId,index:0}});await h.tick();assert.equal(h.nativeCalls.find(m=>m.id==='srv:'+'3'.repeat(32)).result.cookies[0].value,secret);
  h.disconnect();await h.tick();
+ assert.equal((await h.message({type:'cookie_mirror_pending'},popup)).result.opened,false);
+});
+
+// 中文注释：覆盖 service worker 真实注册的通知入口，不通过面板决定消息替代点击。
+test('system notification event focuses the pending panel without dispatching approval',async()=>{
+ const h=harness({focusFails:true});await h.tick();const before=h.nativeCalls.filter(m=>m.method==='extension.action_decision').length;
+ h.chrome.windows.update=async(id)=>{h.focusCalls.push([id,{focused:true}]);return {id,focused:true};};
+ h.notification('hermes-browser-approval');await h.tick();
+ assert.equal(h.focusCalls.at(-1)[0],h.sender().tab.windowId);
+ assert.equal(h.nativeCalls.filter(m=>m.method==='extension.action_decision').length,before);
+ assert.ok((await h.message({type:'approval_panel_view'})).result);
 });

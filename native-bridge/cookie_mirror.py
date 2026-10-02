@@ -57,6 +57,12 @@ def sites_view(value):
         if not valid_site(site):
             raise MirrorDenied()
         result.append({'site': site, 'count': number(row.get('count'))})
+        # 中文注释：仅保留布尔标记；清单不包含名称、值或浏览器原始字段。
+        for key in ('httpOnly', 'session'):
+            if key in row:
+                if type(row[key]) is not bool:
+                    raise MirrorDenied()
+                result[-1][key] = row[key]
     if len({r['site'] for r in result}) != len(result):
         raise MirrorDenied()
     return result
@@ -186,6 +192,7 @@ class CookieMirrorService:
     def view(self, op):
         with self.lock:
             return {'transferId': op['transferId'], 'status': op['status'], 'source': op['source'], 'target': op['target'],
+                    'expiresAt': op['expiresAt'],
                     'count': op['count'], 'sites': [dict(row) for row in op['rows']],
                     **({'reason': op['reason']} if 'reason' in op else {}), **op.get('result', {})}
 

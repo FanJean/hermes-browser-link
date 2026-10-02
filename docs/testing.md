@@ -121,3 +121,17 @@ node tests/v1.5.0/real-cookie-mirror.mjs
 ```
 
 Prefer `--headed` (and `--same-browser --headed` for two Chrome profiles): the confirmation panel opens only after the source window is verifiably focused, which headless browsers do not reliably report, so headless runs can fall back to the popup's pending-confirmation button or time out. The fixture issues randomized ordinary, httpOnly session and partitioned cookies; the runner checks source rejection, popup confirmation, import counts, readback and the target protected page, then scans every file in the temporary state (except the browser profiles' own cookie stores) and the session logs for the fixture values. `COOKIE_LEAK_SELFTEST=1` plants one value in the daemon directory and must make the run fail, proving the scan is effective. Missing partitioned-cookie support fails acceptance. Cookie values are never printed or saved. See [usage](usage.md#cookie-mirror) for limitations.
+
+### Desktop Cookie mirror (1.5.1)
+
+The offline gate includes `executor-plugin/desktop/cookie-mirror.test.mjs` and `tests/v1.5.1/test_desktop_cookie_mirror.py`. They verify real React/Query rendering and synthetic HTTP/runtime/daemon flows, including canary values in malformed inputs, bridge responses, errors and rendered HTML. The Python API runner needs the existing FastAPI, Pydantic and HTTPX test environment.
+
+Manual acceptance uses the same temporary-profile launcher as 1.5.0. It sends HTTP requests through the real desktop API router via a TestClient fixture bound to the temporary profile, then performs a real click in the source extension confirmation panel and verifies the target's protected page. It does not launch the Hermes Desktop host; host rendering is covered separately by the offline desktop tests.
+
+```sh
+node tests/v1.5.1/real-desktop-cookie-mirror.mjs --headed
+node tests/v1.5.1/real-desktop-cookie-mirror.mjs --headed --same-browser
+COOKIE_LEAK_SELFTEST=1 node tests/v1.5.1/real-desktop-cookie-mirror.mjs --headed
+```
+
+Set `HERMES_PYTHON` to the existing test Python with FastAPI/HTTPX and Hermes dependencies when needed. The self-test deliberately plants a synthetic cookie value in the temporary daemon directory and must fail the leak scan. Both normal modes must pass without it. These scripts are never part of `npm test` or the offline gate.

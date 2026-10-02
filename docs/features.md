@@ -33,7 +33,9 @@ V1.3 development builds add page parsing, schema extraction, parameterized funct
 
 Verified custom site-tool drafts, bounded network evidence, same-origin page requests, read-only doctor and generated capability-aware API reference are described by module in the [product catalog](product-modules.zh-CN.md). These additions reuse the existing task and script execution chain. Development completion does not mean a personal installation or public release has been updated.
 
-## Cookie 镜像（1.5.0，真实浏览器待验收）
+## Cookie 镜像（1.5.1，桌面入口真实浏览器待验收）
+
+Hermes 桌面端「浏览器连接」页也可展开 Cookie 镜像：读取和搜索站点、单行或多选镜像、选择目标配置、查看状态和计数。桌面入口始终需要源扩展批准。
 
 源扩展弹窗读取默认 store Cookie 清单，按站点聚合、搜索和勾选，可选择另一个已连接 Chrome/Edge 或同浏览器的另一个 profile。可选清除目标站点旧 Cookie；默认关闭。会话 Cookie 默认保持会话属性，也可显式保存 1–365 天。每次复制均在源扩展确认面板批准，包括全部访问模式。
 

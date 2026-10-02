@@ -115,11 +115,12 @@ export async function openRealSession({browser, packageMode = false, hostRules =
     await new Promise(resolve => setTimeout(resolve, 300));
   }
   session.clickPopup = selector => trustedClick(ui, popupTarget.id, selector);
+  // 中文注释：只最小化当前临时 profile 的普通窗口，复现源浏览器处于后台。
+  session.background = () => ui.evaluate(`chrome.windows.getAll({windowTypes:['normal']}).then(windows=>Promise.all(windows.map(win=>chrome.windows.update(win.id,{state:'minimized'})))).then(()=>true)`);
   session.enableFullAccess = async () => {
     await ui.evaluate(`chrome.storage.local.set({browserFullConsent:{version:1,enabled:false}})`);
     await waitFor(() => ui.evaluate(`document.querySelector('#access-toggle').disabled===false`));
-    // 中文注释：授权控件位于折叠设置内，先通过真实点击展开，不能点击隐藏按钮。
-    if (!await ui.evaluate(`document.querySelector('details.settings').open`)) await session.clickPopup('details.settings > summary');
+    // 中文注释：权限开关直接展示，通过真实点击确认开启全部访问。
     await session.clickPopup('#access-toggle'); await session.clickPopup('#confirm-enable');
     await waitFor(() => ui.evaluate(`document.querySelector('#access-toggle').getAttribute('aria-checked')==='true'`));
   };

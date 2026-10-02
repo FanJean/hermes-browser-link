@@ -106,8 +106,8 @@ The extension advertises `browser_core_v1`, `page_parse_v1`, `page_function_v1`,
 
 Client method `browser.cookie_mirror` (trusted `owner` injected by plugin):
 
-- `{action: "list_sites", source}` → `{sites: [{site, count}]}`.
-- `{action: "request_mirror", source, target, sites, options?}` → `{transferId, status, sites, count}`. `options` accepts `clearTarget` (default false) and `persistDays` (absent by default; integer 1–365). Source and target are distinct connected instance IDs with `cookie_mirror_v1` capability; separate profiles are separate instances.
+- `{action: "list_sites", source}` → `{sites: [{site, count, httpOnly?, session?}]}`. The 1.5.1 bridge preserves the extension's boolean flags; the model tool still projects only sites and counts.
+- `{action: "request_mirror", source, target, sites, options?}` → `{transferId, status, sites, count, expiresAt}`. The 1.5.1 bridge exposes the existing deadline as Unix seconds for desktop expiry display; the deadline and deletion behavior are unchanged. `options` accepts `clearTarget` (default false) and `persistDays` (absent by default; integer 1–365). Source and target are distinct connected instance IDs with `cookie_mirror_v1` capability; separate profiles are separate instances.
 - `{action: "status", transferId}` → owner-bound state and counts. States: `preparing`, `approval_required`, `executing`, `completed`, `denied`, `failed`. Poll the same transfer ID; do not repeat request_mirror. Status expires after 60 seconds.
 
 Extension-only methods `extension.cookie_mirror.request`, `.status`, `.decide` bind source identity to the live connection. `.decide {transferId, approve}` is emitted only by the authenticated source approval panel. The source extension independently keeps a one-use UI approval flag; a daemon take request alone cannot bypass it. There is no client or desktop approval route.

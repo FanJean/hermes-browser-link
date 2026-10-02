@@ -1,5 +1,7 @@
 # Hermes Browser Link
 
+![Hermes Browser Link](docs/assets/readme-banner.png)
+
 [简体中文](README.zh-CN.md)
 
 Let [Hermes Agent](https://github.com/NousResearch/hermes-agent) read and operate task tabs in your existing, logged-in Chrome or Edge.
@@ -9,6 +11,8 @@ It reads pages and tables, clicks and fills ordinary forms, uploads user-selecte
 **Permissions:** smart approval asks once per site per task before reading, and separately for writes, page JavaScript and debugging. Full access skips those prompts within task scope. You grant access in the extension; the Desktop switch opens that confirmation. You can take over or stop a task. Standard helpers hand sensitive input to you, and screenshots mask visible sensitive fields and uninspectable frames. Credential headers, including Cookie values, are stripped from network evidence. Arbitrary JavaScript/CDP results are not comprehensively redacted, and Python runs as your user, without an OS sandbox. Read [SECURITY.md](SECURITY.md).
 
 The bridge cannot bypass login, CAPTCHA, site restrictions or browser permission dialogs. Existing personal tabs are outside task leases; new work tabs belong to tasks. Task separation does not isolate accounts.
+
+The extension popup shows browser access, simulated mouse and text filtering directly. Its compact Cookie mirror row provides **在桌面页打开** (open the Desktop page) and **打开待确认请求** (open a pending request). Set the primary link on Hermes Desktop → **浏览器连接**; connected profiles remain available as Cookie mirror targets. If a confirmation window cannot be focused while the browser is in the background, it stays open and the extension uses `notifications` to send a generic system reminder. Clicking it focuses the window; approval still requires a real click inside the extension panel. Notification text contains no sites, tasks or Cookie values. System notification settings may suppress reminders; the toolbar badge remains visible, and **打开待确认请求** can reopen Cookie mirror confirmations. See [Chrome notifications](https://developer.chrome.com/docs/extensions/reference/api/notifications) and [security](SECURITY.md#background-confirmation-notifications-151).
 
 ## Requirements
 
@@ -108,7 +112,9 @@ Approve the first site read in the extension. Hermes should return the text and 
 
 ## Cookie mirror
 
-Copy selected sites' cookies from the source extension popup to another connected Chrome/Edge profile. Each transfer requires a fresh confirmation in the **source extension**, including in full-access mode. The new `cookies` and `<all_urls>` permissions allow inventories and imports. Values use a one-use local memory channel with a 60-second deadline and never enter model results, logs or task files. Hermes sees only sites, states, counts and fixed failure categories.
+Start from Hermes Desktop → **浏览器连接** → **Cookie 镜像** on the source browser: load and search sites, then select another browser/profile. The popup’s **在桌面页打开** link opens this page via `hermes://open/browser-link`; **打开待确认请求** reopens an existing source-extension confirmation.
+
+Copy selected sites' cookies from the Desktop page to another connected Chrome/Edge profile. Each transfer requires a fresh confirmation in the **source extension**, including in full-access mode. The new `cookies` and `<all_urls>` permissions allow inventories and imports. Values use a one-use local memory channel with a 60-second deadline and never enter model results, logs or task files. Hermes sees only sites, states, counts and fixed failure categories.
 
 Only the default, non-incognito cookie store is supported. Site grouping uses a small suffix table, so check the site list before confirming. Readback verifies imported cookie identities; device-bound sessions, local storage or server checks may still require login. Interrupted transfers can leave partial changes in the target. See [usage](docs/usage.md#cookie-mirror) and [security](SECURITY.md#cookie-mirror-150).
 

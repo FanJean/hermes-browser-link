@@ -100,6 +100,15 @@ class ReleaseClosure(unittest.TestCase):
         self.assertIn('docs/python-scripting.md', sums)
         self.assertIn('docs/CHANGELOG.md', sums)
         self.assertIn('README.md', sums)
+        # 中文注释：图标在发布清单中登记并逐字复制，扩展和工具栏引用同一套文件。
+        manifest = json.loads((self.output / 'native-extension/manifest.json').read_text())
+        icons = {str(size): f'icon-{size}.png' for size in (16, 32, 48, 128)}
+        self.assertEqual(manifest['icons'], icons)
+        self.assertEqual(manifest['action']['default_icon'], icons)
+        for filename in icons.values():
+            relative = f'native-extension/{filename}'
+            self.assertIn(relative, sums)
+            self.assertEqual((self.output / relative).read_bytes(), (self.source / relative).read_bytes())
         self.assertIn('NOT FROZEN', (self.output / 'RELEASE-STATUS.txt').read_text())
         instructions = (self.output / 'INSTALL.txt').read_text()
         self.assertIn('No Hermes or Browser Use source is modified', instructions)

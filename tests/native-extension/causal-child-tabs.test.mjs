@@ -12,7 +12,8 @@ import {withSyntheticOverlay} from './overlay-fixture.mjs';
 const action=(taskId,selector='#link')=>({taskId,generation:1,tabId:taskId==='a'?1:9,action:'click',clickMode:'open_link_in_task_tab',selector,allowedOrigins:['https://example.com'],modeGeneration:2});
 async function start(e,id='a',ids=[1]) {const t=trustedTask(id,ids);await e.approve(t);e.setMode({...t,activeMode:'full',modeGeneration:2});}
 async function listeners(e) {
- const events={};const chrome={runtime:{id:'ext',onMessage:{addListener:fn=>events.message=fn}},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{onCreated:{addListener:fn=>events.created=fn},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
+ const events={};// 中文注释：合成后台提供通知事件 API，不访问系统通知中心。
+ const chrome={notifications:{onClicked:{addListener(){}},clear:async()=>true},runtime:{id:'ext',onMessage:{addListener:fn=>events.message=fn}},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{onCreated:{addListener:fn=>events.created=fn},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
  let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
  source=source.replace(/^import .*;\n/gm,'').replace(/^const executor=new Executor\(chrome,.*\);$/m,'const executor=injectedExecutor;').replace('const consent=new BrowserConsent(chrome.storage.local,executor);','const consent={load:async()=>{}};').replace(/connect\(\);\s*$/,'');
  vm.runInNewContext(source,{CookieMirror,registerWorkspaceStartup:()=>{},chrome,isUiSender,injectedExecutor:e});return events;

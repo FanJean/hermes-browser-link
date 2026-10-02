@@ -4,7 +4,7 @@ registerWorkspaceStartup(chrome);
 import {Executor,origin} from './core.mjs';
 import {Bridge,isUiSender,BrowserConsent} from './bridge.mjs';
 import {CookieMirror} from './cookie-mirror.mjs';
-import {createApprovalNotifier} from './approval-notifier.mjs';
+import {createApprovalNotifier,showPanelNotification,clearPanelNotification} from './approval-notifier.mjs';
 let bridge=null,connected=false,connecting=false,lastError='尚未连接本地桥';
 let notifier=null,approvalInstance=null,approvalRefresh=Promise.resolve();
 let connectedInstanceId=null,connectedGeneration=null;
@@ -14,13 +14,24 @@ async function readContentFilter(){return (await chrome.storage.local.get('pageC
 // cannot be opened reliably from a background request, so open the same page
 // as a centered, focused extension window instead.
 const ACCESS_WIDTH=460,ACCESS_HEIGHT=640;
+const ACCESS_NOTIFICATION='hermes-browser-access';
 let accessWindow=null;
+// 中文注释：监听在 service worker 顶层注册；系统通知点击只打开确认 UI，不能授权。
+chrome.notifications.onClicked.addListener(id=>{
+ if(id===ACCESS_NOTIFICATION){
+  const active=accessWindow;if(!active||!connected||bridge!==active.bridge||connectedGeneration!==active.connectionGeneration)return;
+  chrome.windows.update(active.windowId,{focused:true}).then(focused=>{
+   if(accessWindow!==active)return;active.focusConfirmed=focused?.id===active.windowId&&focused.focused===true;
+   if(active.focusConfirmed)void clearPanelNotification(chrome,ACCESS_NOTIFICATION);
+  }).catch(()=>{});
+ }else void notifier?.notificationClicked(id).catch(()=>{});
+});
 async function openAccessManagementRequest(request){
  const p=request||{};
  if(!connected||!bridge||p.instanceId!==connectedInstanceId||p.connectionGeneration!==connectedGeneration
   ||typeof p.requestId!=='string'||!p.requestId||typeof chrome.windows?.create!=='function')throw Error('stale or unsupported access request');
- // Reuse an open management window instead of stacking another one.
- if(accessWindow){try{await chrome.windows.update(accessWindow.windowId,{focused:true});}catch{accessWindow=null;}}
+ // 中文注释：复用权限窗口；后台聚焦失败不能丢弃已有窗口。
+ if(accessWindow){try{const focused=await chrome.windows.update(accessWindow.windowId,{focused:true});accessWindow.focusConfirmed=focused?.id===accessWindow.windowId&&focused.focused===true;}catch{accessWindow.focusConfirmed=false;}}
  if(!accessWindow){
   let target=null;try{target=await chrome.windows.getLastFocused({windowTypes:['normal']});}catch{}
   const options={url:chrome.runtime.getURL('popup.html'),type:'popup',focused:true,width:ACCESS_WIDTH,height:ACCESS_HEIGHT};
@@ -30,10 +41,13 @@ async function openAccessManagementRequest(request){
   }
   const created=await chrome.windows.create(options);
   if(!Number.isInteger(created?.id))throw Error('authorization window not opened');
-  accessWindow={windowId:created.id};
+  accessWindow={windowId:created.id,focusConfirmed:created.focused===true};
  }
  if(!connected||p.instanceId!==connectedInstanceId||p.connectionGeneration!==connectedGeneration)throw Error('connection changed');
  Object.assign(accessWindow,{requestId:p.requestId,connectionGeneration:p.connectionGeneration,bridge});
+ // 中文注释：权限窗口与操作审批面板分开，但后台未聚焦时使用同一提醒通路。
+ if(!accessWindow.focusConfirmed)await showPanelNotification(chrome,ACCESS_NOTIFICATION,'请打开扩展面板确认网站访问模式。');
+ else await clearPanelNotification(chrome,ACCESS_NOTIFICATION);
  return {requestId:p.requestId,instanceId:p.instanceId,connectionGeneration:p.connectionGeneration,status:'opened'};
 }
 // Tells the daemon only that our own management window closed, so the user
@@ -41,7 +55,7 @@ async function openAccessManagementRequest(request){
 function accessWindowClosed(windowId){
  const active=accessWindow;
  if(!active||active.windowId!==windowId)return;
- accessWindow=null;
+ accessWindow=null;void clearPanelNotification(chrome,ACCESS_NOTIFICATION);
  if(!active.requestId||!connected||bridge!==active.bridge||connectedGeneration!==active.connectionGeneration)return;
  active.bridge.request('extension.access_request_closed',{requestId:active.requestId,connectionGeneration:active.connectionGeneration}).catch(()=>{});
 }
@@ -124,9 +138,8 @@ const reportDownload=p=>{const current=bridge;if(!current||!connected)return Pro
 const pushCdpEvents=p=>{const current=bridge;if(!current||!connected)return Promise.resolve();return current.request('extension.cdp_events',p).catch(()=>{});};
 const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}),{onOverlayCommand:overlayCommand,onDownloadEvent:reportDownload,onCdpEvents:pushCdpEvents});
 chrome.storage.local.get('visualCursorEnabled').then(value=>{executor.visualCursorEnabled=value.visualCursorEnabled!==false;}).catch(()=>{});
-// 中文注释：工具栏弹窗关闭后只保留编号与截止时间，重新打开可以查原结果。
-let cookieMirrorLast=null;
-const cookieMirror=new CookieMirror(chrome,{onChanged:()=>{const source=[...cookieMirror.transfers.values()].find(t=>t.role==='source');if(source)cookieMirrorLast={id:source.id,expiresAt:source.expiresAt};void refreshApprovals();}});
+// 中文注释：镜像状态变化只刷新源扩展确认面板，弹窗不保留复制结果。
+const cookieMirror=new CookieMirror(chrome,{onChanged:()=>{void refreshApprovals();}});
 const consent=new BrowserConsent(chrome.storage.local,executor);
 const consentLoaded=consent.load();
 let disconnectBarrier=Promise.resolve();
@@ -261,13 +274,13 @@ async function connect(){if(bridge||connecting)return;connecting=true;try{
  const stored=await chrome.storage.local.get('browserInstanceId');const session=await chrome.storage.session.get('instanceId');const instanceId=stored.browserInstanceId||session.instanceId||crypto.randomUUID();await chrome.storage.local.set({browserInstanceId:instanceId});await chrome.storage.session.set({instanceId});
  if(!executor.workspaces)executor.workspaces=new NativeWorkspaces(chrome,instanceId,id=>executor.leases.has(id));
  await executor.workspaces.manager.reconcile();
- const port=chrome.runtime.connectNative('com.hermes.browser_link');const current=new Bridge(port,executor,changed,{onConsentStatus:()=>consent.readStatus(),onAccessRequest:openAccessManagementRequest,onContentFilter:readContentFilter,onCookieMirror:(method,p)=>cookieMirror.handle(method,p),onCookieDisconnect:()=>{cookieMirror.disconnect();cookieMirrorLast=null;}});bridge=current;
+ const port=chrome.runtime.connectNative('com.hermes.browser_link');const current=new Bridge(port,executor,changed,{onConsentStatus:()=>consent.readStatus(),onAccessRequest:openAccessManagementRequest,onContentFilter:readContentFilter,onCookieMirror:(method,p)=>cookieMirror.handle(method,p),onCookieDisconnect:()=>{cookieMirror.disconnect();}});bridge=current;
  port.onDisconnect.addListener(()=>{if(bridge!==current)return;lastError=chrome.runtime.lastError?.message||'本地桥已断开；操作不会自动重放';connected=false;connectedInstanceId=null;connectedGeneration=null;if(accessWindow)accessWindow.requestId=null;bridge=null;current.close();const old=notifier;notifier=null;approvalInstance=null;old?.dispose().catch(()=>{});disconnectBarrier=executor.disconnect().catch(()=>{});
   // 中文注释：本地桥意外断开（如 daemon 重启）后很快重连一次；在途动作不重放，其余仍靠 30 秒定时重连兜底。
   setTimeout(()=>{connect();},1500);});
  // 中文注释：握手版本与扩展清单保持一致，避免安装后仍报告旧版本。
- // 中文注释：握手版本与 1.5.0 发布清单一致。
- const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.5.0',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}await consent.synchronize(current);await refreshApprovals(current);}
+ // 中文注释：握手版本与 1.5.1 发布清单一致。
+ const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.5.1',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}await consent.synchronize(current);await refreshApprovals(current);}
  }catch(e){
   lastError=e.message;
   if(bridge&&!connected){
@@ -324,23 +337,9 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
   for(const task of executor.tasks.values())for(const [tabId,entry] of task.overlays||[])void executor.overlayCall(tabId,entry,'cursor',{enabled:m.enabled}).catch(()=>{});
   return {enabled:m.enabled};
  }
- // 中文注释：只有经过 isUiSender 校验的弹窗可查看站点计数或发起镜像，不能读取值。
- if(m.type==='cookie_mirror_sites')return cookieMirror.listSites();
- if(m.type==='cookie_mirror_request'){
-  if(!connected||!bridge)throw Error('本地桥未连接');
-  return bridge.request('extension.cookie_mirror.request',{source:connectedInstanceId,target:m.target,sites:m.sites,options:m.options||{}});
- }
- if(m.type==='cookie_mirror_status'){
-  if(!connected||!bridge)throw Error('本地桥未连接');
-  return bridge.request('extension.cookie_mirror.status',{transferId:m.transferId});
- }
+ // 中文注释：弹窗仅能打开已有镜像确认请求，不能列站点、发起或轮询复制。
  if(m.type==='cookie_mirror_pending'){await refreshApprovals();const pending=notifier?.pending().find(r=>r.kind==='cookie_mirror');if(pending)await notifier.openPending(pending.id);return {opened:!!pending};}
- if(m.type==='set_primary'){
-  if(!connected||!bridge||!connectedInstanceId)throw Error('浏览器未连接');
-  const result=await bridge.request('extension.set_primary',{});
-  if(result.instanceId!==connectedInstanceId)throw Error('主要链接状态未确认');
-  return result;
- }
+ // 中文注释：主要链接仅由桌面受保护路由设置，弹窗不再提供写入入口。
  if(m.type==='browser_consent'){
   // 中文注释：开关在智能审批与全部访问之间切换，并同步当前任务。
   await consent.setEnabled(m.enabled,connected?bridge:null);
@@ -351,9 +350,9 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
  // 中文注释：弹窗只读取当前浏览器的任务摘要和实际归属页，不返回输入或日志正文。
  if(m.type==='popup_status'){
   // 中文注释：弹窗状态报告与 Native 握手相同的版本。
-  const base={connected,cookieMirrorTransfer:cookieMirrorLast?.expiresAt>Date.now()?cookieMirrorLast.id:null,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),visualCursorEnabled:(await chrome.storage.local.get('visualCursorEnabled')).visualCursorEnabled!==false,browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,observedAt:Date.now(),version:'1.5.0'};
+  const base={connected,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),visualCursorEnabled:(await chrome.storage.local.get('visualCursorEnabled')).visualCursorEnabled!==false,browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,observedAt:Date.now(),version:'1.5.1'};
   if(!connected||!bridge)return {...base,tasks:[],page:null};
-  const [tasks,browsers]=await Promise.all([bridge.request('extension.tasks'),bridge.request('extension.browser_list')]);
+  const tasks=await bridge.request('extension.tasks');
   const active=(await chrome.tabs.query({active:true,currentWindow:true}))[0];
   const owner=active?executor.leases.get(active.id):null;
   const task=tasks.find(t=>t.id===owner);
@@ -361,7 +360,7 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
   if(task){const view=await executor.status({taskId:task.id,generation:task.generation});page=view.pages.find(p=>p.tabId===active.id)||null;}
   const local=task&&executor.tasks.get(task.id);
   const state=local?.pauseRequested&&!local.paused?'pausing':local?.paused?'paused':task?.state;
-  return {...base,browsers,tasks:page&&!['closed','cancelled'].includes(task.state)?[{id:task.id,state,generation:task.generation,activeMode:local?.policy.activeMode||'smart',pendingInteraction:task.pendingInteraction?{kind:task.pendingInteraction.kind}:null}]:[],page:page?{...page,taskId:task.id}:null};
+  return {...base,tasks:page&&!['closed','cancelled'].includes(task.state)?[{id:task.id,state,generation:task.generation,activeMode:local?.policy.activeMode||'smart',pendingInteraction:task.pendingInteraction?{kind:task.pendingInteraction.kind}:null}]:[],page:page?{...page,taskId:task.id}:null};
  }
  if(m.type==='popup_action'){
   const t=executor.tasks.get(m.taskId);

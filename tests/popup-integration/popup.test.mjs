@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom'
 const root = new URL('../../native-extension/', import.meta.url)
 const [html, script] = await Promise.all(['popup.html', 'popup.mjs'].map(file => readFile(new URL(file, root), 'utf8')))
 
-async function mount(initial, mirrorResult = null) {
+async function mount(initial, pendingResult = {opened: true}) {
   const dom = new JSDOM(html, { url: 'chrome-extension://test/popup.html', runScripts: 'outside-only' })
   const calls = []
   let status = initial
@@ -14,10 +14,14 @@ async function mount(initial, mirrorResult = null) {
   dom.window.chrome = { runtime: {
     sendMessage: async message => {
       calls.push(message)
-      // 中文注释：重开弹窗只查询后台内存中的旧请求编号，不再次复制。
-      if (message.type === 'cookie_mirror_status') return {result: mirrorResult}
+      // 中文注释：弹窗只打开待确认请求，不查询或发起复制。
+      if (message.type === 'cookie_mirror_pending') {
+        if (pendingResult instanceof Error) throw pendingResult
+        return {result: pendingResult}
+      }
       if (message.type === 'popup_status') return { result: status }
       // 中文注释：使用后台保存后读回的契约验证过滤开关。
+      if(message.type==='visual_cursor')return {result:{enabled:message.enabled}}
       if (message.type === 'page_content_filter') {
         status = {...status, pageContentFilter: message.enabled}
         return {result: {enabled: status.pageContentFilter}}
@@ -125,12 +129,12 @@ test('过滤设置保存失败时显示未确认，不显示为已开启', async
   h.dom.window.close()
 })
 
-// 中文注释：新弹窗只保留当前页一行任务状态，低频设置默认折叠。
-test('浏览器访问常驻，更多设置默认折叠且无任务时隐藏任务区',async()=>{
+// 中文注释：新弹窗只保留当前页一行任务状态，模拟鼠标和过滤设置直接展示。
+test('浏览器访问常驻，模拟鼠标和文字过滤常驻且无任务时隐藏任务区',async()=>{
  const h=await mount({connected:true,browserFullConsentStatus:'enabled',tasks:[]});
  try{
   assert.equal(h.document.querySelector('#access-toggle').closest('details'),null);
-  assert.equal(h.document.querySelector('#filter-toggle').closest('details').open,false);
+  assert.equal(h.document.querySelector('#filter-toggle').closest('details'),null);
   assert.equal(h.document.querySelector('#page-task').hidden,true);
   assert.equal(h.document.querySelector('#task-list,#verify-control'),null);
  }finally{h.dom.window.close();}
@@ -206,16 +210,53 @@ test('暂停进行中显示等待且只允许停止',async()=>{
  try{assert.match(h.document.querySelector('#operation').textContent,/正在暂停/);assert.equal(h.document.querySelector('#takeover').disabled,true);assert.equal(h.document.querySelector('#stop-task').disabled,false);}finally{h.dom.window.close();}
 });
 
-// 中文注释：模拟工具栏弹窗在确认窗口聚焦后关闭，再打开时显示原请求计数。
-test('Cookie 镜像弹窗重开恢复原结果，默认选项关闭且不重发',async()=>{
- const transferId='d'.repeat(32);
- const h=await mount({connected:true,browserFullConsentStatus:'enabled',cookieMirrorTransfer:transferId,instanceId:'source',tasks:[],browsers:[{instanceId:'source',browser:'chrome'},{instanceId:'target',browser:'edge'}]},
-  {status:'completed',sites:[{site:'example.com',success:2,failed:0,matched:2,missing:0,reasons:{}}]});
- assert.match(h.document.querySelector('#cookie-results').textContent,/成功 2 \/ 失败 0/);
- assert.equal(h.calls.find(call=>call.type==='cookie_mirror_status').transferId,transferId);
- assert.equal(h.calls.some(call=>call.type==='cookie_mirror_request'),false);
- assert.equal(h.document.querySelector('#cookie-clear').checked,false);
- assert.equal(h.document.querySelector('#cookie-persist').checked,false);
- assert.deepEqual([...h.document.querySelector('#cookie-target').options].map(o=>o.value),['target']);
- h.dom.window.close();
+// 中文注释：弹窗只保留桌面深链和待确认入口，重开不再读取或重发复制。
+test('Cookie 镜像收成设置行，桌面深链指向已注册的浏览器连接路由',async()=>{
+ const h=await mount({connected:true,browserFullConsentStatus:'enabled',tasks:[]});
+ try{
+  const row=h.document.querySelector('#cookie-mirror');
+  assert.ok(row.classList.contains('access-row'));
+  assert.equal(row.querySelector('h2').textContent,'Cookie 镜像');
+  assert.equal(row.querySelector('.detail').textContent,'在桌面页操作。');
+  const link=row.querySelector('#cookie-desktop');
+  assert.equal(link.textContent,'在桌面页打开');
+  assert.equal(link.getAttribute('href'),'hermes://open/browser-link');
+  assert.equal(row.querySelectorAll('button,a').length,2);
+  assert.equal(row.querySelector('input,select,#cookie-sites,#cookie-results,#cookie-status'),null);
+  assert.equal(row.querySelector('#cookie-load,#cookie-all,#cookie-none,#cookie-copy'),null);
+  assert.deepEqual(h.calls.map(call=>call.type),['popup_status']);
+  h.setStatus({connected:true,tasks:[]});await h.flush();
+  assert.deepEqual(h.calls.map(call=>call.type),['popup_status','popup_status']);
+ }finally{h.dom.window.close();}
+});
+
+// 中文注释：补救按钮保持可用；空请求与未知结果不重放镜像或审批。
+test('Cookie 待确认按钮打开已有面板，断线禁用并显示空请求或失败提示',async()=>{
+ for(const pending of [{opened:true},{opened:false},new Error('unknown')]){
+  const h=await mount({connected:true,tasks:[]},pending);
+  try{
+   const button=h.document.querySelector('#cookie-pending');
+   assert.equal(button.disabled,false);button.click();await h.flush();
+   assert.equal(h.calls.filter(call=>call.type==='cookie_mirror_pending').length,1);
+   assert.equal(h.document.querySelector('#error').hidden,pending.opened===true);
+   if(pending.opened===false)assert.match(h.document.querySelector('#error').textContent,/没有待确认/);
+   if(pending instanceof Error)assert.match(h.document.querySelector('#error').textContent,/无法打开确认面板/);
+   h.setStatus({connected:false,tasks:[]});await h.flush();
+   assert.equal(button.disabled,true);button.click();await h.flush();
+   assert.equal(h.calls.filter(call=>call.type==='cookie_mirror_pending').length,1);
+   assert.equal(h.calls.some(call=>['cookie_mirror_sites','cookie_mirror_request','cookie_mirror_status'].includes(call.type)),false);
+  }finally{h.dom.window.close();}
+ }
+});
+
+// 中文注释：常用设置继续直接可见，保存状态不依赖镜像站点列表。
+test('弹窗移除主要链接区块，模拟鼠标和文字过滤直接展示',async()=>{
+ const h=await mount({connected:true,instanceId:'source',browserFullConsentStatus:'disabled',tasks:[],browsers:[{instanceId:'source',browser:'chrome'},{instanceId:'target',browser:'edge'}]});
+ assert.equal(h.document.querySelector('#browser-links,#browser-list,#set-primary,details.settings'),null);
+ for(const selector of ['#cursor-toggle','#filter-toggle'])assert.equal(h.document.querySelector(selector).closest('details'),null);
+ h.document.querySelector('#cursor-toggle').click();await h.flush();
+ assert.equal(h.calls.filter(call=>call.type==='visual_cursor').length,1);
+ h.document.querySelector('#filter-toggle').click();await h.flush();
+ assert.equal(h.document.querySelector('#filter-toggle').getAttribute('aria-checked'),'true');
+ assert.equal(h.calls.some(call=>call.type==='set_primary'),false);h.dom.window.close();
 });

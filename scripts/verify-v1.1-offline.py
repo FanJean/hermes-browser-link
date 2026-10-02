@@ -40,6 +40,9 @@ NODE_BOUNDARIES = ('.',)
 NODE_TESTS = (
     # 中文注释：Cookie 镜像只运行合成 API；真实双浏览器脚本不进入门禁。
     'tests/v1.5.0/cookie-mirror.test.mjs',
+    # 中文注释：后台审批、权限提醒、弹窗与图标只运行离线合成 API。
+    'tests/v1.5.1/approval-background.test.mjs',
+    'tests/native-extension/background-access-request.test.mjs',
     # 中文注释：基准站离线测试覆盖目录、第二主机及原页面，直接调用处理器而不绑定端口。
     'bench/site/server.test.mjs',
     'bench/mechanical-metrics.test.mjs',
@@ -70,6 +73,8 @@ NODE_TESTS = (
     'tests/v1.1-docs/check-bridge-docs.test.mjs',
     'executor-plugin/desktop/plugin.test.mjs',
     'executor-plugin/desktop/render.test.mjs',
+    # 中文注释：桌面镜像交互通过真实 React/Query 离线验收。
+    'executor-plugin/desktop/cookie-mirror.test.mjs',
     # 中文注释：1.3.5 后台滚动短期限与任务租约回归在固定离线清单中运行。
     'tests/native-v2/native_core.test.mjs',
     'tests/native-extension/site-read-origin.test.mjs',
@@ -98,7 +103,7 @@ PYTHON_SUITES = (
     'bench', 'bench/agent',
     # 中文注释：同任务并发建页跨真实 daemon 与扩展逻辑。
     # 中文注释：改名迁移只使用临时 HOME 与浏览器配置目录。
-    'tests/v1.5.0', 'tests/v1.4', 'tests/v1.4.1', 'tests/v1.4.2', 'tests/v1.4.3', 'tests/v1.4.4', 'tests/v1.3.6',
+    'tests/v1.5.1', 'tests/v1.5.0', 'tests/v1.4', 'tests/v1.4.1', 'tests/v1.4.2', 'tests/v1.4.3', 'tests/v1.4.4', 'tests/v1.3.6',
     'tests/v1.1-script-lane',
     'tests/v1.1-interactions', 'tests/v1.1-approval-notify',
     'tests/v1.1-verification', 'tests/native-v2',
@@ -107,6 +112,7 @@ PYTHON_SUITES = (
 # Some directories contain explicitly unsafe runners: select files by fixed name.
 PYTHON_FILES = {
     # 中文注释：镜像中转与跨层隐私测试按文件登记，新增 runner 必须重新审阅。
+    'tests/v1.5.1': ('test_desktop_cookie_mirror.py',),
     'tests/v1.5.0': ('test_cookie_mirror.py',),
     'tests/v1.1-interactions': ('test_interaction_wire.py',),
     # 中文注释：1.3.6 同任务并发开页用例显式登记，避免清单检查把它当作未审阅文件。
@@ -734,11 +740,11 @@ def selected_runner_paths(root: Path,
 
 def known_v11_runner_paths() -> set[str]:
     """Static allowlist used to fail closed when runner discovery changes."""
-    known = {path for path in NODE_TESTS if path.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5.0', 'tests/site-tools', 'tests/network-evidence'))}
+    known = {path for path in NODE_TESTS if path.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5', 'tests/site-tools', 'tests/network-evidence'))}
     for folder, names in PYTHON_GROUPED_FILES.items():
         known.update((Path(folder) / name).as_posix() for name in names)
     for folder, names in PYTHON_FILES.items():
-        if folder.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5.0', 'tests/site-tools', 'tests/network-evidence')):
+        if folder.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5', 'tests/site-tools', 'tests/network-evidence')):
             known.update((Path(folder) / name).as_posix() for name in names)
     known.update(SUPPLEMENTAL_RUNNER_PATHS)
     known.update(REVIEWED_RUNNER_PATHS)
@@ -751,7 +757,7 @@ def v11_coverage(root: Path, selected: set[str]) -> dict:
     rows = []
     runner_suffixes = {'.py', '.mjs', '.js'}
     for folder in sorted(path for path in tests.iterdir()
-                         if path.is_dir() and path.name.startswith(('v1.1', 'v1.3', 'v1.5.0', 'site-tools', 'network-evidence'))):
+                         if path.is_dir() and path.name.startswith(('v1.1', 'v1.3', 'v1.5', 'site-tools', 'network-evidence'))):
         candidates = sorted(
             path.relative_to(root).as_posix()
             for path in folder.rglob('*')
@@ -776,7 +782,7 @@ def v11_coverage(root: Path, selected: set[str]) -> dict:
         'missing_expected': missing_expected,
     }
     return {
-        'discovery_rule': 'tests/{v1.1*,v1.3*,v1.5.0,site-tools,network-evidence}/**/{test_*.py,test_*.js,test_*.mjs,*.test.js,*.test.mjs}',
+        'discovery_rule': 'tests/{v1.1*,v1.3*,v1.5*,site-tools,network-evidence}/**/{test_*.py,test_*.js,test_*.mjs,*.test.js,*.test.mjs}',
         'runner_file_count': sum(len(row['runner_files']) for row in rows),
         'included_runner_file_count': sum(len(row['included']) for row in rows),
         'not_run_runner_file_count': sum(len(row['not_run']) for row in rows),

@@ -74,17 +74,27 @@ When the plugin has the `tools.override` capability and the session is bound to 
 
 While a task is active its pages are covered by a translucent overlay that blocks clicks and key presses. Each target is highlighted just before an action is dispatched.
 
+The extension popup directly shows **浏览器权限**, **模拟鼠标** and **过滤网页干扰文字** without a settings disclosure. Set the primary browser link only from Hermes Desktop → **浏览器连接** → **设为主要链接**. Its Cookie mirror row has **在桌面页打开** (`hermes://open/browser-link`) and **打开待确认请求**; site selection, options and transfer results are on the Desktop page.
+
 ## Cookie mirror
 
-1. Connect the source and target profiles with the updated extension. Separate profiles are separate instances; the target must differ from the source.
-2. In the source extension popup, open **Cookie 镜像**, load the site inventory, search and select sites, then choose the target. The inventory shows counts and httpOnly/session flags, never values.
-3. Keep both options off to preserve target cookies and source session lifetimes. Enable clearing only when you intend to remove the target's existing cookies for those sites; optionally persist session cookies for 1–365 days.
-4. Request the transfer and confirm in the source extension's own panel. Check both instances, sites, counts and options. Full access cannot approve this step; neither Hermes nor a website can click for you.
-5. Read per-site `success`, `failed`, `matched`, `missing`, `cleared`, `clearFailed` and fixed failure categories. Readback checks name/domain/path/partition identities. Verify login by opening the site's protected page in the target.
+Desktop entry (1.5.1): connect the updated source and target extensions first. Separate profiles are separate instances; the target must differ from the source.
+
+1. Open Hermes Desktop → **浏览器连接** and expand **Cookie 镜像** on the source browser.
+2. Click **读取 Cookie 站点**, search by website, then click a row's **镜像**. You can also select multiple sites and click **镜像已选站点**. Only sites, counts and httpOnly/session flags are listed.
+3. Select another connected browser/profile in the dialog. The source is excluded, including when both profiles use Chrome. Clearing target cookies and persisting session cookies are both off by default; persistence accepts 1–365 days.
+4. Click **镜像**. Desktop shows preparation/waiting for extension approval, copying, then completion counts (success/failure and readback matched/missing), rejection, expiry or a fixed failure category.
+5. Approve in the source extension's panel. It remains open when background focus cannot be verified; click the system notification to focus it, or switch to the source browser and click **打开待确认请求** in the popup’s Cookie mirror row. Full access does not bypass this approval. A failed or uncertain request is never reissued automatically.
+
+The protected desktop API uses `GET /shared/browsers/{id}/cookie-sites`, `POST /shared/cookie-mirror` and `GET /shared/cookie-mirror/{transfer_id}` beneath the plugin prefix. It binds the active profile's UI identity, rejects caller identities/approval/payload fields and returns only allowlisted metadata. The request deadline remains 60 seconds; status is not retained after expiry.
+
+The extension popup’s **在桌面页打开** opens **浏览器连接**. It does not list or select sites, offer transfer options, initiate copies or poll results. **打开待确认请求** opens an existing Cookie mirror confirmation without creating another transfer. Check both instances, sites, counts and options in the source extension panel; neither Hermes nor a website can approve for you.
+
+Keep both Desktop options off to preserve target cookies and source session lifetimes. Enable clearing only when you intend to remove existing target cookies for those sites; optional session persistence accepts 1–365 days. Read per-site `success`, `failed`, `matched`, `missing`, `cleared`, `clearFailed` and fixed failure categories on Desktop. Readback checks name/domain/path/partition identities. Verify login by opening the site's protected page in the target.
 
 Hermes can call `browser_shared_cookie_mirror` with `action="list_sites"` and `source`, then `action="request_mirror"` with `source`, `target`, `sites` and optional `options`. It must wait for your confirmation and query `action="status"` with the returned ID in `transfer_id`. Query the same transfer; do not reissue `request_mirror` after a timeout. Neither tool nor popup exposes values to the model, logs, diagnostics or task files.
 
-If no confirmation window appears (it opens only when the source browser window can be focused), bring the source browser to the front and click **打开待确认面板** (open pending confirmation) in its extension popup; the toolbar badge shows the pending count.
+Background focus failure no longer prevents creating the confirmation panel. If focus cannot be verified, the extension sends a generic system notification using the `notifications` permission. Clicking it only focuses the valid panel; approval still needs your real click inside it. Notifications contain no website, task or Cookie data. If system settings suppress notifications, bring the source browser to the front; for Cookie mirror, click **打开待确认请求** in its popup to reopen the confirmation. The badge keeps the pending count. First-site reads, other operation approvals and manual-input panels use the same behavior. The separate access-mode management window also sends a reminder when unfocused.
 
 The 60-second deadline starts at request time, including confirmation. Failure, expiry or either profile disconnecting destroys remaining memory payloads. Writes already dispatched may have changed the target; there is no automatic rollback or replay. Only the default non-incognito store is supported. Domain grouping uses a small suffix table, not a complete public suffix list; check the site selection. Cookie identities do not prove working login: localStorage, device binding, MFA or server invalidation can require another login. Copying all cookies for a site does not identify which one carries login. Ending a task does not remove imported cookies. See [security](../SECURITY.md#cookie-mirror-150).
 

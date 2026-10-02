@@ -145,3 +145,14 @@
 - `tests/v1.5.0/cookie-mirror.test.mjs`：合成 cookies API，覆盖域聚合、分块、强制确认、逐条写入、回读、私有账本隔离及固定扩展身份。
 - `tests/v1.5.0/test_cookie_mirror.py`：一次性内存中转、TTL、失败/断连清理、状态/日志/磁盘隐私，以及 daemon → client → 工具的计数与固定类别白名单。
 - 两个 runner 纳入固定清单与发现核对；基准步骤 36，发现清单 82。`real-cookie-mirror.mjs` 和 `fixture-site.mjs` 仅用于手动真实验收，不由门禁启动。
+
+## 1.5.1 桌面 Cookie 镜像
+
+- `executor-plugin/desktop/cookie-mirror.test.mjs`：真实 React/Query 离线渲染，覆盖搜索、目标排除自身、默认选项、多选、状态、错误、在途去重及 HTML 金丝雀扫描。
+- `tests/v1.5.1/test_desktop_cookie_mirror.py`：桌面 HTTP → runtime → daemon 合成往返，覆盖 UI owner/profile 隔离、强制源扩展批准、状态流转及错误响应字段白名单。
+- `tests/v1.5.1/real-desktop-cookie-mirror.mjs`：手动验收，临时 Chrome/Edge 或同浏览器双配置；通过真实 FastAPI 路由发起和查询，在源扩展面板真实批准，验证目标登录与文件/日志泄漏扫描。支持 `--headed`、`--same-browser`、`COOKIE_LEAK_SELFTEST`，不进入离线门禁。
+
+- `tests/v1.5.1/approval-background.test.mjs`：后台源聚焦返回 false/抛错仍建窗；未聚焦状态、通用通知、点击只聚焦、失效/未知结果不重试、脚本事件不能批准/拒绝、四尺寸图标。登记在 baseline Node 清单。
+- `tests/native-extension/background-access-request.test.mjs`：独立网站访问模式窗口后台通知与点击聚焦，关闭/失效后不聚焦，不发送授权；登记在 baseline Node 清单。
+- `tests/native-extension/package.test.mjs`：同步扩展通知权限断言；该独立打包 runner 不新增到离线清单，保持原有隔离要求。图标逐字复制及 action.default_icon 资源闭包复用 `tests/v1.1-build-closure/build-closure.test.mjs`；发布文件清单复用已审阅的 `tests/v1.1-packaging/test_release_closure.py`。
+- 弹窗平铺、无主要链接区块和 Cookie 目标列表复用 `tests/popup-integration/popup.test.mjs` / `tests/v1.1-ui-acceptance/popup.test.mjs`；桌面主要链接 POST 与读回复用 `executor-plugin/desktop/render.test.mjs`。

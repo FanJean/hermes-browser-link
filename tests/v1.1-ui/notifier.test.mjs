@@ -4,7 +4,8 @@ import {createApprovalNotifier, isApprovalPanelSender} from '../../native-extens
 
 function fixture({focusFails=false, createFails=false, wrongTabWindow=false, popupUnfocused=false}={}) {
  const calls=[], removed=[];let windowId=90;
- const chrome={runtime:{id:'ext-123',getURL:path=>`chrome-extension://ext-123/${path}`},
+ // 中文注释：通知使用离线合成 API，不向操作系统发送提醒。
+ const chrome={notifications:{create:async(id,p)=>calls.push(['notify',id,p]),clear:async id=>calls.push(['clear-notification',id])},runtime:{id:'ext-123',getURL:path=>`chrome-extension://ext-123/${path}`},
   tabs:{get:async id=>({id,windowId:wrongTabWindow?13:12,url:'https://example.test/path'})},
   windows:{get:async id=>{calls.push(['get',id]);return {id,left:100,top:50,width:1000,height:800,type:'normal'};},update:async(id,p)=>{calls.push(['focus',id,p]);if(focusFails)throw Error('focus denied');return {id,focused:true};},create:async p=>{calls.push(['create',p]);if(createFails)throw Error('create denied');return {id:++windowId,tabs:[{id:400+windowId}],...p,focused:!popupUnfocused};},remove:async id=>{removed.push(id);}},
   action:{setBadgeText:async p=>calls.push(['badge',p.text]),setTitle:async p=>calls.push(['title',p.title])}};
@@ -56,13 +57,11 @@ test('a decision dispatches once after live scope readback and advances the queu
  await assert.rejects(notifier.decide({sender,requestId:'r1',decision:'approve',verify,dispatch}),/sender|stale/);
 });
 
-test('focus or popup failure falls back to badge without claiming a foreground panel',async()=>{
- for(const options of [{focusFails:true},{createFails:true}]){
-  const {notifier,req,calls}=fixture(options);await notifier.sync([req()]);
-  assert.equal(notifier.panel(),null);assert.equal(notifier.view(),null);
-  assert.equal(notifier.pending().length,1);assert(calls.some(c=>c[0]==='badge'&&c[1]==='1'));
-  await notifier.sync([req()]);assert.equal(calls.filter(c=>c[0]==='focus').length,1);
- }
+test('popup creation failure retains a pending badge without claiming a panel',async()=>{
+ const {notifier,req,calls}=fixture({createFails:true});await notifier.sync([req()]);
+ assert.equal(notifier.panel(),null);assert.equal(notifier.view(),null);
+ assert.equal(notifier.pending().length,1);assert(calls.some(c=>c[0]==='badge'&&c[1]==='1'));
+ await notifier.sync([req()]);assert.equal(calls.filter(c=>c[0]==='focus').length,1);
 });
 
 test('expired requests disappear on reconciliation; mode full cannot request repeat approval',async()=>{
@@ -103,9 +102,11 @@ test('uncertain dispatch cannot automatically replay, even after a stale host re
  await notifier.sync([]);assert.equal(notifier.pending().length,0);
 });
 
-test('popup that is created but not focused is closed and badge stays pending',async()=>{
- const {notifier,req,removed}=fixture({popupUnfocused:true});await notifier.sync([req()]);
- assert.equal(notifier.panel(),null);assert.equal(notifier.pending().length,1);assert.deepEqual(removed,[91]);
+// 中文注释：后台面板保持打开，系统通知只提示用户主动打开。
+test('unfocused popup stays open and emits a generic notification',async()=>{
+ const {notifier,req,removed,calls}=fixture({popupUnfocused:true});await notifier.sync([req()]);
+ assert.equal(notifier.panel().focusConfirmed,false);assert.equal(notifier.pending().length,1);assert.deepEqual(removed,[]);
+ assert.equal(calls.filter(c=>c[0]==='notify').length,1);
 });
 test('mode generation drift invalidates the visible decision panel',async()=>{
  const {notifier,req,removed}=fixture();await notifier.sync([req('r1',{modeGeneration:1})]);
