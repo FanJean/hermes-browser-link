@@ -6,101 +6,31 @@
 
 Let [Hermes Agent](https://github.com/NousResearch/hermes-agent) read and operate task tabs in your existing, logged-in Chrome or Edge.
 
-It reads pages and tables, clicks and fills ordinary forms, uploads user-selected files, tracks downloads, and runs Python workflows. A local Native Messaging host connects the Hermes plugin to the extension; it does not copy your browser profile or use a cloud browser service. Page results still enter your agent's context and may be sent to its model provider.
-
-**Permissions:** smart approval asks once per site per task before reading, and separately for writes, page JavaScript and debugging. Full access skips those prompts within task scope. You grant access in the extension; the Desktop switch opens that confirmation. You can take over or stop a task. Standard helpers hand sensitive input to you, and screenshots mask visible sensitive fields and uninspectable frames. Credential headers, including Cookie values, are stripped from network evidence. Arbitrary JavaScript/CDP results are not comprehensively redacted, and Python runs as your user, without an OS sandbox. Read [SECURITY.md](SECURITY.md).
-
-The bridge cannot bypass login, CAPTCHA, site restrictions or browser permission dialogs. Existing personal tabs are outside task leases; new work tabs belong to tasks. Task separation does not isolate accounts.
-
-The extension popup shows browser access, simulated mouse and text filtering directly. Its compact Cookie mirror row provides **在桌面页打开** (open the Desktop page) and **打开待确认请求** (open a pending request). Set the primary link on Hermes Desktop → **浏览器连接**; connected profiles remain available as Cookie mirror targets. If a confirmation window cannot be focused while the browser is in the background, it stays open and the extension uses `notifications` to send a generic system reminder. Clicking it focuses the window; approval still requires a real click inside the extension panel. Notification text contains no sites, tasks or Cookie values. System notification settings may suppress reminders; the toolbar badge remains visible, and **打开待确认请求** can reopen Cookie mirror confirmations. See [Chrome notifications](https://developer.chrome.com/docs/extensions/reference/api/notifications) and [security](SECURITY.md#background-confirmation-notifications-151).
+Read pages and tables, click, fill forms, upload files, track downloads and run Python workflows. Enable **smart approval** in the extension popup; first site reads and later writes show confirmation prompts. See [security](SECURITY.md).
 
 ## Requirements
 
 | Component | Requirement |
 |---|---|
-| Hermes Agent | **0.21.4+**; the v2026.9.21 source includes `on_session_end` and `agent_loop_stopped`. Full integration uses the pinned revision in [testing](docs/testing.md). |
-| Node.js | **22.12.0+** for packaging and development |
-| Python | **3.11+** for this bridge; use the Python version required by your Hermes installation (the pinned integration uses 3.14) |
-| Browser | Desktop Chrome or Edge; tested with **153**. No lower browser version is certified. |
-| OS | **macOS developer preview**. Linux is untested and the installer rejects it; Windows is unsupported by the current installer and Unix socket transport. |
+| Hermes Agent | Tested: **0.21.4** |
+| Node.js | **22.12.0+** for source installation and development |
+| Python | **3.11+** |
+| Platform | Currently supports **macOS + Chrome/Edge**; browser tested with 153 |
 
-## Install from source
+## Quick start (3 steps)
 
-Use a permanent checkout directory: the unpacked extension must remain available there. Each command below is a separate step. Installation does not enable the plugin or restart applications.
-
-1. Get the source:
+1. Download a [Release package](https://github.com/FanJean/hermes-browser-link/releases) and install (no Node.js needed); **Program installed and enabled** confirms success:
 
    ```sh
-   git clone https://github.com/FanJean/hermes-browser-link.git
+   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.5.2/hermes-browser-link-1.5.2.zip -o hermes-browser-link-1.5.2.zip && unzip hermes-browser-link-1.5.2.zip && cd hermes-browser-link-1.5.2 && ./install.sh
    ```
 
-2. Enter the checkout:
+2. Open `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** → paste the absolute path printed and copied by the installer. It waits up to 3 minutes and shows ✅ when connected; Ctrl+C skips the wait.
+3. Enable **smart approval** (智能审批) in the extension popup, then restart Hermes Desktop. Confirm **Connected** (已连接) in the popup and an online browser in Desktop → **Browser connections** (浏览器连接).
 
-   ```sh
-   cd hermes-browser-link
-   ```
+Upgrade: run `./install.sh --upgrade` from the new package (automatic backup and rollback), then reload the extension and restart Desktop. Uninstall: `./install.sh --uninstall` keeps task-private data; add `--purge` to delete it.
 
-3. Check prerequisites:
-
-   ```sh
-   node --version
-   ```
-
-   ```sh
-   python3 --version
-   ```
-
-   ```sh
-   hermes --version
-   ```
-
-4. Build the installation package (output must not already exist):
-
-   ```sh
-   node scripts/package-executor.mjs --output ./out/browser-link
-   ```
-
-   Confirm it contains `SHA256SUMS.json`, `install-executor.py` and `native-extension/manifest.json`.
-
-5. **You do this in the browser:** open `chrome://extensions` or `edge://extensions`, enable Developer mode, and load `out/browser-link/native-extension/`. Confirm ID `dhioigkigkkhceflkkkmoljhdaefjohb`. The manifest `key` is a **public key** fixing that ID, not a secret.
-
-6. Preview plugin and native host registration:
-
-   ```sh
-   python3 scripts/install-executor.py --package ./out/browser-link --extension-origin chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/
-   ```
-
-   Confirm `status: plan`, the intended Hermes home, and Chrome/Edge manifest paths. Existing installations are refused.
-
-7. Apply the reviewed plan:
-
-   ```sh
-   python3 scripts/install-executor.py --package ./out/browser-link --extension-origin chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/ --apply
-   ```
-
-   Confirm `status: installed_disabled`. This registers both browser hosts and installs the plugin.
-
-8. Enable the plugin for the Hermes profile you will use:
-
-   ```sh
-   hermes plugins enable browser-link
-   ```
-
-   ```sh
-   hermes plugins list
-   ```
-
-   Confirm `browser-link` is enabled, then restart Hermes / Hermes Desktop. Optional official-tool routing needs a separate `tools.override` grant.
-
-9. **You confirm browser access:** open the extension popup, check **已连接** (Connected), and enable access in **智能审批** (smart approval). In Hermes Desktop, open **浏览器连接**; its access switch opens the extension's confirmation. CLI users can use the popup directly.
-
-10. Check registration and connection without repairing anything:
-
-    ```sh
-    python3 native-bridge/doctor.py
-    ```
-
-    Confirm the host manifests and a connected browser. Detailed steps, profile selection, upgrades and uninstall: [installation](docs/installation.md). For assisted installation, copy [the agent prompt](docs/agent-install-prompt.md).
+[Source/manual installation, profiles and troubleshooting](docs/installation.md) · [Agent installation prompt](docs/agent-install-prompt.md).
 
 ## First use
 
@@ -112,25 +42,11 @@ Approve the first site read in the extension. Hermes should return the text and 
 
 ## Cookie mirror
 
-Start from Hermes Desktop → **浏览器连接** → **Cookie 镜像** on the source browser: load and search sites, then select another browser/profile. The popup’s **在桌面页打开** link opens this page via `hermes://open/browser-link`; **打开待确认请求** reopens an existing source-extension confirmation.
-
-Copy selected sites' cookies from the Desktop page to another connected Chrome/Edge profile. Each transfer requires a fresh confirmation in the **source extension**, including in full-access mode. The new `cookies` and `<all_urls>` permissions allow inventories and imports. Values use a one-use local memory channel with a 60-second deadline and never enter model results, logs or task files. Hermes sees only sites, states, counts and fixed failure categories.
-
-Only the default, non-incognito cookie store is supported. Site grouping uses a small suffix table, so check the site list before confirming. Readback verifies imported cookie identities; device-bound sessions, local storage or server checks may still require login. Interrupted transfers can leave partial changes in the target. See [usage](docs/usage.md#cookie-mirror) and [security](SECURITY.md#cookie-mirror-150).
+Open Hermes Desktop → **Browser connections** → **Cookie mirror** on the source browser, select sites and the target browser, then confirm in the source extension's panel. If the target still asks for a login, sign in there. See [usage](docs/usage.md#cookie-mirror) and [security](SECURITY.md#cookie-mirror-150).
 
 ## Configuration and recovery
 
-The full [environment variable table](docs/configuration.md) covers browser selection, export directories, pause and cleanup timeouts, shared homes and test settings. Set them in the relevant process before launch. `HERMES_BROWSER_DEFAULT` and `HERMES_BROWSER_EXPORT_ROOTS` also read the shared bridge home's `.env`; do not commit that file.
-
-Finish tasks and disable the plugin before upgrading. The installer refuses in-place replacement; follow the backup and replacement procedure in [installation](docs/installation.md). Uninstalling runtime data also removes task-private files.
-
-| Result | Action |
-|---|---|
-| Browser not connected / `no_browser` | Open the browser, check the extension and native host registration |
-| `execution_denied` | Inspect its structured reason and `outcome_unknown`; do not guess or blindly retry |
-| `origin_denied` / `tab_out_of_scope` | Use a task authorized for that origin and its returned tab; do not expand permissions silently |
-| `approval_required` / `user_input_required` | Complete the extension's confirmation or sensitive input yourself |
-| `outcome_unknown` | Inspect the page once; never automatically replay the write |
+If disconnected, load or reload the extension, click **Connect Hermes** in the popup and run the check in [installation](docs/installation.md#check-connection--检查连接). If an action fails, inspect the current page and follow the displayed instructions. Settings are in [configuration](docs/configuration.md).
 
 ## Development and contributions
 

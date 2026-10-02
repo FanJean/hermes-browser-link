@@ -49,7 +49,7 @@ def verify_package_layout(package, files):
     roots={name.split('/')[0] for name in files}
     expected_roots={'browser-link','native-extension','docs','LICENSE',
                     'README.md','INSTALL.txt','RELEASE-STATUS.txt','install-executor.py',
-                    'SHA256SUMS.json'}
+                    'SHA256SUMS.json','install-cli.py','install.sh'}
     if roots!=expected_roots:
         raise ValueError('安装包顶层布局无效')
     required={
@@ -85,7 +85,8 @@ def verify_package_layout(package, files):
         'docs/python-scripting.md',
         'docs/CHANGELOG.md',
         'LICENSE','README.md','INSTALL.txt','RELEASE-STATUS.txt',
-        'install-executor.py','SHA256SUMS.json',
+        # 中文注释：通用入口与底层安装器同属校验清单。
+        'install-executor.py','install-cli.py','install.sh','SHA256SUMS.json',
     }
     missing=required-set(files)
     if missing:

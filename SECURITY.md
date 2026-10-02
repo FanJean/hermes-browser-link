@@ -51,3 +51,7 @@ The `notifications` permission displays generic system reminders when focus cann
 This applies to Cookie mirror, first-site reads, writes, JavaScript/debugging approvals and manual-input panels that use the approval notifier. Manual-input instructions still require typing into the website and then confirming in the panel. The separate `access_request` management window also sends a reminder when unfocused; notification clicks never change consent. An unverified focus state keeps the window open instead of discarding it. Existing source/tab validation, expiry, unknown-result handling and no-replay rules remain in force.
 
 Notifications can be denied by browser or operating-system settings. The panel and pending badge remain available; switch to the source browser or explicitly open the pending panel. Reminders are cleared when the panel closes, settles or expires during reconciliation. Neither notification delivery nor focusing a window proves user approval.
+
+## Extension identity and installation packages
+
+The extension ID is `dhioigkigkkhceflkkkmoljhdaefjohb`. The manifest `key` is a public key used to keep that ID stable, not a secret. The installer checks the derived identity and the exact Native Messaging origin allowlist; upgrade preserves both checks. `SHA256SUMS.json` verifies file integrity, not publisher identity. These checks run inside the installer and do not require users to compare IDs during installation.

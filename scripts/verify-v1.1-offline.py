@@ -103,7 +103,7 @@ PYTHON_SUITES = (
     'bench', 'bench/agent',
     # 中文注释：同任务并发建页跨真实 daemon 与扩展逻辑。
     # 中文注释：改名迁移只使用临时 HOME 与浏览器配置目录。
-    'tests/v1.5.1', 'tests/v1.5.0', 'tests/v1.4', 'tests/v1.4.1', 'tests/v1.4.2', 'tests/v1.4.3', 'tests/v1.4.4', 'tests/v1.3.6',
+    'tests/v1.5.2', 'tests/v1.5.1', 'tests/v1.5.0', 'tests/v1.4', 'tests/v1.4.1', 'tests/v1.4.2', 'tests/v1.4.3', 'tests/v1.4.4', 'tests/v1.3.6',
     'tests/v1.1-script-lane',
     'tests/v1.1-interactions', 'tests/v1.1-approval-notify',
     'tests/v1.1-verification', 'tests/native-v2',
@@ -112,6 +112,8 @@ PYTHON_SUITES = (
 # Some directories contain explicitly unsafe runners: select files by fixed name.
 PYTHON_FILES = {
     # 中文注释：镜像中转与跨层隐私测试按文件登记，新增 runner 必须重新审阅。
+    # 中文注释：安装流程仅使用临时 HOME、非 Git 包快照与命令替身。
+    'tests/v1.5.2': ('test_install_flow.py', 'test_hook_compatibility.py'),
     'tests/v1.5.1': ('test_desktop_cookie_mirror.py',),
     'tests/v1.5.0': ('test_cookie_mirror.py',),
     'tests/v1.1-interactions': ('test_interaction_wire.py',),

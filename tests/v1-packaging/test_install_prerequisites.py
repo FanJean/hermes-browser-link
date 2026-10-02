@@ -45,6 +45,8 @@ class InstallPrerequisitesTests(unittest.TestCase):
             'browser-link/script_lane/tool.py': '# 工具\n',
             'browser-link/native_bridge/host.py': '# host\n',
             'browser-link/native_bridge/client.py': '# client\n',
+            # 中文注释：当前包必须携带独立 Cookie 内存通道，夹具不省略运行模块。
+            'browser-link/native_bridge/cookie_mirror.py': '# cookie channel\n',
             'browser-link/native_bridge/daemon.py': '# daemon\n',
             'browser-link/native_bridge/api_client.py': '# api\n',
             'browser-link/native_bridge/vault_client.py': '# vault client\n',
@@ -66,6 +68,8 @@ class InstallPrerequisitesTests(unittest.TestCase):
             'INSTALL.txt': 'install\n',
             'RELEASE-STATUS.txt': 'NOT FROZEN: not a formal release\n',
             'install-executor.py': '# 安装器\n',
+            'install-cli.py': '# 通用安装入口\n',
+            'install.sh': '#!/bin/bash\n',
         }
         for name, text in files.items():
             path = self.package / name

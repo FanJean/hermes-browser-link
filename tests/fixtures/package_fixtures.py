@@ -47,6 +47,8 @@ def write_installer_package(root: Path, *, include_api_client: bool = True) -> P
         "INSTALL.txt": b"fixture install instructions\n",
         "RELEASE-STATUS.txt": b"NOT FROZEN; not a formal release.\n",
         "install-executor.py": b"# fixture installer\n",
+        "install-cli.py": b"# install entry\n",
+        "install.sh": b"#!/bin/bash\n",
     }
     if include_api_client:
         files["browser-link/native_bridge/api_client.py"] = b"# api client fixture\n"

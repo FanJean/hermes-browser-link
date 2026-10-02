@@ -17,7 +17,7 @@ INPUTS = ('package.json', 'executor-plugin', 'native-bridge', 'native-extension'
           'browser-workspaces', 'browser-diagnostics', 'page-semantics',
           'browser-interactions', 'approval-policy',
           'CHANGELOG.md',
-          'scripts/install-executor.py', 'docs/installation.md',
+          'scripts/install-executor.py', 'scripts/install-cli.py', 'install.sh', 'docs/installation.md',
           'docs/python-scripting.md', 'LICENSE')
 
 
@@ -110,10 +110,10 @@ class ReleaseClosure(unittest.TestCase):
             self.assertIn(relative, sums)
             self.assertEqual((self.output / relative).read_bytes(), (self.source / relative).read_bytes())
         self.assertIn('NOT FROZEN', (self.output / 'RELEASE-STATUS.txt').read_text())
+        # 中文注释：1.5.2 起 INSTALL.txt 只保留运行方式和支持范围；"不改 Hermes 源码"由上面的包内容断言保证，不再要求写进安装说明。
         instructions = (self.output / 'INSTALL.txt').read_text()
-        self.assertIn('No Hermes or Browser Use source is modified', instructions)
-        self.assertIn('tools.override', instructions)
-        self.assertIn('no third-party dependencies', instructions)
+        self.assertIn('./install.sh', instructions)
+        self.assertIn('macOS', instructions)
 
     def test_missing_script_lane_member_rejected_before_output(self):
         (self.source / 'executor-plugin/script_lane/host_bridge.py').unlink()

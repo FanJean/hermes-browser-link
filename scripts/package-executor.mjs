@@ -72,7 +72,7 @@ async function sourceSnapshot() {
       entries[relative] = createHash('sha256').update(await readFile(file)).digest('hex');
     }
   }
-  for (const input of [...inputs,'scripts/install-executor.py','docs/installation.md','LICENSE']) await visit(input);
+  for (const input of [...inputs,'scripts/install-executor.py','scripts/install-cli.py','install.sh','docs/installation.md','LICENSE']) await visit(input);
   return JSON.stringify(entries);
 }
 function localPath(reference) {
@@ -174,11 +174,11 @@ async function verifyLayout(root) {
     'native-extension/icon-16.png','native-extension/icon-32.png','native-extension/icon-48.png','native-extension/icon-128.png',
     'docs/python-scripting.md','docs/CHANGELOG.md',
     'LICENSE','README.md',
-    'INSTALL.txt','RELEASE-STATUS.txt','install-executor.py']) {
+    'INSTALL.txt','RELEASE-STATUS.txt','install-executor.py','install-cli.py','install.sh']) {
     if (!actualFiles.has(required)) throw new Error(`Incomplete package layout: missing ${required}`);
   }
   const roots=new Set([...actualFiles].map(name=>name.split('/')[0]));
-  const expectedRoots=new Set(['browser-link','native-extension','docs','LICENSE','README.md','INSTALL.txt','RELEASE-STATUS.txt','install-executor.py']);
+  const expectedRoots=new Set(['browser-link','native-extension','docs','LICENSE','README.md','INSTALL.txt','RELEASE-STATUS.txt','install-executor.py','install-cli.py','install.sh']);
   if (roots.has('SHA256SUMS.json')) expectedRoots.add('SHA256SUMS.json');
   if (roots.size!==expectedRoots.size||[...roots].some(name=>!expectedRoots.has(name))) throw new Error(`Unexpected package root layout: ${JSON.stringify([...roots].sort())}`);
   return actualFiles;
@@ -198,7 +198,7 @@ async function verifyGeneratedManifest() {
 }
 let outputCreated = false;
 try {
-  for (const input of [...inputs,'scripts/install-executor.py','docs/installation.md','LICENSE']) {
+  for (const input of [...inputs,'scripts/install-executor.py','scripts/install-cli.py','install.sh','docs/installation.md','LICENSE']) {
     const directory=path.join(source,input);
     if(output===directory || output.startsWith(directory+path.sep)) throw new Error('Output cannot be inside an input directory');
   }
@@ -209,7 +209,7 @@ try {
     'executor-plugin/single_tool_adapter/integration.py','executor-plugin/single_tool_adapter/adapter.py',
     'executor-plugin/vault_adapter/__init__.py','executor-plugin/vault_adapter/adapter.py',
     'executor-plugin/vault_adapter/integration.py','executor-plugin/vault_adapter/official_source.py',
-    'CHANGELOG.md','docs/python-scripting.md','docs/installation.md',
+    'CHANGELOG.md','docs/python-scripting.md','docs/installation.md','scripts/install-cli.py','install.sh',
     ...nativeModules, ...diagnosticsFiles.map(name => `${diagnosticsPackage}/${name}`)]) {
     const info=await lstat(path.join(source,required)).catch(error=>{if(error?.code==='ENOENT')return null;throw error;});
     if(!info?.isFile()) throw new Error(`Missing input ${required}`);
@@ -236,24 +236,29 @@ try {
   const build = spawnSync(process.execPath,[path.join(source,'native-extension/build.mjs'),path.join(output,'native-extension')],{encoding:'utf8',timeout:30000});
   if(build.status!==0) throw new Error(`Native build failed: ${build.stderr || build.error}`);
   await copyFile(path.join(source,'LICENSE'),path.join(output,'LICENSE'));
+  // 中文注释：发布包携带通用入口，用户不需要 Node.js。
   await copyFile(path.join(source,'scripts/install-executor.py'),path.join(output,'install-executor.py'));
-  await copyFile(path.join(source,'docs/installation.md'),path.join(output,'README.md'));
+  await copyFile(path.join(source,'scripts/install-cli.py'),path.join(output,'install-cli.py'));
+  await copyFile(path.join(source,'install.sh'),path.join(output,'install.sh'));
+  // 中文注释：安装文档作为包根 README 时，将同目录文档链接改为 docs/ 下的路径。
+  const installation = await readFile(path.join(source,'docs/installation.md'),'utf8');
+  await writeFile(path.join(output,'README.md'),installation.replace(/\]\((agent-install-prompt|configuration|development)\.md\)/g,'](docs/$1.md)'));
   await mkdir(path.join(output,'docs'));
   // 中文注释：模块索引与生成接口参考随包分发，避免脚本文档链接指向缺失文件。
   await copyTree(path.join(source,'docs'),path.join(output,'docs'));
   await copyFile(path.join(source,'CHANGELOG.md'),path.join(output,'docs/CHANGELOG.md'));
   await writeFile(path.join(output,'RELEASE-STATUS.txt'),releaseVersion?
     `RELEASE V${releaseVersion}: formal release built from commit ${commit}. See docs/CHANGELOG.md for the verified scope and stated limits.\n`:
-    'NOT FROZEN: V1.3 remains a development candidate, not a formal release or a personal deployment. See docs/CHANGELOG.md for open acceptance gaps.\n');
-  await writeFile(path.join(output,'INSTALL.txt'),`${releaseVersion?`macOS Chrome/Edge V${releaseVersion} formal release (commit ${commit}).`:'macOS Chrome/Edge V1.3 development candidate; NOT FROZEN and not a formal release.'}
-Read RELEASE-STATUS.txt and README.md first.
-Verify every file against SHA256SUMS.json before use; the manifest does not authenticate the archive source.
-Load native-extension/ as unpacked in the target browser and obtain its exact extension ID.
-Preview: python3 install-executor.py --extension-origin chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/
-Apply: python3 install-executor.py --extension-origin chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/ --apply
-Every installed plugin file is checked against this package manifest; the plugin has no third-party dependencies.
-No Hermes or Browser Use source is modified. Optional: taking over Hermes' official browser_* tools for bound sessions needs the operator to grant this plugin tools.override in Hermes (never implied by installing); without it only browser_shared_* and browser_shared_script are provided.
-Use --user-home and --hermes-home for isolated acceptance. Installation does not enable the plugin or restart any application. Existing installs are refused.
+    `NOT FROZEN: V${declaredVersion} remains a development candidate, not a formal release. See docs/CHANGELOG.md for acceptance limits.\n`);
+  // 中文注释：安装说明仅提供命令和操作；发布构建信息仍在 RELEASE-STATUS.txt。
+  await writeFile(path.join(output,'INSTALL.txt'),`Browser Link ${releaseVersion || declaredVersion}
+Run ./install.sh. Python 3.11+ and Hermes are needed; source installation also needs Node.js 22.12+.
+Currently supported: macOS + Chrome/Edge. Tested with Hermes 0.21.4.
+Load the printed extension directory, enable smart approval in its popup and restart Hermes Desktop.
+Upgrade: ./install.sh --upgrade, then reload the extension and restart Hermes Desktop.
+Uninstall: ./install.sh --uninstall (keeps task data); add --purge to delete it.
+Preview: ./install.sh --dry-run. Directory details: ./install.sh --verbose.
+Read README.md for profiles, the connection check command and troubleshooting.
 `);
   await verifyRuntimeClosure(path.join(output,'browser-link'));
   await verifyRuntimeClosure(path.join(output,'native-extension'));

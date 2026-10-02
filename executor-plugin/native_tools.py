@@ -694,6 +694,13 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
 def register_native_context(ctx, profile_runtime, *, cleanup=None, host_bridge=None, backend_check=None):
     # 中文注释：CLI 完成后退出还会 finalize；已有完成信号时保留 daemon 宽限，不被进程退出提前关闭。
     completed_sessions = set()
+    # 中文注释：宿主已加载的钩子表就是支持能力；缺少生命周期钩子时沿用 daemon 空闲清理。
+    supported_hooks = getattr(sys.modules.get('hermes_cli.plugins'), 'VALID_HOOKS', None)
+
+    def register_hook(name, callback):
+        if supported_hooks is None or name in supported_hooks:
+            ctx.register_hook(name, callback)
+
     def record_activity(tool_name, args, **identity):
         decision = profile_runtime.authority.pre_tool_call(tool_name, args, **identity)
         # 中文注释：包含健康、reference、doctor、open、script 等无页面 RPC 的工具；只有可信租约才能取消计时。
@@ -707,7 +714,7 @@ def register_native_context(ctx, profile_runtime, *, cleanup=None, host_bridge=N
             except Exception:
                 logging.getLogger('browser-link').warning('浏览器活动信号未送达，无法确认取消空闲计时。')
         return decision
-    ctx.register_hook('pre_tool_call', record_activity)
+    register_hook('pre_tool_call', record_activity)
     def finalize_session(*, session_id=None, **_):
         # 中文注释：只接受宿主结束的会话，先撤销本地租约和脚本绑定，再关闭该 owner 的全部任务。
         if not isinstance(session_id, str) or not session_id.strip():
@@ -745,8 +752,8 @@ def register_native_context(ctx, profile_runtime, *, cleanup=None, host_bridge=N
         if session_id not in completed_sessions:
             return finalize_session(session_id=session_id, **kwargs)
 
-    ctx.register_hook('on_session_finalize', finalize_unfinished)
-    ctx.register_hook('subagent_stop', finalize_subagent)
+    register_hook('on_session_finalize', finalize_unfinished)
+    register_hook('subagent_stop', finalize_subagent)
     def end_turn(*, session_id=None, completed=False, failed=False, interrupted=False, **_):
         # 中文注释：每轮完成只向常驻 daemon 发信号；插件卸载或 CLI 退出不会丢失宽限截止时间。
         if failed is True or interrupted is True:
@@ -767,8 +774,8 @@ def register_native_context(ctx, profile_runtime, *, cleanup=None, host_bridge=N
             return
         return finalize_session(session_id=session_id)
 
-    ctx.register_hook('on_session_end', end_turn)
-    ctx.register_hook('agent_loop_stopped', stop_loop)
+    register_hook('on_session_end', end_turn)
+    register_hook('agent_loop_stopped', stop_loop)
     for name in TOOL_NAMES:
         schema = TOOL_SCHEMAS[name]
         ctx.register_tool(name=name, toolset='browser-link', schema=schema,

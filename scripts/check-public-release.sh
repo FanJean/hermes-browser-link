@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 中文注释：仅检查当前跟踪文件的工作区内容；不输出匹配值，也不扫描私有历史。
+# 中文注释：检查跟踪文件和未忽略的新源码的工作区内容；不输出匹配值，也不扫描私有历史。
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 python3 - <<'PY'
@@ -27,7 +27,7 @@ synthetic_credentials = {
     'tests/v1.1-advanced/real-official.mjs': {'synthetic-vault-password-2026'},
     'tests/v1.1-redaction-fix/redaction.test.mjs': {'QUALITY_SENTINEL_SECRET'},
 }
-paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+paths = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z']).decode().split('\0')
 errors = []
 checked = 0
 for name in filter(None, paths):
@@ -73,5 +73,5 @@ for name in filter(None, paths):
 if errors:
     print('\n'.join(errors), file=sys.stderr)
     raise SystemExit(1)
-print(f'Public release scan OK ({checked} tracked files; {len(keywords)} extra markers)')
+print(f'Public release scan OK ({checked} source files; {len(keywords)} extra markers)')
 PY

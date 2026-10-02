@@ -73,3 +73,19 @@ See [testing.md](testing.md) for how to run and write tests.
 ## Maintaining new modules
 
 See [product modules](product-modules.zh-CN.md) for source ownership and limits. After changing exported Python helpers or tool schemas, run `python3 scripts/generate-browser-reference.py`. `npm test` checks generated documentation drift. Site-tool and network test runners are explicitly included in the gate inventory; browser runners remain opt-in.
+
+## Installation internals
+
+`install.sh` uses the existing package verifier and transactional installer. Default output shows the extension directory needed for loading; `--verbose` also shows the Hermes/plugin directories and upgrade backup path. Root plugins live in `$HERMES_HOME/plugins/browser-link/`, selected profile copies in `$HERMES_HOME/profiles/<name>/plugins/browser-link/`, stable extensions in `$HERMES_HOME/browser-link-releases/native-extension/`, and private host/task data in `$HERMES_HOME/plugin-data/browser-link-native/`. Upgrade backups live outside plugin registries in `$HERMES_HOME/plugin-backups/`.
+
+Hermes `VALID_HOOKS` controls lifecycle callback registration. Unsupported callbacks are skipped without warnings; daemon task-idle cleanup remains active. The required owner-lease and authorization checks are unchanged. Version numbers describe tested environments rather than an installation gate; unknown version output is left to the actual activation command.
+
+Manual operators can build with `node scripts/package-executor.mjs --output out/manual-package` and use the package's lower-level installer:
+
+```sh
+python3 install-executor.py --extension-origin chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/
+python3 install-executor.py --extension-origin chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/ --apply
+hermes --profile default plugins enable browser-link
+```
+
+The first command returns a plan; apply returns `installed_disabled` and activation is separate. This interface refuses existing installations; use `install.sh --upgrade` for replacement. Manual operators handle profile copies, extension loading and app restart. Neither installation interface grants optional `tools.override` or Vault access. See [security](../SECURITY.md#extension-identity-and-installation-packages) for identity and checksum checks, and [testing](testing.md) for isolated acceptance.

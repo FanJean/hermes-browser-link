@@ -61,7 +61,7 @@ class PluginManifestTests(unittest.TestCase):
         manifest = yaml.safe_load((PLUGIN_ROOT / "plugin.yaml").read_text(encoding="utf-8"))
         self.assertEqual(manifest["name"], "browser-link")
         self.assertEqual(manifest["manifest_version"], 2)
-        self.assertEqual(manifest["requires_hermes"], ">=0.21.4")
+        self.assertNotIn("requires_hermes", manifest)
         self.assertEqual(set(manifest["provides_tools"]), TOOLS)
         # 中文注释：声明与实际五个钩子一致，完成宽限和中断清理均被覆盖。
         hooks = ['pre_tool_call', 'on_session_finalize', 'subagent_stop', 'on_session_end', 'agent_loop_stopped']

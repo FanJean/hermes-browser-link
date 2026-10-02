@@ -156,3 +156,12 @@
 - `tests/native-extension/background-access-request.test.mjs`：独立网站访问模式窗口后台通知与点击聚焦，关闭/失效后不聚焦，不发送授权；登记在 baseline Node 清单。
 - `tests/native-extension/package.test.mjs`：同步扩展通知权限断言；该独立打包 runner 不新增到离线清单，保持原有隔离要求。图标逐字复制及 action.default_icon 资源闭包复用 `tests/v1.1-build-closure/build-closure.test.mjs`；发布文件清单复用已审阅的 `tests/v1.1-packaging/test_release_closure.py`。
 - 弹窗平铺、无主要链接区块和 Cookie 目标列表复用 `tests/popup-integration/popup.test.mjs` / `tests/v1.1-ui-acceptance/popup.test.mjs`；桌面主要链接 POST 与读回复用 `executor-plugin/desktop/render.test.mjs`。
+
+## 1.5.2 通用安装流程
+
+- `tests/v1.5.2/test_install_flow.py`：临时 HOME/HERMES_HOME、Hermes/浏览器命令替身，覆盖首次/重复安装、源码自动打包、无 Node 的 Release、升级保留数据/身份/白名单、校验和启用失败回滚、卸载保留数据、purge、删除确认、dry-run 零写入、前置错误、多 profile、doctor 连接/超时和未知进程拒绝。
+- runner 不依赖 `rg`，从非 Git 临时目录运行；同时登记 `npm test`、显式离线门禁和固定基准步骤数（38）。
+- 浏览器手动加载与弹窗授权仍由用户验收；离线测试不操作真实浏览器或真实 Hermes。
+
+- `tests/v1.5.2/test_hook_compatibility.py`：宿主缺失单个、多个或全部钩子时完整插件无警告加载；工具、技能和卸载回调保留，无租约调用仍拒绝。
+- `tests/v1.4.3/test_autoclose.py`：缺生命周期钩子时工具调用更新活动时间，daemon 在空闲期后清理任务。

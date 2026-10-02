@@ -135,3 +135,9 @@ COOKIE_LEAK_SELFTEST=1 node tests/v1.5.1/real-desktop-cookie-mirror.mjs --headed
 ```
 
 Set `HERMES_PYTHON` to the existing test Python with FastAPI/HTTPX and Hermes dependencies when needed. The self-test deliberately plants a synthetic cookie value in the temporary daemon directory and must fail the leak scan. Both normal modes must pass without it. These scripts are never part of `npm test` or the offline gate.
+
+### Installation flow (1.5.2)
+
+`tests/v1.5.2/test_install_flow.py` runs in `npm test` and the offline gate using temporary HOME/HERMES_HOME, a verified package outside Git and command stubs. It covers first installation, repeat-install advice, source packaging, Release without Node.js, upgrade data/identity preservation, late corruption and activation rollback, uninstall/purge, deletion confirmation, dry-run without writes, prerequisites, profiles and read-only connection polling. No real installation or browser is operated. The reviewed baseline has 38 steps.
+
+Manual acceptance still requires loading the printed extension path into a temporary Chrome/Edge profile, confirming doctor detects it, enabling popup access yourself and checking restart behavior. Source tests do not replace that acceptance.

@@ -1,0 +1,35 @@
+name: Release installation package
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # 中文注释：仅标签触发发布；固定已有 Action 提交，不在源码变更时自动打标签。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Build verified release package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # 中文注释：打包器核对标签版本、干净源码和文件清单，构建不需要开发依赖。
+          version="${RELEASE_TAG#v}"
+          node scripts/package-executor.mjs --release "$version" --output "out/hermes-browser-link-$version"
+          cd out
+          zip -q -r "hermes-browser-link-$version.zip" "hermes-browser-link-$version"
+      - name: Attach ZIP and checksums to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          # 中文注释：只创建当前标签的 Release，不覆盖已有 Release 附件。
+          gh release create "$RELEASE_TAG" "out/hermes-browser-link-$version.zip" "out/hermes-browser-link-$version/SHA256SUMS.json" --verify-tag --title "Browser Link $version" --generate-notes --prerelease

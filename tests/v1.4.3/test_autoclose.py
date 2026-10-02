@@ -88,6 +88,33 @@ class AutocloseTests(unittest.TestCase):
     def completed(self):
         self.ctx.hooks['on_session_end'](session_id='session-a', completed=True)
 
+    def test_missing_lifecycle_hooks_keep_tools_and_idle_cleanup(self):
+        # 中文注释：宿主只接受预调用钩子；真实租约和 get 工具照常工作，收组由 daemon 空闲扫描完成。
+        host = types.ModuleType('hermes_cli.plugins')
+        host.VALID_HOOKS = {'pre_tool_call'}
+        ctx = Context()
+        with patch.dict(sys.modules, {'hermes_cli.plugins': host}):
+            TOOLS.register_native_context(ctx, self.runtime)
+        self.assertEqual(set(ctx.hooks), {'pre_tool_call'})
+        self.now += 3000
+        args = {'task_id': self.task['id']}
+        decision = ctx.hooks['pre_tool_call']('browser_shared_get', args,
+                                             session_id='session-a', tool_call_id='read')
+        self.assertEqual(decision['action'], 'modify')
+        value = json.loads(TOOLS.make_tool_handler('browser_shared_get', self.runtime)(
+            {**args, **decision['args']}, session_id='session-a'))
+        self.assertEqual(value['id'], self.task['id'])
+        self.assertEqual(value['state'], 'ready')
+        self.assertNotIn('idleCloseAt', self.task)
+        self.now += self.daemon.task_idle_timeout_seconds - 1
+        self.daemon._sweep_idle_tasks()
+        self.assertEqual(self.task['state'], 'ready')
+        self.now += 2
+        self.daemon._sweep_idle_tasks()
+        self.assertEqual(self.task['state'], 'closed')
+        self.assertEqual(self.task['cleanupState'], 'succeeded')
+        self.assertTrue(self.releases[-1]['closeAgentTabs'])
+
     def test_completed_closes_after_grace_and_only_this_owner(self):
         other = self.new_task('other-owner')
         self.completed()

@@ -381,7 +381,7 @@ class GateNegativeControls(unittest.TestCase):
     def test_baseline_and_supplemental_step_counts_are_separate(self):
         # 中文注释：当前显式矩阵已纳入新增基准与版本回归，保持实际审阅后的数量。
         # 中文注释：Cookie 镜像 Python runner 新增一个基准步骤，原有步骤全部保留。
-        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 37)
+        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 39)
         self.assertEqual(len(gate.supplemental_matrix(Path('/scratch/source'), '/scratch/python')), 2)
 
     def test_browser_use_cli_source_is_discovered_from_cli_without_executing_it(self):
@@ -446,9 +446,13 @@ class GateNegativeControls(unittest.TestCase):
         self.assertTrue(final_delta.issubset(set(gate.REVIEWED_RUNNER_PATHS)))
         # 中文注释：dev-sync 的 PID 身份回归与首次网站读取确认回归都登记在离线执行清单。
         # 中文注释：镜像 Node/Python 两个离线文件也纳入发现与固定清单核对。
-        self.assertEqual(len(gate.known_v11_runner_paths()), 84)
+        self.assertEqual(len(gate.known_v11_runner_paths()), 86)
         # 中文注释：1.5.1 桌面 API 与交互均登记，真实浏览器脚本不进入离线门禁。
         # 中文注释：后台审批 runner 登记后显式清单增加一项。
+        # 中文注释：1.5.2 临时安装、升级回滚和卸载 runner 进入显式门禁。
+        self.assertIn('tests/v1.5.2/test_install_flow.py', gate.known_v11_runner_paths())
+        # 中文注释：缺钩子的完整插件加载测试也进入离线固定清单。
+        self.assertIn('tests/v1.5.2/test_hook_compatibility.py', gate.known_v11_runner_paths())
         self.assertIn('tests/v1.5.1/approval-background.test.mjs', gate.known_v11_runner_paths())
         self.assertIn('tests/native-extension/background-access-request.test.mjs', gate.NODE_TESTS)
         self.assertIn('tests/v1.5.1/test_desktop_cookie_mirror.py', gate.known_v11_runner_paths())
