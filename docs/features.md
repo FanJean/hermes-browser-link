@@ -32,3 +32,11 @@ V1.3 development builds add page parsing, schema extraction, parameterized funct
 ## Current development additions
 
 Verified custom site-tool drafts, bounded network evidence, same-origin page requests, read-only doctor and generated capability-aware API reference are described by module in the [product catalog](product-modules.zh-CN.md). These additions reuse the existing task and script execution chain. Development completion does not mean a personal installation or public release has been updated.
+
+## Cookie 镜像（1.5.0，真实浏览器待验收）
+
+源扩展弹窗读取默认 store Cookie 清单，按站点聚合、搜索和勾选，可选择另一个已连接 Chrome/Edge 或同浏览器的另一个 profile。可选清除目标站点旧 Cookie；默认关闭。会话 Cookie 默认保持会话属性，也可显式保存 1–365 天。每次复制均在源扩展确认面板批准，包括全部访问模式。
+
+`browser_shared_cookie_mirror` 提供 `list_sites`、`request_mirror`、`status`；仅返回站点、数量、状态及失败类别。值仅一次性内存中转，60 秒含确认时间，断连/失败销毁，不写任务账本或文件。仅 Cookie 登录态，无法保证服务端接受；不复制 localStorage、IndexedDB、客户端证书或设备密钥。回读匹配与实际登录是两个验收步骤。
+
+域去掉前导点后按可注册域聚合，包含子域；`co.uk`、`com.cn` 等常见多段后缀使用内置小表。没有完整 PSL，未知多段及私有后缀可能聚合过宽，应在确认时检查站点和数量。仅默认 store，不处理隐身窗口。分区写入失败单独计数，不中断其他 Cookie。

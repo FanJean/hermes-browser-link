@@ -41,7 +41,7 @@ _runtime = runtime_module()
 TOOL_NAMES = _runtime.TOOL_NAMES
 _METHODS = dict(zip(TOOL_NAMES, ('health', 'browser.list', 'shared.create', 'shared.list',
                                'shared.get', 'shared.artifacts', 'shared.run', 'shared.cancel', 'shared.resume', 'shared.close',
-                               'shared.downloads')))
+                               'shared.downloads', 'browser.cookie_mirror')))
 _DOWNLOAD_METHODS = {'list': 'shared.downloads', 'claim': 'shared.download_claim', 'cancel': 'shared.download_cancel'}
 
 
@@ -86,6 +86,12 @@ def _semantic_options():
 
 
 TOOL_SCHEMAS = {
+    'browser_shared_cookie_mirror': {
+        'description': '列出 Cookie 站点计数或请求复制登录态。request_mirror 必须由用户在源浏览器扩展确认，全部访问也不能免确认；status 查询同一 transfer_id，不重发。不得索要 Cookie 值或保存 Cookie 内容。',
+        'parameters': _object({'action': {'type': 'string', 'enum': ['list_sites', 'request_mirror', 'status']},
+            'source': _text(), 'target': _text(), 'sites': {'type': 'array', 'minItems': 1, 'maxItems': 256, 'items': _text(253)},
+            'transfer_id': _text(32), 'options': _object({'clearTarget': {'type': 'boolean'},
+                'persistDays': {'type': 'integer', 'minimum': 1, 'maximum': 365}})}, ('action',))},
     'browser_shared_health': {'description': '检查共享浏览器桥接服务；不启动或选择浏览器。', 'parameters': _object({})},
     'browser_shared_browsers': {'description': '仅在多实例歧义或诊断时调用；通常直接 browser_shared_open。只读列出 Chrome/Edge 实例和主要链接标记；多台可用时 browser_shared_open 优先使用已启用的主要链接。', 'parameters': _object({})},
     'browser_shared_create': {
@@ -348,6 +354,15 @@ def _validate(tool_name, args):
         raise ArgumentFieldsError('invalid_fields', ['timeout_s'])
     if tool_name == 'browser_shared_get' and 'log_limit' in public and public.get('include_log') is not True:
         raise ArgumentFieldsError('invalid_fields', ['log_limit'])
+    if tool_name == 'browser_shared_cookie_mirror':
+        # 中文注释：动作只接受各自必需的参数，模型不能传入批准或 Cookie 载荷。
+        action = public['action']
+        required = {'list_sites': {'source'}, 'request_mirror': {'source', 'target', 'sites'}, 'status': {'transfer_id'}}[action]
+        allowed = required | {'action'} | ({'options'} if action == 'request_mirror' else set())
+        if required - set(public):
+            raise ArgumentFieldsError('missing_fields', required - set(public))
+        if set(public) - allowed:
+            raise ArgumentFieldsError('invalid_fields', set(public) - allowed)
     if tool_name == 'browser_shared_run':
         action = public['action']
         fields = {
@@ -440,6 +455,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                        'direction': 'direction',
                        'arguments': 'arguments', 'expression': 'expression', 'world': 'world', 'await_promise': 'awaitPromise',
                        'timeout_ms': 'timeoutMs', 'method': 'method', 'cdp_params': 'params', 'max': 'max',
+                       'sites': 'sites', 'transfer_id': 'transferId',
                        'clear': 'clear', 'accept': 'accept', 'prompt_text': 'promptText'}
             for key, wire in mapping.items():
                 if key in args:
@@ -517,7 +533,15 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
             code = str(getattr(exc, 'code', ''))
             data = getattr(exc, 'data', None)
             data = data if isinstance(data, dict) else {}
+            if tool_name == 'browser_shared_cookie_mirror':
+                # 中文注释：镜像错误独立投影，不能混入页面诊断字符串；状态失联也不能重发复制。
+                summary = _runtime._base._project_tool_result(tool_name, args,
+                    {key: data[key] for key in ('count', 'success', 'failed', 'matched', 'missing', 'cleared', 'clearFailed', 'reasons', 'sites', 'reason') if key in data})
+                return json.dumps({**summary, 'code': 'cookie_mirror_denied', 'bridgeCode': 'cookie_mirror_denied',
+                    'error': 'Cookie 镜像请求不可用或已过期，请在扩展核实；不要重复执行。',
+                    'retryable': False, 'outcome_unknown': args.get('action') != 'list_sites'}, ensure_ascii=False)
             messages = {
+                'cookie_mirror_denied': 'Cookie 镜像请求不可用或已过期，请在扩展核实；不要重复执行。',
                 'approval_denied': '用户拒绝了这次操作，未执行。',
                 'user_input_declined': '用户选择不填写该敏感字段，未执行。',
                 'approval_expired': '这次确认已过期，未执行；不会自动重试。',

@@ -53,13 +53,40 @@ def _read_token(home: os.PathLike[str] | str) -> str:
             os.close(fd)
 
 
+def safe_summary(value):
+    # 中文注释：错误通路复用结果的数字、域名和固定类别约束，只接受镜像汇总字段。
+    if not isinstance(value, dict):
+        return {}
+    import re
+    result = {}
+    for key in ('count', 'success', 'failed', 'matched', 'missing', 'cleared', 'clearFailed'):
+        if type(value.get(key)) is int and 0 <= value[key] <= 1000000:
+            result[key] = value[key]
+    if isinstance(value.get('reason'), str) and value['reason'] in {'transfer_failed', 'expired', 'disconnected'}:
+        result['reason'] = value['reason']
+    if isinstance(value.get('reasons'), dict):
+        result['reasons'] = {key: n for key, n in value['reasons'].items()
+                             if key in {'expired', 'prefix_constraint', 'partition_write_failed', 'write_failed'} and type(n) is int and 0 <= n <= 1000000}
+    if isinstance(value.get('sites'), list):
+        result['sites'] = [{'site': row['site'], **safe_summary({key: item for key, item in row.items() if key != 'sites'})}
+                           for row in value['sites'][:4096] if isinstance(row, dict) and isinstance(row.get('site'), str) and re.fullmatch(r'(?:[a-z0-9-]+\.)*[a-z0-9-]+|\[[0-9a-f:]{2,45}\]', row['site']) and len(row['site']) <= 253]
+    return result
+
+
 class BridgeError(RuntimeError):
     def __init__(self, code: str, message: str, data: Any = None):
+        # 中文注释：Cookie 异常文本也固定，防止浏览器异常被调用方记录到日志。
+        if code == 'cookie_mirror_denied':
+            message = 'Cookie 镜像请求不可用，请在扩展中核实。'
         super().__init__(message)
         self.code = code
         self.message = message
         self.data = {key: data[key] for key in ("outcomeUnknown", "retryable")
                      if isinstance(data, dict) and type(data.get(key)) is bool}
+        if code == 'cookie_mirror_denied':
+            # 中文注释：镜像错误与页面错误分开处理，不放行候选、遮挡或任意诊断文本。
+            self.data.update(safe_summary(data))
+            return
         # 中文注释：仅转发固定形状的脱敏候选和遮挡摘要；不转发网页异常原文。
         if isinstance(data, dict) and code in {'reference_target_missing', 'reference_target_ambiguous'}:
             rows = data.get('candidates')

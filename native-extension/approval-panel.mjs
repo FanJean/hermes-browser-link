@@ -5,7 +5,7 @@ const text=(doc,tag,value)=>{const node=doc.createElement(tag);node.textContent=
 const FIELD={password:'密码',payment:'支付信息',otp:'验证码',sensitive:'敏感信息'};
 function safeView(v){
  if(!v||typeof v.id!=='string'||!v.id||v.id.length>128||
-  (v.kind!==undefined&&!(v.kind==='manual_input'&&Object.hasOwn(FIELD,v.fieldKind)))||
+  (v.kind!==undefined&&v.kind!=='cookie_mirror'&&!(v.kind==='manual_input'&&Object.hasOwn(FIELD,v.fieldKind)))||
   // 中文注释：调试命令说明可包含方法名、持久注入提示与其他子框架来源。
   !['taskTitle','action','scope'].every(k=>typeof v[k]==='string'&&v[k].length>0&&v[k].length<=(k==='action'?512:256))||
   !Number.isFinite(v.expiresAt)||v.expiresAt<=Date.now())return false;
@@ -21,6 +21,18 @@ export async function mountApprovalPanel({document:doc=globalThis.document,chrom
  try{response=await chrome.runtime.sendMessage({type:'approval_panel_view'});}catch{}
  const view=response?.result;
  if(!safeView(view)){root.replaceChildren(text(doc,'p','请求已失效或无法核实，请在扩展中查看。'));return;}
+ // 中文注释：面板只展示数量和来源，Cookie 值永不进入 UI 消息。
+ if(view.kind==='cookie_mirror'){
+  if(!Array.isArray(view.sites)||!view.sites.length||!Number.isInteger(view.count)||!view.source||!view.target){root.replaceChildren(text(doc,'p','镜像请求无效'));return;}
+  const label=b=>`${b.browser} · ${b.instanceId.slice(0,8)}`;
+  const status=text(doc,'p','将复制登录态到目标浏览器。即使全部访问，也需要本次确认。');
+  root.replaceChildren(text(doc,'h1','确认 Cookie 镜像'),text(doc,'p',`源浏览器：${label(view.source)}`),text(doc,'p',`目标浏览器：${label(view.target)}`),status,
+   ...view.sites.map(row=>text(doc,'p',`${row.site}：${row.count} 个 Cookie`)),text(doc,'p',`共 ${view.count} 个 Cookie；仅默认 store，不处理隐身窗口。`),
+   text(doc,'p',view.options.clearTarget?'导入前清除目标站点旧 Cookie':'保留目标站点其他 Cookie'),
+   text(doc,'p',view.options.persistDays?`会话 Cookie 保存 ${view.options.persistDays} 天`:'保留会话 Cookie；目标浏览器重启后可能丢失。'),
+   text(doc,'p',`确认有效期至：${new Date(view.expiresAt).toLocaleTimeString('zh-CN')}`));
+  mountDecisions(doc,chrome,root,view,status,[['确认复制登录态','approve'],['拒绝','reject'],['稍后','later']]);return;
+ }
  const manual=view.kind==='manual_input';
  if(manual){
   const heading=text(doc,'h1',`请你亲自填写${FIELD[view.fieldKind]}`);

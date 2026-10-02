@@ -57,7 +57,7 @@ def stage(home: Path, extension_origins: Iterable[str]) -> dict:
     if not diagnostics_source.is_dir():
         diagnostics_source = source_dir.parent / "browser-diagnostics" / "python" / "browser_diagnostics"
     # 中文注释：同一清单用于预检及复制，避免安装文件与防链接检查范围不一致。
-    native_files = ("host.py", "client.py", "daemon.py", "api_client.py", "artifacts.py", "downloads.py", "cdp_gateway.py", "vault_private.py", "vault_client.py")
+    native_files = ("cookie_mirror.py", "host.py", "client.py", "daemon.py", "api_client.py", "artifacts.py", "downloads.py", "cdp_gateway.py", "vault_private.py", "vault_client.py")
     diagnostic_files = ("__init__.py", "schema.py", "runtime.py", "sink.py")
     required = [source_dir / name for name in native_files]
     required += [diagnostics_source / name for name in diagnostic_files]

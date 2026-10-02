@@ -98,6 +98,20 @@ Snapshot `options`: `mode`, `root`, `query`, `roles`, `viewport`, `composed`, `f
 
 `Page.addScriptToEvaluateOnNewDocument` is available through raw CDP. In smart mode its approval explains that the script persists on later pages, including other sites. The extension records each returned identifier and removes registered scripts when the task ends or its mode changes.
 
-The extension advertises `browser_core_v1`, `page_parse_v1`, `page_function_v1` and `network_evidence_v1` in `extension.hello.capabilities.features`. The daemon publishes recognized values in `browser.list`. Missing features are not inferred from version strings. Generated API reference projection describes availability, never authority.
+The extension advertises `browser_core_v1`, `page_parse_v1`, `page_function_v1`, `network_evidence_v1` and `cookie_mirror_v1` in `extension.hello.capabilities.features`. The daemon publishes recognized values in `browser.list`. Missing features are not inferred from version strings. Generated API reference projection describes availability, never authority.
 
 `page_request` composes `js.evaluate` with a fixed function and separately serialized parameters. It does not widen the existing local `api_request` protocol.
+
+## Cookie mirror private channel (1.5.0)
+
+Client method `browser.cookie_mirror` (trusted `owner` injected by plugin):
+
+- `{action: "list_sites", source}` → `{sites: [{site, count}]}`.
+- `{action: "request_mirror", source, target, sites, options?}` → `{transferId, status, sites, count}`. `options` accepts `clearTarget` (default false) and `persistDays` (absent by default; integer 1–365). Source and target are distinct connected instance IDs with `cookie_mirror_v1` capability; separate profiles are separate instances.
+- `{action: "status", transferId}` → owner-bound state and counts. States: `preparing`, `approval_required`, `executing`, `completed`, `denied`, `failed`. Poll the same transfer ID; do not repeat request_mirror. Status expires after 60 seconds.
+
+Extension-only methods `extension.cookie_mirror.request`, `.status`, `.decide` bind source identity to the live connection. `.decide {transferId, approve}` is emitted only by the authenticated source approval panel. The source extension independently keeps a one-use UI approval flag; a daemon take request alone cannot bypass it. There is no client or desktop approval route.
+
+Daemon-to-extension `browser.cookie_mirror.*` methods: `list_sites`, `prepare`, `take`, `begin`, `stage`, `finish`, `destroy`. `prepare` captures cookies locally and returns only site counts and chunk count. `take {transferId,index}` consumes one approved source chunk; `stage {transferId,index,cookies}` accepts one sequential target chunk. These private messages are handled before the generic request ledger, contain no payload fingerprints and retain no replay results. Serialized messages use UTF-8 bytes and reserve envelope space below the 256 KiB limit; the full transfer is bounded to 16 MiB / 128 chunks. Any transport failure destroys the remaining transfer on both ends. Values never cross client APIs.
+
+Final per-site counts: `success`, `failed`, `matched`, `missing`, `cleared`, `clearFailed`; `reasons` counts only `expired`, `prefix_constraint`, `partition_write_failed`, `write_failed`. The target uses `cookies.set`, preserves host-only/domain, path, sameSite, Secure, httpOnly, expiration and partitionKey, and does not pass a source storeId. Secure cookies normally use an HTTPS URL; first-party HTTP loopback partitions keep their HTTP scheme with `secure:true` to preserve the partition scheme constraint. Readback checks name/domain/path/partition identities for every successful write without returning values. Expired cookies are skipped from inventory and recorded as expired if they expire while waiting. No atomic rollback or automatic retry is provided.

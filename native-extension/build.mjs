@@ -16,6 +16,7 @@ for (const file of ['manifest.json', 'request-ledger.mjs', 'content-filter.mjs',
 }
 
 const dependencies = {
+  'cookie-mirror.mjs': path.join(source, 'cookie-mirror.mjs'),
   'vendor/browser-workspaces.mjs': path.join(repo, 'browser-workspaces/index.mjs'),
   'vendor/browser-diagnostics.mjs': path.join(repo, 'browser-diagnostics/js/diagnostics.mjs'),
   'vendor/approval-policy.mjs': path.join(repo, 'approval-policy/policy.mjs'),

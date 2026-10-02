@@ -18,7 +18,7 @@ Terminal group removal uses the extension's private workspace request journal an
    │  chrome.runtime.connectNative
    ▼
  native-extension/           MV3 extension: approvals, policy, CDP execution, overlay
-   │  chrome.debugger / tabs / tabGroups / downloads
+   │  chrome.debugger / tabs / tabGroups / downloads / cookies
    ▼
  Work tabs in your Chrome or Edge
 ```
@@ -61,7 +61,7 @@ The daemon listens on `$HERMES_HOME/plugin-data/browser-link-native/bridge.sock`
 
 ## User interfaces
 
-- **扩展弹窗** — 连接状态、浏览器访问、当前页任务状态、接管/继续与停止按钮；**独立确认面板** — 敏感字段人工输入与未开启完全访问时的确认。完全访问不逐项审批。
+- **扩展弹窗** — 连接状态、浏览器访问、当前页任务状态、接管/继续与停止按钮；**独立确认面板** — 敏感字段人工输入与未开启完全访问时的确认。完全访问不逐项审批；Cookie 镜像仍每次确认。
 - **Page overlay** — status, take over, stop.
 - **Hermes 桌面面板**（`executor-plugin/desktop/`）— 本地桥接状态、在线/离线浏览器及浏览器访问入口。任务日志、文件和结果不在此展示；诊断工具仍可读取受限诊断接口。
 
@@ -90,3 +90,13 @@ Release fences execution before cleanup and remains bounded. If an in-flight tab
 原始 `Page.addScriptToEvaluateOnNewDocument` 已禁用：真实 Chrome 中，注册后的脚本会在用户导航到未授权来源时先执行。扩展自己的预遮罩脚本仍按固定来源列表注册；单次页面 JS 执行不受此项禁用影响。
 
 接管先冻结宿主新派发，并等待扩展已有动作收尾，再同步放开该任务全部工作页。此前排队请求因控制代次变化被拒绝，不因继续操作复活。暂停返回 `task_paused` 且不可自动重试；其他任务保持可用。
+
+## Cookie 镜像（1.5.0）
+
+`native-extension/cookie-mirror.mjs` 独立于页面注入与 CDP，以 `chrome.cookies` 查询和写入当前非隐身扩展的默认 store。新增 `cookies` 与全站点 host 权限用于 Cookie 清单与导入；manifest key 和 ID 保持不变。站点清单只暴露域分组与数量。
+
+弹窗和 `browser_shared_cookie_mirror` 共用 `native-bridge/cookie_mirror.py` 通路。源扩展固定内存快照，已有 `approval-notifier` / `approval-panel` 展示源/目标实例、站点、数量和选项；每次必须用户在源扩展亲自确认，全部访问模式也不放行。确认后源逐块取出，daemon 一次性内存块取走即删，目标重组后逐 Cookie 写入并回读身份集合。Native Messaging 每块完整序列化后不超过 256 KiB。
+
+60 秒 TTL 从发起请求开始计算，包含确认时间。失败、过期或任一端断连/被替换清空剩余载荷；正在派发的单次浏览器 API 无法撤回，可能已部分写入。Cookie 通路在 `Bridge` 的通用账本/指纹/重放缓存之前分流，daemon 不调用任务存储、任务日志、诊断或请求账本。Hermes、桌面面板和错误只得到站点、数量、状态和固定失败类别；值不落盘。操作状态仅内存保存至 TTL 到期。
+
+本机同用户进程能读取 daemon 令牌，仍属于信任边界。目标浏览器拿到完整选中登录态；任务结束不会撤销已复制 Cookie。回读匹配只验证导入覆盖，服务器是否承认登录仍须访问受保护页面验收。

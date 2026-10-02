@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hermes Browser Link",
-  "version": "1.4.5",
+  "version": "1.5.0",
   "permissions": [
     "nativeMessaging",
     "debugger",
@@ -9,7 +9,8 @@
     "tabGroups",
     "downloads",
     "storage",
-    "alarms"
+    "alarms",
+    "cookies"
   ],
   "background": {
     "service_worker": "background.mjs",
@@ -23,5 +24,8 @@
     "extension_pages": "script-src 'self'; object-src 'none'"
   },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2sE/OUnb3h/Xji1/55NeU/P+ER81LNaaqgcCxf10CMVUEiENVgi1MGwkInekbI1iMUWtdGv1wSXd5PIEfiQJJaytHOBFONHkHQA+g92B3xxLl0UtCAG38sNegv41zlUgfm6nHoyd3GprdQEKH9S76NqMSeQNloPYodTfyQ2JNKZ2GfYpiSwfClD5nsVC3RDn9WTbVcgyWGO8m2vCbl2Pa47FjNbiqPBZ0serHX+RLpJ3yfxxbDWVYH2aMIMy1bjHa6Cp1GEQI1WhOLvGaTtn9DFYtVxWKpqjVHOfoscLZHqRNBIK2OBDWlz4C4iga9yYGWUaQceoiQWzeCDX/cq+PwIDAQAB",
-  "short_name": "Hermes Browser Link"
+  "short_name": "Hermes Browser Link",
+  "host_permissions": [
+    "<all_urls>"
+  ]
 }

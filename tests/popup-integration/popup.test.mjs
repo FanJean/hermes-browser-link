@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom'
 const root = new URL('../../native-extension/', import.meta.url)
 const [html, script] = await Promise.all(['popup.html', 'popup.mjs'].map(file => readFile(new URL(file, root), 'utf8')))
 
-async function mount(initial) {
+async function mount(initial, mirrorResult = null) {
   const dom = new JSDOM(html, { url: 'chrome-extension://test/popup.html', runScripts: 'outside-only' })
   const calls = []
   let status = initial
@@ -14,6 +14,8 @@ async function mount(initial) {
   dom.window.chrome = { runtime: {
     sendMessage: async message => {
       calls.push(message)
+      // 中文注释：重开弹窗只查询后台内存中的旧请求编号，不再次复制。
+      if (message.type === 'cookie_mirror_status') return {result: mirrorResult}
       if (message.type === 'popup_status') return { result: status }
       // 中文注释：使用后台保存后读回的契约验证过滤开关。
       if (message.type === 'page_content_filter') {
@@ -202,4 +204,18 @@ test('接管结果未知不阻止用户显式停止任务',async()=>{
 test('暂停进行中显示等待且只允许停止',async()=>{
  const h=await mount({connected:true,page:{tabId:7,taskId:'t'},tasks:[{id:'t',generation:1,state:'pausing'}]});
  try{assert.match(h.document.querySelector('#operation').textContent,/正在暂停/);assert.equal(h.document.querySelector('#takeover').disabled,true);assert.equal(h.document.querySelector('#stop-task').disabled,false);}finally{h.dom.window.close();}
+});
+
+// 中文注释：模拟工具栏弹窗在确认窗口聚焦后关闭，再打开时显示原请求计数。
+test('Cookie 镜像弹窗重开恢复原结果，默认选项关闭且不重发',async()=>{
+ const transferId='d'.repeat(32);
+ const h=await mount({connected:true,browserFullConsentStatus:'enabled',cookieMirrorTransfer:transferId,instanceId:'source',tasks:[],browsers:[{instanceId:'source',browser:'chrome'},{instanceId:'target',browser:'edge'}]},
+  {status:'completed',sites:[{site:'example.com',success:2,failed:0,matched:2,missing:0,reasons:{}}]});
+ assert.match(h.document.querySelector('#cookie-results').textContent,/成功 2 \/ 失败 0/);
+ assert.equal(h.calls.find(call=>call.type==='cookie_mirror_status').transferId,transferId);
+ assert.equal(h.calls.some(call=>call.type==='cookie_mirror_request'),false);
+ assert.equal(h.document.querySelector('#cookie-clear').checked,false);
+ assert.equal(h.document.querySelector('#cookie-persist').checked,false);
+ assert.deepEqual([...h.document.querySelector('#cookie-target').options].map(o=>o.value),['target']);
+ h.dom.window.close();
 });

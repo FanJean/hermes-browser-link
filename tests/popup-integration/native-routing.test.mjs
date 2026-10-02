@@ -1,3 +1,5 @@
+// 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
+import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 // Real popup -> real background dispatcher -> real Bridge request envelope.
 // Browser/Executor and daemon replies are in-memory doubles; NO browser or host starts.
 import {test} from 'node:test';
@@ -17,6 +19,8 @@ async function harness(initialStorage={}){
   nativeCalls.push(clone(m));queueMicrotask(()=>{let result;
    switch(m.method){
     case 'extension.hello':result={};break;
+    // 中文注释：弹窗状态复用在线实例清单，夹具只返回脱敏元信息。
+    case 'extension.browser_list':result=[];break;
     case 'extension.tasks':result=[clone(task)];break;
     case 'extension.approvals':result=clone(queue);break;
     case 'extension.approve':task={...task,...m.params,state:m.params.workspaceOnly?'authorizing':'ready',id:task.id};result=clone(task);break;
@@ -45,7 +49,7 @@ async function harness(initialStorage={}){
   alarms:{create(){},onAlarm:event},tabs:{onCreated:event,onRemoved:event,onUpdated:event,query:async()=>[{id:7,url:'https://example.test/work',title:'工作页'}],get:async()=>({id:7,url:'https://example.test/work'})},debugger:{onDetach:event}
  };
  // Only ES module linking is replaced. The background handler body is unchanged.
- vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{Executor:TestExecutor,NativeWorkspaces:TestWorkspaces,Bridge,BrowserConsent,isUiSender,registerWorkspaceStartup:()=>{},origin:u=>new URL(u).origin,chrome:api,navigator:{userAgent:'Node DOM harness'},crypto:globalThis.crypto,console});
+ vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{CookieMirror,Executor:TestExecutor,NativeWorkspaces:TestWorkspaces,Bridge,BrowserConsent,isUiSender,registerWorkspaceStartup:()=>{},origin:u=>new URL(u).origin,chrome:api,navigator:{userAgent:'Node DOM harness'},crypto:globalThis.crypto,console});
  const flush=async()=>{for(let i=0;i<6;i++)await new Promise(r=>setImmediate(r));};await flush();
  const sender={id:'test',url:'chrome-extension://test/popup.html'};
  const send=m=>new Promise(resolve=>{popupCalls.push(clone(m));assert.equal(dispatch(m,sender,resolve),true);});

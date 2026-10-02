@@ -32,6 +32,7 @@ Use `browser_shared_close(task_id, keep_tabs=true)` for pages the user must fini
 | `browser_shared_run(task_id, action, ...)` | Run one page action (see below). |
 | `browser_shared_script(code)` | Run a short Python script with page helpers — see [Python scripting](python-scripting.md). |
 | `browser_shared_downloads(task_id, action)` | `list`, `claim` or `cancel` downloads started by the task's pages. |
+| `browser_shared_cookie_mirror(action, ...)` | List site counts, request a confirmed transfer or query status; never returns cookie values. |
 | `browser_shared_artifacts(task_id)` | List files registered to the task (metadata only). |
 | `browser_shared_cancel`, `browser_shared_resume`, `browser_shared_close` | Stop, resume (new generation) or close a task. `close` removes only the task's own work tabs. |
 
@@ -66,12 +67,26 @@ When the plugin has the `tools.override` capability and the session is bound to 
 ## Approvals, sensitive fields and take-over
 
 - **Smart approval** (default): new tasks are prepared automatically. The first read of each site in a task needs confirmation; later reads of that site run directly. A navigation or new-tab approval can include the site's read permission when its panel says so. Writes, page requests, JavaScript, raw CDP and `browser_exec` still request approval each time. The tool returns `approval_required`; Hermes must query again with the **same** `request_id` and arguments after the decision. `tabs` lists only the task's leased tabs.
-- **Full access**: all tools and debug commands run directly, without individual approval.
+- **Full access**: task tools and debug commands run directly. Cookie mirror always needs a fresh source-extension confirmation.
 - `browser_exec` and Vault fill/save/code calls in smart mode use a one-time approval for the whole tool call. Retry with the same `request_id` after approval; use a new one for another independent run. A consumed approval returns `approval_consumed` without dispatch.
 - **Sensitive fields** (passwords, payment data, one-time codes): the tool returns `user_input_required`, the browser asks you to fill the field yourself, and the result becomes `completed_by_user` after you confirm. The model never sees or types the value. With the Vault integration enabled, login passwords and OTP codes can instead be filled through a private channel.
 - **Take over** (接管页面 on the page overlay) pauses the task so you can use the page; **Resume** (退出接管) hands it back. Actions sent while paused return `task_paused` and are not dispatched. **Stop task** (停止任务) ends the task.
 
 While a task is active its pages are covered by a translucent overlay that blocks clicks and key presses. Each target is highlighted just before an action is dispatched.
+
+## Cookie mirror
+
+1. Connect the source and target profiles with the updated extension. Separate profiles are separate instances; the target must differ from the source.
+2. In the source extension popup, open **Cookie 镜像**, load the site inventory, search and select sites, then choose the target. The inventory shows counts and httpOnly/session flags, never values.
+3. Keep both options off to preserve target cookies and source session lifetimes. Enable clearing only when you intend to remove the target's existing cookies for those sites; optionally persist session cookies for 1–365 days.
+4. Request the transfer and confirm in the source extension's own panel. Check both instances, sites, counts and options. Full access cannot approve this step; neither Hermes nor a website can click for you.
+5. Read per-site `success`, `failed`, `matched`, `missing`, `cleared`, `clearFailed` and fixed failure categories. Readback checks name/domain/path/partition identities. Verify login by opening the site's protected page in the target.
+
+Hermes can call `browser_shared_cookie_mirror` with `action="list_sites"` and `source`, then `action="request_mirror"` with `source`, `target`, `sites` and optional `options`. It must wait for your confirmation and query `action="status"` with the returned ID in `transfer_id`. Query the same transfer; do not reissue `request_mirror` after a timeout. Neither tool nor popup exposes values to the model, logs, diagnostics or task files.
+
+If no confirmation window appears (it opens only when the source browser window can be focused), bring the source browser to the front and click **打开待确认面板** (open pending confirmation) in its extension popup; the toolbar badge shows the pending count.
+
+The 60-second deadline starts at request time, including confirmation. Failure, expiry or either profile disconnecting destroys remaining memory payloads. Writes already dispatched may have changed the target; there is no automatic rollback or replay. Only the default non-incognito store is supported. Domain grouping uses a small suffix table, not a complete public suffix list; check the site selection. Cookie identities do not prove working login: localStorage, device binding, MFA or server invalidation can require another login. Copying all cookies for a site does not identify which one carries login. Ending a task does not remove imported cookies. See [security](../SECURITY.md#cookie-mirror-150).
 
 ## Uploads and downloads
 

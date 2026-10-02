@@ -68,6 +68,8 @@ except ImportError:
     TaskDiagnosticProjection = None
 from typing import Any, Dict
 from urllib.parse import urlsplit
+from cookie_mirror import CookieMirrorService, MirrorDenied
+from client import safe_summary
 from api_client import ApiClient, ApiDenied
 from artifacts import ArtifactStore, ArtifactError, LOCAL_PATH_ORIGIN
 from downloads import DownloadRegistry, DownloadError, new_download_key, public_record as public_download
@@ -101,10 +103,13 @@ _MAX_DIAGNOSTIC_CURSOR = 10**20 - 1
 
 class ProtocolError(Exception):
     def __init__(self, code: str, message: str, data: Any = None):
+        # 中文注释：Cookie 专用错误只含固定文本与计数，不复用页面摘要字符串。
+        if code == 'cookie_mirror_denied':
+            message = 'Cookie 镜像请求不可用，请在扩展中核实。'
         super().__init__(message)
         self.code = code
         self.message = message
-        self.data = _safe_error_data(data)
+        self.data = safe_summary(data) if code == 'cookie_mirror_denied' else _safe_error_data(data)
 
 
 _SCOPE_HINT = '同站用 goto_url，新站用 browser_shared_open。'
@@ -149,6 +154,8 @@ def _safe_error_data(data: Any) -> dict:
         value = data.get(key)
         if isinstance(value, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,47}', value):
             safe[key] = value
+    # 中文注释：Cookie 错误仅放行计数和固定失败类别，载荷不会进入通用错误结果。
+    safe.update(safe_summary(data))
     return safe
 
 
@@ -191,6 +198,8 @@ class BridgeDaemon:
         self.result_cache_bytes = 0
         self.page_results = OrderedDict()
         self.request_history_limit = request_history_limit
+        # 中文注释：Cookie 镜像不使用任务账本、日志或持久化结果缓存。
+        self.cookie_mirror = CookieMirrorService(self)
         self.api_client = ApiClient()
         self.api_credentials = {}
         self.api_connections = {}
@@ -883,6 +892,12 @@ class BridgeDaemon:
                 raise ProtocolError('instance_unavailable', 'browser instance is not connected')
             self._ungroup_terminal_tasks(task['instanceId'], extension, task['id'], force=True)
             return self._public_task(task)
+        if method == 'browser.cookie_mirror':
+            try:
+                owner = self._required_string(params, 'owner')
+                return self.cookie_mirror.dispatch(params, owner)
+            except (MirrorDenied, TypeError):
+                raise ProtocolError('cookie_mirror_denied', 'Cookie 镜像请求不可用，请在扩展中核实。') from None
         if method == "health" and params == {}:
             return {"ok": True, "protocolVersion": 1}
         if method == 'ui.set_primary':
@@ -2402,6 +2417,9 @@ class BridgeDaemon:
                 raise ProtocolError("extension_disconnected", "browser extension disconnected")
             if "error" in response:
                 error = response["error"] if isinstance(response["error"], dict) else {}
+                if method.startswith('browser.cookie_mirror.'):
+                    # 中文注释：私有 Cookie 通路不接受浏览器提供的错误码或异常原文。
+                    raise ProtocolError('cookie_mirror_denied', '', error.get('data'))
                 raise ProtocolError(str(error.get("code", "extension_error")),
                                     str(error.get("message", "browser extension error")), error.get("data"))
             return response.get("result")
@@ -2539,12 +2557,35 @@ class BridgeDaemon:
     def _dispatch_connected_extension(self, extension, method, params):
         instance_id = extension['instanceId']
         # 中文注释：连接核对与状态修改必须原子完成；暂停先取任务锁，保持任务锁→状态锁的既有顺序。
+        if isinstance(method, str) and method.startswith('extension.cookie_mirror.'):
+            # 中文注释：私有通路自行校验连接，不能持有状态锁等待浏览器回复。
+            with self.state_lock:
+                if self.extensions.get(instance_id) is not extension:
+                    raise ProtocolError('connection_replaced', 'browser connection was replaced')
+            return self._cookie_mirror_extension(instance_id, method, params)
         if method in {'extension.pause', 'extension.unpause'}:
             return self._dispatch_extension(instance_id, method, params, _connection=extension)
         with self.state_lock:
             if self.extensions.get(instance_id) is not extension:
                 raise ProtocolError('connection_replaced', 'browser connection was replaced')
             return self._dispatch_extension(instance_id, method, params)
+
+    def _cookie_mirror_extension(self, instance_id, method, params):
+        # 中文注释：身份来自连接；浏览器只能为自己发起请求或决定，值不走客户端接口。
+        try:
+            if not isinstance(params, dict):
+                raise MirrorDenied()
+            if method == 'extension.cookie_mirror.request':
+                if params.get('source') != instance_id or 'owner' in params:
+                    raise MirrorDenied()
+                return self.cookie_mirror.request(params, 'extension:' + instance_id)
+            if method == 'extension.cookie_mirror.status' and set(params) == {'transferId'}:
+                return self.cookie_mirror.status(params['transferId'], source=instance_id)
+            if method == 'extension.cookie_mirror.decide':
+                return self.cookie_mirror.decide(instance_id, params)
+            raise MirrorDenied()
+        except (MirrorDenied, TypeError):
+            raise ProtocolError('cookie_mirror_denied', 'Cookie 镜像请求不可用，请在扩展中核实。') from None
 
     def _dispatch_extension(self, instance_id: str, method: Any, params: Any, *, _connection=None) -> Any:
         if not isinstance(params, dict):
@@ -3102,6 +3143,7 @@ class BridgeDaemon:
             with self.state_lock:
                 old = self.extensions.get(instance_id)
                 if old is not None:
+                    self.cookie_mirror.disconnected(instance_id)
                     for task in self.tasks.values():
                         if task["instanceId"] != instance_id or task["state"] in {"cancelled", "closed", "failed", "needs_sync"}:
                             continue
@@ -3129,7 +3171,7 @@ class BridgeDaemon:
                     "accessRequestSupported": access_request_supported,
                     "statusProjection": capabilities.get("statusProjection") is True,
                     # 中文注释：只接收当前实现认识的能力标识，缺失时不推断支持。
-                    "features": [f for f in ('browser_core_v1', 'page_parse_v1', 'page_function_v1', 'network_evidence_v1')
+                    "features": [f for f in ('browser_core_v1', 'page_parse_v1', 'page_function_v1', 'network_evidence_v1', 'cookie_mirror_v1')
                                  if isinstance(capabilities.get('features'), list) and f in capabilities['features']],
                     "accessRequest": None,
                 }
@@ -3171,6 +3213,7 @@ class BridgeDaemon:
                     current = self.extensions.get(instance_id)
                     if current is not None and current.get("socket") is conn:
                         del self.extensions[instance_id]
+                        self.cookie_mirror.disconnected(instance_id)
                         self._diagnostic("connection_state", "disconnected", error_code="DISCONNECTED")
                         for task in self.tasks.values():
                             if task["instanceId"] != instance_id or task["state"] in {"cancelled", "closed", "failed", "needs_sync"}:

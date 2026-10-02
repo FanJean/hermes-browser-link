@@ -1,5 +1,5 @@
 name: browser-link
-version: 1.4.5
+version: 1.5.0
 manifest_version: 2
 api_version: 1
 requires_hermes: ">=0.21.4"
@@ -18,6 +18,8 @@ provides_tools:
   - browser_shared_cancel
   - browser_shared_resume
   - browser_shared_close
+  # 中文注释：镜像仅返回站点与计数，用户必须在源扩展确认。
+  - browser_shared_cookie_mirror
   - browser_shared_downloads
   - browser_shared_open
   - browser_shared_use_tab

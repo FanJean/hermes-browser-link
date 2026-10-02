@@ -1,3 +1,5 @@
+// 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
+import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -29,7 +31,7 @@ async function loadAccessRequestHandler({windows=fakeWindows(),bridgeRequest=asy
  source=source.replace(/^import .*;\n/gm,'')
   .replace('const consent=new BrowserConsent(chrome.storage.local,executor);',"const consent={load:async()=>{},readStatus:async()=>'disabled'};")
   .replace(/connect\(\);\s*$/,"globalThis.openAccessManagementRequest=openAccessManagementRequest;bridge=injectedBridge;connected=true;connectedInstanceId='browser-a';connectedGeneration='generation-a';");
- const context={chrome,Executor:function(){return executor;},registerWorkspaceStartup:()=>{},NativeWorkspaces:class{},Bridge:class{},BrowserConsent:class{},origin(){},isUiSender:()=>false,createApprovalNotifier(){},injectedBridge:{request:bridgeRequest}};
+ const context={CookieMirror,chrome,Executor:function(){return executor;},registerWorkspaceStartup:()=>{},NativeWorkspaces:class{},Bridge:class{},BrowserConsent:class{},origin(){},isUiSender:()=>false,createApprovalNotifier(){},injectedBridge:{request:bridgeRequest}};
  vm.runInNewContext(source,context);
  return {handler:context.openAccessManagementRequest,events,chrome,windows};
 }

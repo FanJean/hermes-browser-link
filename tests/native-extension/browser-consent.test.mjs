@@ -1,3 +1,5 @@
+// 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
+import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as module from '../../native-extension/bridge.mjs';
@@ -111,7 +113,7 @@ test('trusted popup reports mode-storage failure without revoking tasks',async()
    alarms:{create(){},onAlarm:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
   let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
   source=source.replace(/^import .*;\n/gm,'').replace(/connect\(\);\s*$/,'bridge=injectedBridge;connected=true;');
-  vm.runInNewContext(source,{chrome,Executor,BrowserConsent:module.BrowserConsent,isUiSender:module.isUiSender,
+  vm.runInNewContext(source,{CookieMirror,chrome,Executor,BrowserConsent:module.BrowserConsent,isUiSender:module.isUiSender,
    registerWorkspaceStartup:()=>{},injectedBridge:{closed:false,request:async method=>{calls.push(method);return method==='extension.tasks'?[]:{revoked:true};}}});
   const result=await new Promise(resolve=>listener({type:'browser_consent',enabled:false},{id:'extension',url:'chrome-extension://extension/popup.html'},resolve));
   assert.deepEqual(calls,storageFails?[]:['extension.tasks']);

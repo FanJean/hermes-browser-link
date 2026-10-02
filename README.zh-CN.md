@@ -106,6 +106,12 @@
 
 在扩展中批准首次网站读取。Hermes 应返回文本并关闭工作页。入口是 `browser_shared_open`，单步用 `browser_shared_run`，多步用 `browser_shared_script`。详见 [用法](docs/usage.md) 和 [接口参考](docs/browser-api-reference.md)。
 
+## Cookie 镜像
+
+在源扩展弹窗按站点选择 Cookie，复制到另一个已连接的 Chrome/Edge profile。每次都必须在**源扩展确认面板**重新确认，全部访问也不例外。新增 `cookies` 与 `<all_urls>` 权限用于清单和导入；值经本地一次性内存通道中转，60 秒到期，不进入模型结果、日志或任务文件。Hermes 只看到站点、状态、计数和固定失败类别。
+
+仅支持默认、非隐身 Cookie store。站点分组使用小型后缀表，确认前需核对站点清单。回读只验证 Cookie 身份集合；设备绑定、localStorage 和服务端检查仍可能要求登录。中断可能留下目标端的部分修改。详见 [用法](docs/usage.md#cookie-mirror) 和 [安全边界](SECURITY.md#cookie-mirror-150)。
+
 ## 配置与排障
 
 全部环境变量见 [配置表](docs/configuration.md)，包括默认浏览器、导出目录、暂停和清理时限、共享根目录及测试设置。变量需在对应进程启动前设置；默认浏览器和导出目录也可读取共享桥接根目录的 `.env`，不要提交该文件。

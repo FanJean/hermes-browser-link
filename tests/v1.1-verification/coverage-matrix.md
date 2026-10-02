@@ -139,3 +139,9 @@
 - `tests/v1.4.2/forms.test.mjs`：隐藏 token 与可见密码字段矩形、封闭 Shadow Root 跨源框架遮罩、首屏外提交按钮与图片按钮、关联 label 命中及弹窗遮挡。
 - `tests/v1.4.2/test_paths.py`：导出根、越界与软链接拒绝、共享 `.env`、名称后缀及可编辑目标筛选。
 - `bench/site/server.test.mjs` 与 `/real-form-cases`：合成真实表单形态；`bench/mechanical.mjs` 增加普通与遮罩截图耗时项。
+
+## 1.5.0 Cookie 镜像
+
+- `tests/v1.5.0/cookie-mirror.test.mjs`：合成 cookies API，覆盖域聚合、分块、强制确认、逐条写入、回读、私有账本隔离及固定扩展身份。
+- `tests/v1.5.0/test_cookie_mirror.py`：一次性内存中转、TTL、失败/断连清理、状态/日志/磁盘隐私，以及 daemon → client → 工具的计数与固定类别白名单。
+- 两个 runner 纳入固定清单与发现核对；基准步骤 36，发现清单 82。`real-cookie-mirror.mjs` 和 `fixture-site.mjs` 仅用于手动真实验收，不由门禁启动。

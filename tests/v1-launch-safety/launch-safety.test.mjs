@@ -6,6 +6,8 @@ import {test} from 'node:test';
 const {parse} = createRequire(import.meta.url)('acorn');
 const root = new URL('../', import.meta.url);
 const runners = [
+  // 中文注释：Cookie 双浏览器夹具复用隔离启动器，同样受启动安全约束。
+  'v1.5.0/real-cookie-mirror.mjs',
   'native-extension/real-bridge.mjs',
   'native-extension/api-v2-real.mjs',
   'native-v2/real-native-v2.mjs',

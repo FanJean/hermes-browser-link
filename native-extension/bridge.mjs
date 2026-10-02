@@ -198,6 +198,8 @@ export class Bridge {
   // 中文注释：配置由可信弹窗保存；发送前读取，缓存重放也使用当前开关。
   this.onContentFilter=handlers.onContentFilter||(async()=>false);
   this.onAccessRequest=typeof handlers.onAccessRequest==='function'?handlers.onAccessRequest:async()=>{throw Error('unsupported');};
+  // 中文注释：Cookie 请求在账本前分流，禁止缓存 Cookie 载荷、指纹或结果。
+  this.onCookieMirror=handlers.onCookieMirror;this.onCookieDisconnect=handlers.onCookieDisconnect;
   this.accessRequests=new Map();
   port.onMessage.addListener(m=>this.receive(m));
  }
@@ -213,6 +215,7 @@ export class Bridge {
   if(this.closed)return;this.closed=true;
   try{this.executor.diagnostics?.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:this.executor.diagnosticConnection,status:'disconnected',error_code:'DISCONNECTED'});}catch{}
   for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(Error('native disconnected'));}
+  this.onCookieDisconnect?.();
   this.pending.clear();this.seen.clear();this.privateSeen.clear();this.accessRequests.clear();
  }
  send(message) {if(!this.closed)this.port.postMessage(message);}
@@ -269,6 +272,15 @@ export class Bridge {
    }).catch(()=>({error:{code:'access_request_failed',message:'authorization management could not be opened'}}));
    this.accessRequests.set(p.requestId,{scope,promise});
    promise.then(response=>this.send({id:m.id,...response}));
+   return;
+  }
+  if(typeof m.method==='string'&&m.method.startsWith('browser.cookie_mirror.')){
+   if(!m.id||typeof m.id!=='string'||!/^srv:[a-f0-9]{32}$/.test(m.id)||this.privateSeen.has(m.id)||this.privateSeen.size>=4096||!this.onCookieMirror){
+    this.send({id:m.id,error:{code:'cookie_mirror_denied',message:'Cookie mirror private request denied.'}});return;
+   }
+   this.privateSeen.add(m.id);
+   Promise.resolve().then(()=>this.onCookieMirror(m.method.slice('browser.cookie_mirror.'.length),m.params))
+    .then(result=>this.send({id:m.id,result}),()=>this.send({id:m.id,error:{code:'cookie_mirror_denied',message:'Cookie mirror private request denied.'}}));
    return;
   }
   if(m.method==='tasks.changed'){this.onChanged();return;}

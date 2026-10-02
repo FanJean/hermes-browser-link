@@ -409,6 +409,40 @@ def _project_tool_result(tool_name, args, value):
     if isinstance(value, dict) and (value.get('error') or value.get('outcome_unknown') is True
                                    or value.get('status') in ('unknown', 'outcome_unknown', 'needs_sync')):
         return _fixed_result_error()
+    if tool_name == 'browser_shared_cookie_mirror':
+        # 中文注释：采用闭合类型白名单；不允许不明字符串塞入计数或原因字段泄露值。
+        import re
+        if not isinstance(value, dict):
+            return {}
+        result = {}
+        for key in ('transferId', 'source', 'target'):
+            if isinstance(value.get(key), str) and re.fullmatch(r'[a-f0-9-]{32,36}', value[key]):
+                result[key] = value[key]
+        if isinstance(value.get('status'), str) and value['status'] in {'preparing', 'approval_required', 'executing', 'completed', 'denied', 'failed'}:
+            result['status'] = value['status']
+        if isinstance(value.get('reason'), str) and value['reason'] in {'transfer_failed', 'expired', 'disconnected'}:
+            result['reason'] = value['reason']
+        for key in ('count', 'success', 'failed', 'matched', 'missing', 'cleared', 'clearFailed'):
+            if type(value.get(key)) is int and 0 <= value[key] <= 1000000:
+                result[key] = value[key]
+        # 中文注释：错误汇总也只保留固定类别及有界计数。
+        if isinstance(value.get('reasons'), dict):
+            result['reasons'] = {key: n for key, n in value['reasons'].items()
+                if key in {'expired', 'prefix_constraint', 'partition_write_failed', 'write_failed'} and type(n) is int and 0 <= n <= 1000000}
+        rows = []
+        for row in value.get('sites', []) if isinstance(value.get('sites'), list) else []:
+            if not isinstance(row, dict) or not isinstance(row.get('site'), str) or not re.fullmatch(r'(?:[a-z0-9.-]{1,253}|\[[0-9a-f:]{2,45}\])', row['site']):
+                continue
+            projected = {'site': row['site']}
+            for key in ('count', 'success', 'failed', 'matched', 'missing', 'cleared', 'clearFailed'):
+                if type(row.get(key)) is int and 0 <= row[key] <= 1000000:
+                    projected[key] = row[key]
+            if isinstance(row.get('reasons'), dict):
+                projected['reasons'] = {key: n for key, n in row['reasons'].items()
+                    if key in {'expired', 'prefix_constraint', 'partition_write_failed', 'write_failed'} and type(n) is int and 0 <= n <= 1000000}
+            rows.append(projected)
+        result['sites'] = rows
+        return _strip_owner(result)
     suffix = tool_name.rsplit('_', 1)[-1]
     shared = tool_name.startswith('browser_shared_')
     if suffix == 'health':

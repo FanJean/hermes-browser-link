@@ -1,3 +1,5 @@
+// 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
+import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -15,7 +17,7 @@ async function background(){
  const chrome={runtime:{id:'ext',onMessage:event('message')},alarms:{create(){},onAlarm:event('alarm')},tabs:{onCreated:event('created'),onRemoved:event('removed'),onUpdated:event('updated')},debugger:{onDetach:event('detach')}};
  let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
  source=source.replace(/^import .*;\n/gm,'').replace('const executor=new Executor(chrome,p=>bridge?.request(\'extension.tab_event\',p).catch(()=>{}));','const executor=injectedExecutor;').replace('const consent=new BrowserConsent(chrome.storage.local,executor);','const consent={load:async()=>{}};').replace(/connect\(\);\s*$/,'bridge=injectedBridge;connected=true;');
- vm.runInNewContext(source,{registerWorkspaceStartup:()=>{},chrome,isUiSender,Executor:function(){return executor;},injectedExecutor:executor,injectedBridge:bridge});
+ vm.runInNewContext(source,{CookieMirror,registerWorkspaceStartup:()=>{},chrome,isUiSender,Executor:function(){return executor;},injectedExecutor:executor,injectedBridge:bridge});
  return {events,releases,requests,finish:()=>finish()};
 }
 
@@ -69,7 +71,7 @@ test('production onCreated preserves ambiguous concurrent children and reports u
  const chrome={runtime:{id:'ext',onMessage:{addListener:fn=>events.message=fn}},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{onCreated:{addListener:fn=>events.created=fn},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
  let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
  source=source.replace(/^import .*;\n/gm,'').replace("const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}));",'const executor=injectedExecutor;').replace('const consent=new BrowserConsent(chrome.storage.local,executor);','const consent={load:async()=>{}};').replace(/connect\(\);\s*$/,'');
- vm.runInNewContext(source,{registerWorkspaceStartup:()=>{},chrome,isUiSender,Executor:function(){return e;},injectedExecutor:e});
+ vm.runInNewContext(source,{CookieMirror,registerWorkspaceStartup:()=>{},chrome,isUiSender,Executor:function(){return e;},injectedExecutor:e});
  assert.equal(typeof events.created,'function');
  const active=e.withSpawnScope(e.tasks.get('a'),1,async()=>{started();await gate;});
  await running;

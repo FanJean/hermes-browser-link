@@ -274,7 +274,7 @@ class NativeTests(unittest.TestCase):
         ctx = Context()
         self.tools.register_native_context(ctx, self.profile)
         # 中文注释：文件清单只读工具随可信任务身份注册，不授予本地路径读取。
-        self.assertEqual(set(ctx.tools), {'browser_shared_' + s for s in ('health', 'browsers', 'create', 'list', 'get', 'artifacts', 'run', 'cancel', 'resume', 'close', 'downloads')})
+        self.assertEqual(set(ctx.tools), {'browser_shared_' + s for s in ('health', 'browsers', 'create', 'list', 'get', 'artifacts', 'run', 'cancel', 'resume', 'close', 'downloads', 'cookie_mirror')})
         self.assertEqual({name for name, _ in ctx.hooks}, {'pre_tool_call', 'on_session_finalize', 'subagent_stop', 'on_session_end', 'agent_loop_stopped'})
         for entry in ctx.tools.values():
             schema = entry['schema']['parameters']

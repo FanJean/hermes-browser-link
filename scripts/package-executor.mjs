@@ -202,7 +202,7 @@ try {
   }
   // 中文注释：候选包必须同时包含文件登记模块，缺失时拒绝生成不完整包。
   // 中文注释：私有凭据通道是安装闭包的一部分，缺任一端时禁止产出发行包。
-  for(const required of ['native-bridge/api_client.py','native-bridge/artifacts.py','native-bridge/downloads.py','native-bridge/cdp_gateway.py','native-bridge/vault_private.py','native-bridge/vault_client.py','native-bridge/daemon.py','native-bridge/client.py','native-bridge/host.py','native-extension/manifest.json','executor-plugin/plugin.yaml','executor-plugin/__init__.py','LICENSE','page-semantics/index.js','browser-interactions/index.mjs','approval-policy/policy.mjs','native-extension/build.mjs',
+  for(const required of ['native-bridge/cookie_mirror.py','native-extension/cookie-mirror.mjs','native-bridge/api_client.py','native-bridge/artifacts.py','native-bridge/downloads.py','native-bridge/cdp_gateway.py','native-bridge/vault_private.py','native-bridge/vault_client.py','native-bridge/daemon.py','native-bridge/client.py','native-bridge/host.py','native-extension/manifest.json','executor-plugin/plugin.yaml','executor-plugin/__init__.py','LICENSE','page-semantics/index.js','browser-interactions/index.mjs','approval-policy/policy.mjs','native-extension/build.mjs',
     'executor-plugin/script_lane/host_bridge.py','executor-plugin/script_lane/action_session.py','executor-plugin/script_lane/child.py','executor-plugin/script_lane/tool.py',
     'executor-plugin/single_tool_adapter/integration.py','executor-plugin/single_tool_adapter/adapter.py',
     'executor-plugin/vault_adapter/__init__.py','executor-plugin/vault_adapter/adapter.py',

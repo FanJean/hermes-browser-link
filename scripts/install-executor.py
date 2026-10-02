@@ -65,6 +65,8 @@ def verify_package_layout(package, files):
         'browser-link/script_lane/tool.py',
         'browser-link/native_bridge/host.py',
         'browser-link/native_bridge/client.py',
+        # 中文注释：宿主启动依赖独立 Cookie 内存通道。
+        'browser-link/native_bridge/cookie_mirror.py',
         'browser-link/native_bridge/daemon.py',
         'browser-link/native_bridge/api_client.py',
         # 中文注释：安装前核实私有凭据通道两个模块齐全。

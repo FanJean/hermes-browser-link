@@ -302,6 +302,71 @@ After ApprovalRequired, wait for the user's decision on that same request.
 
 ## Tool schemas
 
+### `browser_shared_cookie_mirror`
+
+```json
+{
+  "description": "列出 Cookie 站点计数或请求复制登录态。request_mirror 必须由用户在源浏览器扩展确认，全部访问也不能免确认；status 查询同一 transfer_id，不重发。不得索要 Cookie 值或保存 Cookie 内容。",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "list_sites",
+          "request_mirror",
+          "status"
+        ]
+      },
+      "source": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "target": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "sites": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 256,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        }
+      },
+      "transfer_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32
+      },
+      "options": {
+        "type": "object",
+        "properties": {
+          "clearTarget": {
+            "type": "boolean"
+          },
+          "persistDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "action"
+    ],
+    "additionalProperties": false
+  }
+}
+```
+
 ### `browser_shared_health`
 
 ```json

@@ -109,3 +109,15 @@ Run them one at a time and not beside another browser run. A passing historical 
 `npm test` also checks `tests/site-tools/`, `tests/network-evidence/network.test.mjs` and generated API-reference drift. Run the packaged Chrome/Edge flow with `node tests/site-tools/real-sites.mjs --browser=all` using the same `HERMES_SOURCE` and `HERMES_PYTHON` test installation as the full gate. It uses temporary profiles, synthetic HttpOnly cookies and a local HTTP fixture. It does not verify third-party sites or modify a personal installation. Evidence is written under ignored `tests/site-tools/evidence/`.
 
 The website-tool suite includes caught-error trials for unknown outcomes, pending approval and manual input. The packaged browser flow also checks capture continuity across navigation, rejection of an existing CDP session after leaving the allowed origins, and recovery through a newly opened gateway.
+
+## Cookie mirror acceptance
+
+The offline gate includes the Node and Python runners under `tests/v1.5.0/`. They use synthetic cookies and temporary state; they do not launch browsers.
+
+Real login acceptance is opt-in and uses temporary profiles with a shared temporary daemon and a loopback fixture. Run manually on a machine with Chrome and Edge installed:
+
+```sh
+node tests/v1.5.0/real-cookie-mirror.mjs
+```
+
+Prefer `--headed` (and `--same-browser --headed` for two Chrome profiles): the confirmation panel opens only after the source window is verifiably focused, which headless browsers do not reliably report, so headless runs can fall back to the popup's pending-confirmation button or time out. The fixture issues randomized ordinary, httpOnly session and partitioned cookies; the runner checks source rejection, popup confirmation, import counts, readback and the target protected page, then scans every file in the temporary state (except the browser profiles' own cookie stores) and the session logs for the fixture values. `COOKIE_LEAK_SELFTEST=1` plants one value in the daemon directory and must make the run fail, proving the scan is effective. Missing partitioned-cookie support fails acceptance. Cookie values are never printed or saved. See [usage](usage.md#cookie-mirror) for limitations.

@@ -15,6 +15,17 @@ Set runtime variables before starting Hermes or the Native Messaging host. Brows
 
 Plugin options are separate from environment variables. `vault_tools.enabled` defaults to `false`; enabling it also needs a `tools.override` capability grant. The optional official `browser_*` overrides require that grant and a bound task; installation alone grants neither. Keep smart approval enabled for the first trial.
 
+## Cookie mirror options
+
+No environment variable enables automatic Cookie mirror approval. Both profiles must be connected with the updated extension and its `cookies` / `<all_urls>` permissions. Choose the target instance and sites in the source popup, then confirm in the source extension panel. Full access does not skip this confirmation.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `clearTarget` | `false` | Remove existing target cookies for the selected sites before import. Removal failures are counted; other imports continue. |
+| `persistDays` | Absent | Preserve session cookies as session cookies. When selected, integer `1..365` sets their expiration to that many days. Persistent source cookies keep their original expiration. |
+
+Only the default, non-incognito store is used. The fixed 60-second deadline includes confirmation time; transfers are limited to 256 selected sites, 16 MiB and 128 chunks. These limits are not configurable. Cookie values and transfer state have no disk or cloud storage option. See [usage](usage.md#cookie-mirror).
+
 ## Development and acceptance variables
 
 These select test dependencies or fixtures; they are not required for installation.

@@ -3,6 +3,7 @@ import {NativeWorkspaces,registerWorkspaceStartup} from './workspace-adapter.mjs
 registerWorkspaceStartup(chrome);
 import {Executor,origin} from './core.mjs';
 import {Bridge,isUiSender,BrowserConsent} from './bridge.mjs';
+import {CookieMirror} from './cookie-mirror.mjs';
 import {createApprovalNotifier} from './approval-notifier.mjs';
 let bridge=null,connected=false,connecting=false,lastError='尚未连接本地桥';
 let notifier=null,approvalInstance=null,approvalRefresh=Promise.resolve();
@@ -123,6 +124,9 @@ const reportDownload=p=>{const current=bridge;if(!current||!connected)return Pro
 const pushCdpEvents=p=>{const current=bridge;if(!current||!connected)return Promise.resolve();return current.request('extension.cdp_events',p).catch(()=>{});};
 const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}),{onOverlayCommand:overlayCommand,onDownloadEvent:reportDownload,onCdpEvents:pushCdpEvents});
 chrome.storage.local.get('visualCursorEnabled').then(value=>{executor.visualCursorEnabled=value.visualCursorEnabled!==false;}).catch(()=>{});
+// 中文注释：工具栏弹窗关闭后只保留编号与截止时间，重新打开可以查原结果。
+let cookieMirrorLast=null;
+const cookieMirror=new CookieMirror(chrome,{onChanged:()=>{const source=[...cookieMirror.transfers.values()].find(t=>t.role==='source');if(source)cookieMirrorLast={id:source.id,expiresAt:source.expiresAt};void refreshApprovals();}});
 const consent=new BrowserConsent(chrome.storage.local,executor);
 const consentLoaded=consent.load();
 let disconnectBarrier=Promise.resolve();
@@ -192,7 +196,10 @@ async function collectApprovals(current,instanceId){
  const tasks=await current.request('extension.tasks');
  const approvals=await current.request('extension.approvals');
  const requests=await Promise.all(approvals.map(a=>pendingAction(a,tasks.find(t=>t.id===a?.taskId),instanceId)));
- return requests.filter(Boolean);
+ // 中文注释：Cookie 确认独立于任务和全部访问模式，只有源扩展界面能批准。
+ if(!cookieMirror.transfers.size)return requests.filter(Boolean);
+ const window=await chrome.windows.getLastFocused({windowTypes:['normal']});
+ return [...requests.filter(Boolean),...cookieMirror.approvals(instanceId,window.id)];
 }
 function refreshApprovals(current=bridge){
  const run=async()=>{
@@ -206,6 +213,10 @@ function refreshApprovals(current=bridge){
 async function verifyAction(r,current=bridge){
  if(!connected||!current||current!==bridge||!notifier||r.instanceId!==approvalInstance||r.expiresAt<=Date.now())return false;
  const list=await collectApprovals(current,approvalInstance);
+ if(r.kind==='cookie_mirror'){
+  const state=await current.request('extension.cookie_mirror.status',{transferId:r.id});
+  return state.status==='approval_required'&&list.some(l=>l.id===r.id&&l.kind==='cookie_mirror');
+ }
  return list.some(l=>l.id===r.id&&l.taskId===r.taskId&&l.generation===r.generation
   &&l.modeGeneration===r.modeGeneration&&l.nonce===r.nonce&&l.tabId===r.tabId
   &&l.windowId===r.windowId&&l.origin===r.origin&&l.action===r.action
@@ -214,6 +225,11 @@ async function verifyAction(r,current=bridge){
 async function dispatchAction(r,decision){
  const current=bridge;
  if(!await verifyAction(r,current))throw Error('确认已失效，请刷新');
+ if(r.kind==='cookie_mirror'){
+  if(decision==='approve')cookieMirror.approve(r.id);else cookieMirror.destroy(r.id);
+  try{const result=await current.request('extension.cookie_mirror.decide',{transferId:r.id,approve:decision==='approve'});if(!(decision==='approve'?['executing','completed'].includes(result.status):result.status==='denied'))throw Error('COOKIE_DECISION_UNKNOWN');return result;}
+  catch{cookieMirror.destroy(r.id);throw Error('Cookie 镜像决定未确认');}
+ }
  const approvals=await current.request('extension.approvals');
  const a=approvals.find(x=>x.taskId===r.taskId&&x.nonce===r.nonce&&x.digest===r.digest
   &&x.generation===r.generation&&x.modeGeneration===r.modeGeneration&&x.expiresAt*1000===r.expiresAt);
@@ -245,13 +261,13 @@ async function connect(){if(bridge||connecting)return;connecting=true;try{
  const stored=await chrome.storage.local.get('browserInstanceId');const session=await chrome.storage.session.get('instanceId');const instanceId=stored.browserInstanceId||session.instanceId||crypto.randomUUID();await chrome.storage.local.set({browserInstanceId:instanceId});await chrome.storage.session.set({instanceId});
  if(!executor.workspaces)executor.workspaces=new NativeWorkspaces(chrome,instanceId,id=>executor.leases.has(id));
  await executor.workspaces.manager.reconcile();
- const port=chrome.runtime.connectNative('com.hermes.browser_link');const current=new Bridge(port,executor,changed,{onConsentStatus:()=>consent.readStatus(),onAccessRequest:openAccessManagementRequest,onContentFilter:readContentFilter});bridge=current;
+ const port=chrome.runtime.connectNative('com.hermes.browser_link');const current=new Bridge(port,executor,changed,{onConsentStatus:()=>consent.readStatus(),onAccessRequest:openAccessManagementRequest,onContentFilter:readContentFilter,onCookieMirror:(method,p)=>cookieMirror.handle(method,p),onCookieDisconnect:()=>{cookieMirror.disconnect();cookieMirrorLast=null;}});bridge=current;
  port.onDisconnect.addListener(()=>{if(bridge!==current)return;lastError=chrome.runtime.lastError?.message||'本地桥已断开；操作不会自动重放';connected=false;connectedInstanceId=null;connectedGeneration=null;if(accessWindow)accessWindow.requestId=null;bridge=null;current.close();const old=notifier;notifier=null;approvalInstance=null;old?.dispose().catch(()=>{});disconnectBarrier=executor.disconnect().catch(()=>{});
   // 中文注释：本地桥意外断开（如 daemon 重启）后很快重连一次；在途动作不重放，其余仍靠 30 秒定时重连兜底。
   setTimeout(()=>{connect();},1500);});
  // 中文注释：握手版本与扩展清单保持一致，避免安装后仍报告旧版本。
- // 中文注释：握手版本与 1.4.5 发布清单一致。
- const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.4.5',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}await consent.synchronize(current);await refreshApprovals(current);}
+ // 中文注释：握手版本与 1.5.0 发布清单一致。
+ const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.5.0',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}await consent.synchronize(current);await refreshApprovals(current);}
  }catch(e){
   lastError=e.message;
   if(bridge&&!connected){
@@ -308,6 +324,17 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
   for(const task of executor.tasks.values())for(const [tabId,entry] of task.overlays||[])void executor.overlayCall(tabId,entry,'cursor',{enabled:m.enabled}).catch(()=>{});
   return {enabled:m.enabled};
  }
+ // 中文注释：只有经过 isUiSender 校验的弹窗可查看站点计数或发起镜像，不能读取值。
+ if(m.type==='cookie_mirror_sites')return cookieMirror.listSites();
+ if(m.type==='cookie_mirror_request'){
+  if(!connected||!bridge)throw Error('本地桥未连接');
+  return bridge.request('extension.cookie_mirror.request',{source:connectedInstanceId,target:m.target,sites:m.sites,options:m.options||{}});
+ }
+ if(m.type==='cookie_mirror_status'){
+  if(!connected||!bridge)throw Error('本地桥未连接');
+  return bridge.request('extension.cookie_mirror.status',{transferId:m.transferId});
+ }
+ if(m.type==='cookie_mirror_pending'){await refreshApprovals();const pending=notifier?.pending().find(r=>r.kind==='cookie_mirror');if(pending)await notifier.openPending(pending.id);return {opened:!!pending};}
  if(m.type==='set_primary'){
   if(!connected||!bridge||!connectedInstanceId)throw Error('浏览器未连接');
   const result=await bridge.request('extension.set_primary',{});
@@ -324,7 +351,7 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
  // 中文注释：弹窗只读取当前浏览器的任务摘要和实际归属页，不返回输入或日志正文。
  if(m.type==='popup_status'){
   // 中文注释：弹窗状态报告与 Native 握手相同的版本。
-  const base={connected,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),visualCursorEnabled:(await chrome.storage.local.get('visualCursorEnabled')).visualCursorEnabled!==false,browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,observedAt:Date.now(),version:'1.4.5'};
+  const base={connected,cookieMirrorTransfer:cookieMirrorLast?.expiresAt>Date.now()?cookieMirrorLast.id:null,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),visualCursorEnabled:(await chrome.storage.local.get('visualCursorEnabled')).visualCursorEnabled!==false,browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,observedAt:Date.now(),version:'1.5.0'};
   if(!connected||!bridge)return {...base,tasks:[],page:null};
   const [tasks,browsers]=await Promise.all([bridge.request('extension.tasks'),bridge.request('extension.browser_list')]);
   const active=(await chrome.tabs.query({active:true,currentWindow:true}))[0];
@@ -371,6 +398,6 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
   return bridge.request('extension.stop',{taskId:m.taskId,...(t?{generation:t.generation,cleanup}:{})});
  }
  throw Error('不支持的操作');
- })().then(result=>respond({result}),e=>respond({error:e.message}));return true;
+ })().then(result=>respond({result}),e=>respond({error:typeof m.type==='string'&&m.type.startsWith('cookie_mirror_')?'Cookie 镜像请求不可用，请核实扩展权限和连接。':e.message}));return true;
 });
 connect();

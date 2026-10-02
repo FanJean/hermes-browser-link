@@ -19,13 +19,13 @@ function valid(r, instanceId) {
   || typeof r.action !== 'string' || !r.action || typeof r.digest !== 'string' || !r.digest
   || !['本次操作','此任务','本任务此网站读取'].includes(r.scope) || !Number.isFinite(r.expiresAt)
   || (r.mode!==undefined && r.mode!=='smart')
-  || (r.kind!==undefined && !(r.kind==='manual_input' && ['password','payment','otp','sensitive'].includes(r.fieldKind)))
+  || (r.kind!==undefined && !(r.kind==='manual_input' && ['password','payment','otp','sensitive'].includes(r.fieldKind))&&r.kind!=='cookie_mirror')
   || typeof r.taskTitle !== 'string' || !r.taskTitle) return false;
  try { const u = new URL(r.origin); const read=r.readOrigin===undefined?null:new URL(r.readOrigin);return ['http:','https:'].includes(u.protocol) && !u.username&&!u.password&&u.origin===r.origin
   &&(!read||['http:','https:'].includes(read.protocol)&&!read.username&&!read.password&&read.origin===r.readOrigin); }
  catch { return false; }
 }
-const identity = r => JSON.stringify([r.instanceId,r.taskId,r.generation,r.modeGeneration,r.tabId,r.windowId,r.origin,r.readOrigin,r.action,r.scope,r.expiresAt,r.digest,r.taskTitle,r.kind,r.fieldKind]);
+const identity = r => JSON.stringify([r.instanceId,r.taskId,r.generation,r.modeGeneration,r.tabId,r.windowId,r.origin,r.readOrigin,r.action,r.scope,r.expiresAt,r.digest,r.taskTitle,r.kind,r.fieldKind,r.source,r.target,r.sites,r.count,r.options]);
 
 export function createApprovalNotifier({chrome,instanceId,now=()=>Date.now(),panelPath=PANEL}={}) {
  if (!chrome?.runtime?.id || panelPath !== PANEL || !instanceId) throw Error('invalid notifier setup');
@@ -78,7 +78,7 @@ export function createApprovalNotifier({chrome,instanceId,now=()=>Date.now(),pan
    if(!panel||!isApprovalPanelSender(sender,chrome.runtime.id,panel.windowId,panel.tabId))return null;
    const r=requests.get(active);if(!r||r.expiresAt<=now())return null;
    const {id,taskTitle,origin,readOrigin,action,scope,expiresAt,kind,fieldKind}=r;
-   return {id,taskTitle,origin,action,scope,expiresAt,...(readOrigin?{readOrigin}:{}),...(kind?{kind,fieldKind}:{})};
+   return {id,taskTitle,origin,action,scope,expiresAt,...(readOrigin?{readOrigin}:{}),...(kind?{kind,fieldKind}:{}),...(kind==='cookie_mirror'?{source:r.source,target:r.target,sites:r.sites,count:r.count,options:r.options}:{})};
   },
   panel(){return panel&&{...panel};},
   pending(){return [...requests.values()].map(r=>({...r}));},

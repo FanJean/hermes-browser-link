@@ -18,7 +18,7 @@ TOOLS = {
     *('browser_shared_' + name for name in (
         # 中文注释：用户登记的任务文件只公开元信息列表，不公开本地路径。
         'health', 'browsers', 'create', 'list', 'get', 'artifacts', 'run', 'cancel', 'resume', 'close', 'script', 'open', 'use_tab',
-        'downloads', 'reference', 'doctor',
+        'downloads', 'cookie_mirror', 'reference', 'doctor',
     )),
 }
 

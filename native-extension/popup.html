@@ -11,13 +11,28 @@
     <button id="access-toggle" class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="access-label" disabled><span></span></button>
   </section>
   <section id="confirm" class="confirm" hidden aria-label="确认全部访问">
-    <p>全部访问允许当前浏览器任务直接执行所有工具、脚本和调试命令，无需逐项审批。</p>
+    <p>全部访问允许当前浏览器任务直接执行工具、脚本和调试命令。Cookie 镜像仍须每次亲自确认。</p>
     <div class="confirm-actions"><button id="confirm-cancel" type="button">取消</button><button id="confirm-enable" type="button">开启全部访问</button></div>
   </section>
   <!-- 中文注释：只显示当前标签页的任务；接管和停止都保留，页面遮罩共享同一任务状态。 -->
   <section id="page-task" class="page-task" aria-label="当前页面任务" hidden><span id="operation" role="status"></span><div class="page-controls"><button id="takeover" type="button">接管</button><button id="stop-task" class="danger" type="button">停止</button></div></section>
   <!-- 中文注释：主要链接由守护进程统一保存，其他已连接浏览器只读显示。 -->
   <section id="browser-links" aria-label="已连接的浏览器"><h2>已连接的浏览器</h2><div id="browser-list"></div><button id="set-primary" type="button">设为主要链接</button></section>
+  <!-- 中文注释：站点列表只含元信息，真正执行必须在独立扩展确认面板批准。 -->
+  <section id="cookie-mirror" aria-labelledby="cookie-title">
+    <h2 id="cookie-title">Cookie 镜像</h2>
+    <p class="detail">将选中站点的登录态复制到另一浏览器/profile。仅默认 store，不处理隐身窗口。无法判断每个 Cookie 是否用于登录。</p>
+    <button id="cookie-load" type="button">读取 Cookie 站点列表</button><button id="cookie-pending" type="button">打开待确认请求</button>
+    <label>搜索站点<input id="cookie-search" type="search" placeholder="example.com"></label>
+    <div><button id="cookie-all" type="button">全选</button><button id="cookie-none" type="button">取消全选</button></div>
+    <div id="cookie-sites" class="cookie-sites"></div>
+    <label>目标浏览器<select id="cookie-target"></select></label>
+    <label><input id="cookie-clear" type="checkbox">导入前先清除目标浏览器里这些站点的旧 Cookie</label>
+    <label><input id="cookie-persist" type="checkbox">会话 Cookie 改为持久保存<input id="cookie-days" type="number" min="1" max="365" value="7" aria-label="保存天数">天</label>
+    <p class="detail">默认保留会话 Cookie；目标浏览器重启后可能丢失。每次复制均需源扩展确认。</p>
+    <button id="cookie-copy" type="button" disabled>复制到目标浏览器</button>
+    <p id="cookie-status" role="status"></p><div id="cookie-results"></div>
+  </section>
   <details class="settings"><summary>更多设置</summary>
     <section class="access-row" aria-labelledby="cursor-label"><div><h2 id="cursor-label">模拟鼠标</h2><p class="detail">显示自动操作位置</p></div><button id="cursor-toggle" class="switch" type="button" role="switch" aria-checked="true" aria-labelledby="cursor-label"><span></span></button></section>
     <section class="access-row" aria-labelledby="filter-label">

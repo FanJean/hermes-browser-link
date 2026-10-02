@@ -3,17 +3,18 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
+import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 import {Bridge,BrowserConsent,isUiSender} from '../../native-extension/bridge.mjs';
 import {createApprovalNotifier} from '../../native-extension/approval-notifier.mjs';
 const background=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
 const clone=x=>structuredClone(x);
 const tick=async()=>{for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));};
-function harness({focusFails=false,browserFullConsent=false,decideFails=false}={}){
+function harness({focusFails=false,browserFullConsent=false,decideFails=false,cookieData=[]}={}){
  const now=Date.now(),nativeCalls=[],focusCalls=[],windowCalls=[],badge=[],listeners={};let receiver,disconnect,windowRemoved,task={id:'task-A',instanceId:'instance-A',generation:2,modeGeneration:1,state:'ready',activeMode:'smart',title:'整理资料',tabIds:[7],allowedOrigins:['https://example.test']};
  let approvals=[{taskId:'task-A',nonce:'nonce-1',digest:'digest-1',generation:2,modeGeneration:1,expiresAt:now/1000+60,request:{action:'click',tabId:7,selector:'#save'}}];
  let tab={id:7,windowId:12,url:'https://example.test/work'},panelTab=null,created=0,executor;
- const port={onDisconnect:{addListener:f=>disconnect=f},onMessage:{addListener:f=>receiver=f},postMessage:m=>{nativeCalls.push(clone(m));queueMicrotask(()=>{let result;
-  switch(m.method){case 'extension.hello':result={};break;case 'extension.tasks':result=[clone(task)];break;case 'extension.approvals':result=clone(approvals);break;
+ const port={onDisconnect:{addListener:f=>disconnect=f},onMessage:{addListener:f=>receiver=f},postMessage:m=>{nativeCalls.push(clone(m));if(!m.method)return;queueMicrotask(()=>{let result;
+  switch(m.method){case 'extension.cookie_mirror.status':result={status:'approval_required'};break;case 'extension.cookie_mirror.decide':result={status:m.params.approve?'executing':'denied'};break;case 'extension.hello':result={};break;case 'extension.tasks':result=[clone(task)];break;case 'extension.approvals':result=clone(approvals);break;
    case 'extension.decide':if(decideFails){receiver({id:m.id,error:{message:'native response unavailable'}});return;}approvals=[];result={status:m.params.approve?'approved':'denied'};break;
    case 'extension.stop':task.state='cancelled';result=clone(task);break;
    default:throw Error('unexpected native '+m.method);
@@ -25,16 +26,16 @@ function harness({focusFails=false,browserFullConsent=false,decideFails=false}={
  }
  class WorkspaceFake{constructor(){this.manager={reconcile:async()=>{}};}async status(){return [];}}
  const local={browserInstanceId:'instance-A',browserFullConsent:{version:1,enabled:browserFullConsent}};
- const chrome={runtime:{id:'ext-123',getURL:p=>`chrome-extension://ext-123/${p}`,onMessage:{addListener:f=>listeners.message=f},connectNative:()=>port,sendMessage:async()=>{}},
+ const chrome={cookies:{getAll:async()=>clone(cookieData)},runtime:{id:'ext-123',getURL:p=>`chrome-extension://ext-123/${p}`,onMessage:{addListener:f=>listeners.message=f},connectNative:()=>port,sendMessage:async()=>{}},
   storage:{local:{get:async()=>clone(local),set:async x=>Object.assign(local,x)},session:{get:async()=>({instanceId:'instance-A'}),set:async()=>{}}},
   alarms:{create(){},onAlarm:{addListener:f=>listeners.alarm=f}},
   tabs:{get:async id=>id===7?clone(tab):id===panelTab?.id?clone(panelTab):null,query:async()=>[clone(tab)],onCreated:{addListener(){}},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},
-  windows:{onRemoved:{addListener:f=>windowRemoved=f},get:async id=>({id,left:100,top:40,width:1000,height:800,type:'normal'}),update:async(id,p)=>{focusCalls.push([id,p]);if(focusFails)throw Error('focus failed');return {id,focused:true};},create:async p=>{windowCalls.push(p);panelTab={id:400+(++created),windowId:90+created,url:p.url};return {id:panelTab.windowId,tabs:[panelTab],focused:true};},remove:async()=>{}},
+  windows:{getLastFocused:async()=>({id:12}),onRemoved:{addListener:f=>windowRemoved=f},get:async id=>({id,left:100,top:40,width:1000,height:800,type:'normal'}),update:async(id,p)=>{focusCalls.push([id,p]);if(focusFails)throw Error('focus failed');return {id,focused:true};},create:async p=>{windowCalls.push(p);panelTab={id:400+(++created),windowId:90+created,url:p.url};return {id:panelTab.windowId,tabs:[panelTab],focused:true};},remove:async()=>{}},
   action:{setBadgeText:async p=>badge.push(p.text),setTitle:async()=>{}},debugger:{onDetach:{addListener(){}}}};
- vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{registerWorkspaceStartup:()=>{},NativeWorkspaces:WorkspaceFake,Executor:ExecutorFake,Bridge,BrowserConsent,isUiSender,createApprovalNotifier,origin:u=>new URL(u).origin,chrome,crypto:globalThis.crypto,navigator:{userAgent:'Node'},console,setTimeout,clearTimeout});
+ vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{registerWorkspaceStartup:()=>{},NativeWorkspaces:WorkspaceFake,Executor:ExecutorFake,CookieMirror,Bridge,BrowserConsent,isUiSender,createApprovalNotifier,origin:u=>new URL(u).origin,chrome,crypto:globalThis.crypto,navigator:{userAgent:'Node'},console,setTimeout,clearTimeout});
  const sender=()=>({id:'ext-123',url:'chrome-extension://ext-123/approval-panel.html',tab:{id:panelTab?.id,windowId:panelTab?.windowId}});
  const message=(m,s=sender())=>new Promise(resolve=>{const yes=listeners.message(m,s,resolve);if(!yes)resolve({ignored:true});});
- return {tick,message,sender,nativeCalls,focusCalls,windowCalls,badge,disconnect:()=>disconnect?.(),windowRemoved:()=>windowRemoved?.(panelTab?.windowId),setApprovals:x=>approvals=x,setTask:x=>task={...task,...x},setTab:x=>tab={...tab,...x},executor:()=>executor,changed:()=>receiver({method:'tasks.changed'}),chrome};
+ return {sendNative:m=>receiver(m),tick,message,sender,nativeCalls,focusCalls,windowCalls,badge,disconnect:()=>disconnect?.(),windowRemoved:()=>windowRemoved?.(panelTab?.windowId),setApprovals:x=>approvals=x,setTask:x=>task={...task,...x},setTab:x=>tab={...tab,...x},executor:()=>executor,changed:()=>receiver({method:'tasks.changed'}),chrome};
 }
 
 test('host pending action produces one centered trusted panel and dedupes changed snapshots',async()=>{
@@ -124,4 +125,20 @@ test('only trusted popup can persist the independent content filter setting',asy
  h.chrome.storage.local.set=async()=>{throw Error('storage failed');};
  assert.equal((await h.message({type:'page_content_filter',enabled:true},popup)).error,'storage failed');
  assert.equal((await h.chrome.storage.local.get()).pageContentFilter,false);
+});
+
+// 中文注释：生产后台在全部访问中仍只认源扩展面板，native 取块不能绕过人工批准。
+test('Cookie mirror requires trusted source panel even in full access',async()=>{
+ const secret=['SECRET','COOKIE','VALUE','xyz'].join('_'),transferId='c'.repeat(32);
+ const h=harness({browserFullConsent:true,cookieData:[{name:'login',domain:'example.test',path:'/',httpOnly:true,secure:true,session:true,hostOnly:true,sameSite:'lax',value:secret}]});
+ h.setTask({activeMode:'full'});await h.tick();
+ h.sendNative({id:'srv:'+'1'.repeat(32),method:'browser.cookie_mirror.prepare',params:{transferId,expiresAt:Date.now()+60000,sites:['example.test'],options:{},source:{browser:'chrome',instanceId:'instance-A'},target:{browser:'edge',instanceId:'instance-B'}}});
+ await h.tick();
+ const view=(await h.message({type:'approval_panel_view'})).result;
+ assert.equal(view.kind,'cookie_mirror');assert.equal(view.count,1);assert.equal(view.source.browser,'chrome');assert.equal(view.target.browser,'edge');assert.ok(!JSON.stringify(view).includes(secret));
+ h.sendNative({id:'srv:'+'2'.repeat(32),method:'browser.cookie_mirror.take',params:{transferId,index:0}});await h.tick();assert.equal(h.nativeCalls.find(m=>m.id==='srv:'+'2'.repeat(32)).error.code,'cookie_mirror_denied');
+ assert.equal((await h.message({type:'approval_panel_decision',requestId:transferId,decision:'approve'},{id:'ext-123',url:'https://example.test'})).ignored,true);
+ assert.equal((await h.message({type:'approval_panel_decision',requestId:transferId,decision:'approve'})).result.decision,'approve');
+ h.sendNative({id:'srv:'+'3'.repeat(32),method:'browser.cookie_mirror.take',params:{transferId,index:0}});await h.tick();assert.equal(h.nativeCalls.find(m=>m.id==='srv:'+'3'.repeat(32)).result.cookies[0].value,secret);
+ h.disconnect();await h.tick();
 });

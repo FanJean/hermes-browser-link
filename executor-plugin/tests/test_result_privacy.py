@@ -25,6 +25,29 @@ def load(name):
 
 
 class ResultPrivacyTests(unittest.TestCase):
+    def test_cookie_mirror_metadata_tool_projection_and_fixed_errors(self):
+        # 中文注释：恶意附加值、载荷、错误文本和原因字段不能越过新工具结果边界。
+        secret = '_'.join(('SECRET', 'COOKIE', 'VALUE', 'xyz'))
+        raw = {'status': 'completed', 'count': 1, 'success': 1, 'failed': 0, 'matched': 1, 'missing': 0,
+            'cookies': [secret], 'cookie': secret, 'value': secret, 'errorText': secret,
+            'source': secret, 'target': secret, 'transferId': secret,
+            'sites': [{'site': 'example.com', 'count': 1, 'cookie': secret, 'value': secret,
+                       'reasons': {secret: 1, 'write_failed': 0}}, {'site': secret, 'count': secret}]}
+        for action, args in [('list_sites', {'source': 's'}), ('request_mirror', {'source': 's', 'target': 't', 'sites': ['example.com']}),
+                             ('status', {'transfer_id': 'a' * 32})]:
+            output, calls = self.invoke(True, 'cookie_mirror', {'action': action, **args}, raw)
+            self.assertNotIn(secret, json.dumps(output))
+            self.assertEqual(calls[0][0], 'browser.cookie_mirror')
+        module = load('native_tools')
+        error = RuntimeError(secret)
+        error.code = 'cookie_mirror_denied'
+        error.data = {'cookie': secret}
+        profile = SimpleNamespace(authority=SimpleNamespace(consume=lambda *a, **k: SimpleNamespace(owner='o', tool_call_id='c')),
+                                  call=lambda *a: (_ for _ in ()).throw(error))
+        result = module.make_tool_handler('browser_shared_cookie_mirror', profile)({'action': 'list_sites', 'source': 's'})
+        self.assertNotIn(secret, result)
+        self.assertIn('cookie_mirror_denied', result)
+
     def test_upload_readback_exposes_names_but_not_local_paths(self):
         # 中文注释：只公开浏览器文件输入读回的文件名，不公开任务私有副本路径。
         projected = load('runtime')._project_tool_result('browser_shared_run', {'action': 'files.upload'},

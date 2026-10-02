@@ -1,4 +1,4 @@
-// 中文注释：弹窗只显示连接、浏览器访问和当前页任务状态。
+// 中文注释：弹窗显示连接、浏览器访问、当前页任务和 Cookie 镜像元信息。
 const $ = selector => document.querySelector(selector)
 let connected = false
 let known = false
@@ -49,6 +49,7 @@ function render() {
   $('#set-primary').hidden = !connected || browsers.some(row => row.instanceId === statusData.instanceId && row.primary)
   $('#set-primary').disabled = busy
   renderWork()
+  renderCookieTargets()
 }
 
 async function refresh() {
@@ -60,6 +61,8 @@ async function refresh() {
     if (token !== revision) return
     known = true
     statusData = result
+    // 中文注释：确认窗口会关闭工具栏弹窗；重开时仅按后台编号查询，不重新发起镜像。
+    if(result.cookieMirrorTransfer&&result.cookieMirrorTransfer!==cookieObservedId){cookieObservedId=result.cookieMirrorTransfer;cookieTransfer=result.cookieMirrorTransfer;cookieBusy=true;}
     connected = result.connected === true
     filterEnabled = result.pageContentFilter === true
     filterKnown = true
@@ -79,6 +82,7 @@ async function refresh() {
     $('#error').hidden = false
   } finally { refreshing = false }
   render()
+  void pollCookieMirror()
 }
 
 // 中文注释：保存后以后台持久化读回结果为准，失败时不显示为已生效。
@@ -190,3 +194,53 @@ $('#connect').addEventListener('click', async () => {
 chrome.runtime.onMessage.addListener(message => { if (message?.type === 'changed') void refresh() })
 void refresh()
 setInterval(refresh, 1500)
+
+// 中文注释：页面只接收站点计数；Cookie 值始终留在后台私有通路。
+let cookieSites=[],cookieSelected=new Set(),cookieTransfer=null,cookieBusy=false,cookiePolling=false,cookieObservedId=null;
+function renderCookieTargets(){
+ const old=$('#cookie-target').value;
+ const targets=(statusData?.browsers||[]).filter(row=>row.connected!==false&&row.instanceId!==statusData.instanceId);
+ $('#cookie-target').replaceChildren(...targets.map(row=>{const option=document.createElement('option');option.value=row.instanceId;option.textContent=`${row.browser==='edge'?'Edge':'Chrome'} · ${row.instanceId.slice(0,8)}`;return option;}));
+ if(targets.some(row=>row.instanceId===old))$('#cookie-target').value=old;
+ $('#cookie-load').disabled=!connected||cookieBusy;
+ $('#cookie-copy').disabled=!connected||cookieBusy||!cookieSelected.size||!targets.length;
+ $('#cookie-pending').disabled=!connected;
+}
+function renderCookieSites(){
+ const query=$('#cookie-search').value.toLowerCase();
+ $('#cookie-sites').replaceChildren(...cookieSites.filter(row=>row.site.includes(query)).map(row=>{
+  const label=document.createElement('label'),box=document.createElement('input'),span=document.createElement('span');box.type='checkbox';box.checked=cookieSelected.has(row.site);box.dataset.site=row.site;
+  box.addEventListener('change',()=>{if(box.checked)cookieSelected.add(row.site);else cookieSelected.delete(row.site);renderCookieTargets();});
+  span.textContent=`${row.site} · ${row.count}${row.httpOnly?' · httpOnly':''}${row.session?' · 会话':''}`;label.append(box,span);return label;
+ }));renderCookieTargets();
+}
+$('#cookie-load').addEventListener('click',async()=>{
+ cookieBusy=true;renderCookieTargets();
+ try{const result=await call({type:'cookie_mirror_sites'});cookieSites=result.sites;cookieSelected=new Set();renderCookieSites();$('#cookie-status').textContent=`${cookieSites.length} 个站点；选择要复制的站点。`;}
+ catch{$('#cookie-status').textContent='站点列表读取失败，请核实扩展权限和连接。';}
+ finally{cookieBusy=false;renderCookieTargets();}
+});
+$('#cookie-search').addEventListener('input',renderCookieSites);
+$('#cookie-all').addEventListener('click',()=>{cookieSelected=new Set(cookieSites.map(row=>row.site));renderCookieSites();});
+$('#cookie-none').addEventListener('click',()=>{cookieSelected.clear();renderCookieSites();});
+$('#cookie-pending').addEventListener('click',async()=>{try{const r=await call({type:'cookie_mirror_pending'});$('#cookie-status').textContent=r.opened?'已打开确认面板。':'没有待确认的 Cookie 镜像。';}catch{$('#cookie-status').textContent='无法打开确认面板。';}});
+$('#cookie-copy').addEventListener('click',async event=>{
+ if(!event.isTrusted||cookieBusy||!cookieSelected.size)return;
+ const options={clearTarget:$('#cookie-clear').checked};
+ if($('#cookie-persist').checked){options.persistDays=Number($('#cookie-days').value);if(!Number.isInteger(options.persistDays)||options.persistDays<1||options.persistDays>365){$('#cookie-status').textContent='保存天数须为 1–365 的整数。';return;}}
+ cookieBusy=true;renderCookieTargets();$('#cookie-results').replaceChildren();
+ try{const result=await call({type:'cookie_mirror_request',target:$('#cookie-target').value,sites:[...cookieSelected],options});cookieTransfer=result.transferId;cookieObservedId=result.transferId;$('#cookie-status').textContent='等待源浏览器扩展确认；60 秒内有效。';void pollCookieMirror();}
+ catch{cookieBusy=false;renderCookieTargets();$('#cookie-status').textContent='镜像未确认，请核实连接和站点。';}
+});
+async function pollCookieMirror(){
+ if(!cookieTransfer||cookiePolling)return;cookiePolling=true;
+ try{
+  const result=await call({type:'cookie_mirror_status',transferId:cookieTransfer});
+  const labels={preparing:'正在准备确认…',approval_required:'请在源浏览器扩展确认面板批准。',executing:'正在复制…',completed:'复制完成，请在目标浏览器访问站点核实登录。',denied:'用户拒绝了镜像。',failed:'镜像失败，可能已有部分写入；请核实目标浏览器。'};
+  $('#cookie-status').textContent=labels[result.status]||'状态未确认。';
+  if(['completed','denied','failed'].includes(result.status)){
+   $('#cookie-results').replaceChildren(...(result.sites||[]).map(row=>{const p=document.createElement('p');p.textContent=`${row.site}：成功 ${row.success||0} / 失败 ${row.failed||0}；回读匹配 ${row.matched||0} / 缺失 ${row.missing||0}${row.clearFailed?`；清除失败 ${row.clearFailed}`:''}${row.reasons&&Object.keys(row.reasons).length?`；原因 ${Object.entries(row.reasons).map(([key,n])=>`${key} ${n}`).join('、')}`:''}`;return p;}));cookieTransfer=null;cookieBusy=false;renderCookieTargets();
+  }
+ }catch{$('#cookie-status').textContent='镜像结果无法确认或已过期，请核实目标浏览器，不会重放。';cookieTransfer=null;cookieBusy=false;renderCookieTargets();}
+ finally{cookiePolling=false;}
+}

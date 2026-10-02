@@ -43,6 +43,7 @@ const sourceCopies = [
   'popup.mjs',
 ];
 const vendorSources = {
+  'cookie-mirror.mjs': 'native-extension/cookie-mirror.mjs',
   'vendor/browser-workspaces.mjs': 'browser-workspaces/index.mjs',
   'vendor/browser-diagnostics.mjs': 'browser-diagnostics/js/diagnostics.mjs',
   'vendor/approval-policy.mjs': 'approval-policy/policy.mjs',
@@ -313,13 +314,14 @@ test('native build refuses to replace its source directory without changing it',
   }
 });
 
-test('1.4 发布入口报告同一个版本', async () => {
+test('1.5.0 发布入口报告同一个版本', async () => {
   // 中文注释：以包版本为发布基准，插件、桌面 API、扩展和 Native 握手必须一致。
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const plugin = await readFile(path.join(root, 'executor-plugin/plugin.yaml'), 'utf8');
   const version = /^version:\s*([^\s]+)$/m.exec(plugin)?.[1];
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(pkg.version, '1.5.0');
   assert.equal(version, pkg.version);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);

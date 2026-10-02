@@ -106,6 +106,12 @@ Tell Hermes:
 
 Approve the first site read in the extension. Hermes should return the text and close its work tab. It starts with `browser_shared_open`; single actions use `browser_shared_run`, and multi-step work uses `browser_shared_script`. See [usage](docs/usage.md) and the [API reference](docs/browser-api-reference.md).
 
+## Cookie mirror
+
+Copy selected sites' cookies from the source extension popup to another connected Chrome/Edge profile. Each transfer requires a fresh confirmation in the **source extension**, including in full-access mode. The new `cookies` and `<all_urls>` permissions allow inventories and imports. Values use a one-use local memory channel with a 60-second deadline and never enter model results, logs or task files. Hermes sees only sites, states, counts and fixed failure categories.
+
+Only the default, non-incognito cookie store is supported. Site grouping uses a small suffix table, so check the site list before confirming. Readback verifies imported cookie identities; device-bound sessions, local storage or server checks may still require login. Interrupted transfers can leave partial changes in the target. See [usage](docs/usage.md#cookie-mirror) and [security](SECURITY.md#cookie-mirror-150).
+
 ## Configuration and recovery
 
 The full [environment variable table](docs/configuration.md) covers browser selection, export directories, pause and cleanup timeouts, shared homes and test settings. Set them in the relevant process before launch. `HERMES_BROWSER_DEFAULT` and `HERMES_BROWSER_EXPORT_ROOTS` also read the shared bridge home's `.env`; do not commit that file.

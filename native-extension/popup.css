@@ -13,3 +13,10 @@
 .page-controls{display:flex;gap:8px;flex-shrink:0}
 /* 中文注释：多实例列表只显示短 ID，长实例标识不撑开弹窗。 */
 #browser-links{padding:14px 0;border-top:1px solid var(--line)}#browser-links h2{font-size:13px;margin:0 0 8px}#browser-list p{margin:5px 0;color:var(--muted);font-size:12px}#set-primary{margin-top:8px;font-size:12px}
+
+/* 中文注释：复用弹窗排版；站点列表限制高度并允许键盘操作。 */
+#cookie-mirror{border-top:1px solid #ddd;margin-top:16px;padding-top:12px}
+#cookie-mirror label{display:block;margin:8px 0;font-size:12px}
+#cookie-mirror input[type=search],#cookie-target{width:100%;padding:6px;margin-top:4px}
+#cookie-days{width:48px;margin:0 4px}.cookie-sites{max-height:180px;overflow:auto}
+#cookie-mirror button{margin:4px 4px 4px 0}#cookie-status,#cookie-results{font-size:12px;overflow-wrap:anywhere}

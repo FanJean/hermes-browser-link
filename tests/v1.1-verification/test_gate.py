@@ -380,7 +380,8 @@ class GateNegativeControls(unittest.TestCase):
 
     def test_baseline_and_supplemental_step_counts_are_separate(self):
         # 中文注释：当前显式矩阵已纳入新增基准与版本回归，保持实际审阅后的数量。
-        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 35)
+        # 中文注释：Cookie 镜像 Python runner 新增一个基准步骤，原有步骤全部保留。
+        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 36)
         self.assertEqual(len(gate.supplemental_matrix(Path('/scratch/source'), '/scratch/python')), 2)
 
     def test_browser_use_cli_source_is_discovered_from_cli_without_executing_it(self):
@@ -444,7 +445,10 @@ class GateNegativeControls(unittest.TestCase):
         # 中文注释：最终合并新增的三个 runner 必须明确登记且实际执行。
         self.assertTrue(final_delta.issubset(set(gate.REVIEWED_RUNNER_PATHS)))
         # 中文注释：dev-sync 的 PID 身份回归与首次网站读取确认回归都登记在离线执行清单。
-        self.assertEqual(len(gate.known_v11_runner_paths()), 80)
+        # 中文注释：镜像 Node/Python 两个离线文件也纳入发现与固定清单核对。
+        self.assertEqual(len(gate.known_v11_runner_paths()), 82)
+        self.assertIn('tests/v1.5.0/cookie-mirror.test.mjs', gate.known_v11_runner_paths())
+        self.assertIn('tests/v1.5.0/test_cookie_mirror.py', gate.known_v11_runner_paths())
         # 中文注释：1.3.6 同任务并发开页用例显式登记。
         self.assertIn('tests/v1.3.6/test_concurrent_tabs.py', gate.known_v11_runner_paths())
         self.assertIn('tests/native-extension/redirect-ready.test.mjs', gate.NODE_TESTS)

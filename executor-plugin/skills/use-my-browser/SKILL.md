@@ -72,3 +72,10 @@ For error codes, see `browser-link:troubleshoot`.
 读动作只等待 DOM 的 `interactive`/`complete`，上限 1.5 秒。导航和新建页最多等待 8 秒；正文已解析且稳定时可提前返回 `partial`。摘要可用 `summary=false` 关闭。
 
 `parallel(fn, tabs)` 对每个页执行 `fn(tab)`，最多八个线程，结果按输入顺序返回。任一分支失败后汇总 `BrowserError.errors` 与已成功的 `BrowserError.results`，不重试动作；用显式 `tab=` 核实未知结果。同一页的动作仍串行，同一会话仍只能运行一个脚本进程。
+
+
+## Cookie 镜像
+
+使用 `browser_shared_cookie_mirror`：`list_sites(source)` 只列站点计数，`request_mirror(source,target,sites,options)` 发起请求，`status(transfer_id)` 查询原请求。目标是明确的已连接实例，不可把同一个实例作为两端。选项 `clearTarget` 默认关闭；`persistDays` 不传时会话 Cookie 保持原样。每次由用户在源浏览器扩展确认面板点击批准，即使全部访问也必须等待；60 秒过期或被拒绝后不要自行重发。
+
+**不得要求查看 Cookie 值，不得把 Cookie 内容写进任何文件或回复，不得尝试通过 CDP、脚本或网页替用户确认。** 只讨论站点、数量、成功/失败和回读匹配/缺失。回读身份匹配仅证明导入，访问目标站点是否已登录仍需用户验收。失败可能已部分写入，不自动重试或清除。

@@ -32,7 +32,7 @@ export async function helperCall(...args) {
 }
 
 // 中文注释：启动一个临时 profile 浏览器并完成扩展连接与完整访问授权；restart() 用同一 profile 重启浏览器。
-export async function openRealSession({browser, packageMode = false, hostRules = '', label = 'm', headed = false, idleCloseSeconds, taskIdleTimeoutSeconds}) {
+export async function openRealSession({browser, packageMode = false, hostRules = '', label = 'm', headed = false, idleCloseSeconds, taskIdleTimeoutSeconds, sharedWith = null}) {
   const work = await mkdtemp(path.join(scratch, `${label}${browser[0]}-`));
   const packageRoot = path.join(work, 'package');
   const extensionRoot = packageMode ? path.join(packageRoot, 'native-extension') : path.join(work, 'dist-native');
@@ -49,7 +49,8 @@ export async function openRealSession({browser, packageMode = false, hostRules =
   let staged;
   try {
     const origins = JSON.stringify([`chrome-extension://${expectedExtensionId}/`]);
-    staged = packageMode ? await helperCall('stage_package', work, packageRoot, origins) : await helperCall('stage', work, origins);
+    // 中文注释：Cookie 镜像双浏览器验收共享临时 daemon，仍隔离浏览器 profile。
+    staged = sharedWith ? sharedWith.staged : packageMode ? await helperCall('stage_package', work, packageRoot, origins) : await helperCall('stage', work, origins);
     const profileManifest = path.join(profile, 'NativeMessagingHosts/com.hermes.browser_link.json');
     await mkdir(path.dirname(profileManifest), {recursive: true});
     await copyFile(staged.manifests[browser === 'chrome' ? 0 : 1], profileManifest);
@@ -58,7 +59,7 @@ export async function openRealSession({browser, packageMode = false, hostRules =
   await mkdir(temp, {recursive: true});
   // 中文注释：浏览器必须继承真实 HOME（见 tests/v1-launch-safety），只把 HERMES_HOME/TMPDIR 指到临时目录。
   const browserEnv = {
-    HOME: process.env.HOME, HERMES_HOME: path.join(work, 'h', '.hermes'), TMPDIR: temp,
+    HOME: process.env.HOME, HERMES_HOME: staged.hermesHome, TMPDIR: temp,
     PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin', LANG: process.env.LANG || 'en_US.UTF-8',
   };
   // 中文注释：生命周期验收仅在本次临时 profile 的 host/daemon 中缩短计时，不修改用户 .env。
@@ -122,13 +123,15 @@ export async function openRealSession({browser, packageMode = false, hostRules =
     await session.clickPopup('#access-toggle'); await session.clickPopup('#confirm-enable');
     await waitFor(() => ui.evaluate(`document.querySelector('#access-toggle').getAttribute('aria-checked')==='true'`));
   };
-  session.rpc = (owner, suffix, args = {}) => helperCall('rpc', work, owner, suffix, JSON.stringify(args));
+  session.rpc = (owner, suffix, args = {}) => helperCall('rpc', sharedWith?.work || work, owner, suffix, JSON.stringify(args));
   session.instance = async () => {
     const found = await waitFor(async () => {
       const rows = await session.rpc('session-a', 'browsers');
       return Array.isArray(rows) && rows.some(item => item.browser === browser && item.connected !== false) ? rows : null;
     }, 30000);
-    return found.find(item => item.browser === browser);
+    // 中文注释：同浏览器多 profile 必须使用当前扩展实例，不能按 browser 名称取第一条。
+    const instanceId=await ui.evaluate(`chrome.runtime.sendMessage({type:'popup_status'}).then(r=>r.result.instanceId)`);
+    return found.find(item => item.instanceId === instanceId);
   };
   // 中文注释：页面回读通过扩展自身的 chrome.debugger 进行，只用于测试断言，不经过被测动作链路。
   session.readPage = (tabId, expression) => ui.evaluate(`chrome.debugger.sendCommand({tabId:${tabId}},'Runtime.evaluate',{expression:${JSON.stringify(expression)},returnByValue:true,awaitPromise:true}).then(r=>r.result.value)`);
@@ -156,7 +159,7 @@ export async function openRealSession({browser, packageMode = false, hostRules =
   session.killBrowser = stopBrowser;
   session.launch = launch;
   session.close = async () => {
-    const cleanupError = await helperCall('cleanup', work).then(() => null, error => error);
+    const cleanupError = sharedWith ? null : await helperCall('cleanup', work).then(() => null, error => error);
     await stopBrowser();
     if (process.env.KEEP_NATIVE_V2_SCRATCH === '1') console.error('retained fixture:', work);
     else await rm(work, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});

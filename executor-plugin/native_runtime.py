@@ -46,7 +46,7 @@ OWNER_LEASE_ARG = _base.OWNER_LEASE_ARG
 OwnerLeaseError = _base.OwnerLeaseError
 TOOL_NAMES = tuple('browser_shared_' + suffix for suffix in (
     # 中文注释：文件清单只提供当前可信会话的任务级元信息。
-    'health', 'browsers', 'create', 'list', 'get', 'artifacts', 'run', 'cancel', 'resume', 'close', 'downloads'))
+    'health', 'browsers', 'create', 'list', 'get', 'artifacts', 'run', 'cancel', 'resume', 'close', 'downloads', 'cookie_mirror'))
 
 
 class NativeOwnerAuthority(_base.OwnerAuthority):
