@@ -240,13 +240,18 @@ class CookieMirrorTests(unittest.TestCase):
                 self.assertEqual(diagnostics_before,
                     {p: p.read_bytes() for p in (daemon.data_dir / 'diagnostics').rglob('*') if p.is_file()})
                 for file in Path(home).rglob('*'):
-                    if file.is_file():
-                        self.assertNotIn(SECRET.encode(), file.read_bytes(), str(file.relative_to(home)))
-                # 中文注释：全仓源文件也不落入标记值；夹具通过分段字符串在内存构造。
-                scan = __import__('subprocess').run(['rg', '--files', '-g', '!node_modules/**', '-g', '!.git/**'], cwd=ROOT, capture_output=True, text=True, check=True)
+                    # 中文注释：daemon 原子写入的临时文件可能在遍历间隙被改名，消失的文件跳过。
+                    try:
+                        data = file.read_bytes() if file.is_file() else None
+                    except FileNotFoundError:
+                        data = None
+                    if data is not None:
+                        self.assertNotIn(SECRET.encode(), data, str(file.relative_to(home)))
+                # 中文注释：全仓源文件也不落入标记值；夹具通过分段字符串在内存构造。用 git 列文件，CI 不依赖 ripgrep。
+                scan = __import__('subprocess').run(['git', 'ls-files', '-co', '--exclude-standard'], cwd=ROOT, capture_output=True, text=True, check=True)
                 for relative in scan.stdout.splitlines():
                     path = ROOT / relative
-                    if path.is_file():
+                    if path.is_file() and 'node_modules' not in path.parts:
                         self.assertNotIn(SECRET.encode(), path.read_bytes(), relative)
             finally:
                 logging.getLogger().removeHandler(log)
