@@ -22,7 +22,7 @@ Read pages and tables, click, fill forms, upload files, track downloads and run 
 1. Download a [Release package](https://github.com/FanJean/hermes-browser-link/releases) and install (no Node.js needed); **Program installed and enabled** confirms success:
 
    ```sh
-   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.5.2/hermes-browser-link-1.5.2.zip -o hermes-browser-link-1.5.2.zip && unzip hermes-browser-link-1.5.2.zip && cd hermes-browser-link-1.5.2 && ./install.sh
+   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.5.3/hermes-browser-link-1.5.3.zip -o hermes-browser-link-1.5.3.zip && unzip hermes-browser-link-1.5.3.zip && cd hermes-browser-link-1.5.3 && ./install.sh
    ```
 
 2. Open `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** → paste the absolute path printed and copied by the installer. It waits up to 3 minutes and shows ✅ when connected; Ctrl+C skips the wait.
@@ -31,6 +31,8 @@ Read pages and tables, click, fill forms, upload files, track downloads and run 
 Upgrade: run `./install.sh --upgrade` from the new package (automatic backup and rollback), then reload the extension and restart Desktop. Uninstall: `./install.sh --uninstall` keeps task-private data; add `--purge` to delete it.
 
 [Source/manual installation, profiles and troubleshooting](docs/installation.md) · [Agent installation prompt](docs/agent-install-prompt.md).
+
+Overlay stuck: click “放开页面” (release page) or refresh the page.
 
 ## First use
 

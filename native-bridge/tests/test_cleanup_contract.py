@@ -26,6 +26,22 @@ class CleanupContractTests(unittest.TestCase):
             'allowedOrigins': ['https://example.test']})
         self.params = {'owner': 'owner', 'taskId': self.task['id']}
 
+    def test_overlay_cleanup_lists_closed_tasks_only_for_the_trusted_instance(self):
+        # 中文注释：扩展清理读取本实例终态，默认列表不增加已关闭任务，也不返回别的实例。
+        row = self.daemon.tasks[self.task['id']]
+        row['state'] = 'closed'
+        self.daemon.tasks['foreign'] = {**row, 'id': 'foreign', 'instanceId': 'other'}
+        self.assertEqual(self.daemon._dispatch_extension('browser', 'extension.tasks', {}), [])
+        listed = self.daemon._dispatch_extension('browser', 'extension.tasks', {'includeClosed': True})
+        self.assertEqual([task['id'] for task in listed], [self.task['id']])
+        self.assertEqual(listed[0]['state'], 'closed')
+
+    def test_overlay_cleanup_option_rejects_non_boolean_and_extra_fields(self):
+        # 中文注释：只有明确的布尔开关合法，不能把任意清理参数带入扩展任务读取。
+        for params in ({'includeClosed': 1}, {'includeClosed': False}, {'includeClosed': True, 'instanceId': 'other'}):
+            with self.assertRaises(ProtocolError):
+                self.daemon._dispatch_extension('browser', 'extension.tasks', params)
+
     def test_handoff_preserves_work_page_and_revokes_lease(self):
         # 中文注释：用户接管时自动结束保留页面，但任务权限立即失效。
         self.daemon.tasks[self.task['id']]['state'] = 'paused'

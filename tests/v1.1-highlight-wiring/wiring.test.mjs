@@ -125,7 +125,9 @@ async function authorizeFull(executor){await executor.approve(task);executor.set
     assert.equal(hosts.length,1,'automation controls and interaction highlight must share one host');
     assert.equal(hosts[0].hasAttribute('data-hermes-interaction-highlight'),true);
     const buttons=[...hosts[0].shadowRoot.querySelectorAll('button')].map(button=>button.textContent);
-    assert.deepEqual(buttons,['接管页面','退出接管','停止任务'],'the unified host must retain takeover, resume and stop');
+    // 中文注释：恢复按钮也复用唯一宿主，正常任务中保持隐藏。
+    assert.deepEqual(buttons,['接管页面','退出接管','停止任务','放开页面','重试']);
+    assert.equal(hosts[0].shadowRoot.querySelector('[data-action=release]').style.display,'none');
     const highlights=f.events.filter(event=>event.type==='highlight');
     const click=f.events.find(event=>event.type==='side-effect'&&event.name==='click');
     assert.ok(highlights.length>0,'production action path must render a target highlight');

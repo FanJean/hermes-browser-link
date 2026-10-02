@@ -22,7 +22,7 @@
 1. 下载 [Release 安装包](https://github.com/FanJean/hermes-browser-link/releases) 并安装（无需 Node.js）；出现“程序安装并启用完成”即成功：
 
    ```sh
-   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.5.2/hermes-browser-link-1.5.2.zip -o hermes-browser-link-1.5.2.zip && unzip hermes-browser-link-1.5.2.zip && cd hermes-browser-link-1.5.2 && ./install.sh
+   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.5.3/hermes-browser-link-1.5.3.zip -o hermes-browser-link-1.5.3.zip && unzip hermes-browser-link-1.5.3.zip && cd hermes-browser-link-1.5.3 && ./install.sh
    ```
 
 2. 在浏览器打开 `chrome://extensions` 或 `edge://extensions` → 开发者模式 → 加载已解压的扩展程序 → 粘贴脚本打印并复制的绝对路径；脚本最多等待 3 分钟，检测成功显示 ✅，可用 Ctrl+C 跳过等待。
@@ -31,6 +31,8 @@
 升级：在新包目录运行 `./install.sh --upgrade`（自动备份，失败回滚），再重载扩展和重启桌面端。卸载：`./install.sh --uninstall`（默认保留任务私有数据；加 `--purge` 才删除）。
 
 [源码、手动安装、多 profile 与故障排查](docs/installation.md) · [代理安装提示词](docs/agent-install-prompt.md)。
+
+浮层卡住：点「放开页面」或刷新页面。
 
 ## 首次使用
 

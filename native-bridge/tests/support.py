@@ -25,7 +25,7 @@ def read_line(reader):
     return json.loads(line)
 
 
-def stop_fixture_daemon(home: Path):
+def stop_fixture_daemon(home: Path, extra_daemons=()):
     data_dir = Path(home) / "plugin-data" / "browser-link-native"
     pid_path = data_dir / "daemon.pid"
     if not pid_path.exists():
@@ -35,7 +35,7 @@ def stop_fixture_daemon(home: Path):
     command = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True)
     candidates = (Path(__file__).resolve().parents[1] / "daemon.py",
                   Path(home) / "plugins/browser-link/native_bridge/daemon.py",
-                  data_dir / "host-bin/daemon.py")
+                  data_dir / "host-bin/daemon.py", *map(Path, extra_daemons))
     expected = any(command.stdout.strip().endswith(f" {candidate} --home {Path(home).resolve()}")
                    for candidate in candidates)
     # 中文注释：PID 文件只含数字；认证探活和完整启动命令均匹配后才允许清理临时 daemon。

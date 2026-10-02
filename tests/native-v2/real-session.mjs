@@ -156,6 +156,34 @@ export async function openRealSession({browser, packageMode = false, hostRules =
       await waitFor(async()=>!(await fetchJson(`${base}/json/list`)).some(item=>item.id===panelTarget.id),10000);
     } finally { panel.close(); }
   };
+  // 中文注释：重载只作用于本 fixture 扩展；刷新共享 ui 引用，后续工具不再使用已关闭的 popup 端点。
+  // 中文注释：重载只作用于本 fixture 扩展；用 chrome://extensions 页自身的重新加载（与用户点"重新加载"相同），
+  // 不用 chrome.runtime.reload()——后者会让经 CDP 加载的解压扩展变成"已屏蔽"。完成后刷新共享 ui 引用。
+  session.reloadExtension = async () => {
+    ui.close();
+    const {targetId} = await cdp.call('Target.createTarget', {url: 'chrome://extensions/'});
+    const page = await waitFor(async () => (await fetchJson(`${base}/json/list`)).find(item => item.id === targetId && item.webSocketDebuggerUrl));
+    const manager = new CdpClient(page.webSocketDebuggerUrl); await manager.connect();
+    try {
+      await waitFor(() => manager.evaluate(`typeof chrome?.developerPrivate?.reload === 'function'`), 15000, {label: '扩展管理页可用'});
+      // 中文注释：临时 profile 默认未开开发者模式，重载会把解压扩展判为 unsupportedDeveloperExtension 并停用；先开启，与真实用户环境一致。
+      await manager.evaluate(`new Promise(resolve => chrome.developerPrivate.updateProfileConfiguration({inDeveloperMode: true}, () => resolve(true)))`);
+      await manager.evaluate(`new Promise((resolve, reject) => chrome.developerPrivate.reload(${JSON.stringify(expectedExtensionId)}, {failQuietly: true}, () => chrome.runtime.lastError ? reject(Error(chrome.runtime.lastError.message)) : resolve(true)))`);
+    } finally { manager.close(); await cdp.call('Target.closeTarget', {targetId}).catch(() => {}); }
+    const popupUrl = `chrome-extension://${expectedExtensionId}/popup.html`;
+    popupTarget = await waitFor(async () => {
+      for (const item of (await fetchJson(`${base}/json/list`)).filter(item => item.url === popupUrl)) await cdp.call('Target.closeTarget', {targetId: item.id}).catch(() => {});
+      await cdp.call('Target.createTarget', {url: popupUrl});
+      await new Promise(resolve => setTimeout(resolve, 800));
+      const target = (await fetchJson(`${base}/json/list`)).find(item => item.url === popupUrl);
+      if (!target) return null;
+      const probe = new CdpClient(target.webSocketDebuggerUrl); await probe.connect();
+      try { return await probe.evaluate(`Boolean(document.querySelector('#connection-label'))`) ? target : null; }
+      catch { return null; } finally { probe.close(); }
+    }, 20000, {label: '扩展重载后弹窗可打开'});
+    ui = new CdpClient(popupTarget.webSocketDebuggerUrl); await ui.connect(); session.ui = ui;
+    await waitFor(() => ui.evaluate(`document.querySelector('#connection-label')?.textContent==='已连接'`), 35000);
+  };
   session.restartBrowser = async () => { await stopBrowser(); await launch(); };
   session.killBrowser = stopBrowser;
   session.launch = launch;

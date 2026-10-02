@@ -20,6 +20,8 @@ function harness({focusFails=false,browserFullConsent=false,decideFails=false,co
    default:throw Error('unexpected native '+m.method);
   }receiver({id:m.id,result});});}};
  class ExecutorFake{
+  // 中文注释：本夹具不创建页面浮层，握手清理能力由专项 DOM 回归覆盖。
+  async cleanupOrphanOverlays(){}
   constructor(){executor=this;this.tasks=new Map([['task-A',{...task,policy:{activeMode:'smart',modeGeneration:1},revoked:false}]]);this.leases=new Map([[7,'task-A']]);this.actionGrants=new Map();this.attached=new Set();this.diagnostics={size:0,recordSafely(){},exportBundle(){return {};}};}
   approveAction(a){this.actionGrants.set(a.nonce,clone(a));} revokeMode(id){this.tasks.get(id).policy.activeMode='smart';} setMode(t){this.tasks.get(t.id).policy.activeMode=t.activeMode;}
   async release(){this.tasks.get('task-A').revoked=true;}async disconnect(){this.tasks.get('task-A').revoked=true;this.actionGrants.clear();}

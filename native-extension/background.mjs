@@ -279,8 +279,9 @@ async function connect(){if(bridge||connecting)return;connecting=true;try{
   // 中文注释：本地桥意外断开（如 daemon 重启）后很快重连一次；在途动作不重放，其余仍靠 30 秒定时重连兜底。
   setTimeout(()=>{connect();},1500);});
  // 中文注释：握手版本与扩展清单保持一致，避免安装后仍报告旧版本。
- // 中文注释：握手版本与 1.5.2 发布清单一致。
- const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.5.2',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}await consent.synchronize(current);await refreshApprovals(current);}
+ // 中文注释：握手版本与 1.5.3 发布清单一致。
+ const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.5.3',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}// 中文注释：握手后按 daemon 本实例终态与本地工作区日志清理重载遗留浮层，先于恢复授权派发。
+ await executor.cleanupOrphanOverlays(await current.request('extension.tasks',{includeClosed:true}),instanceId);await consent.synchronize(current);await refreshApprovals(current);}
  }catch(e){
   lastError=e.message;
   if(bridge&&!connected){
@@ -304,7 +305,17 @@ if(chrome.downloads&&executor.downloads){
 chrome.debugger.onEvent?.addListener?.((source,method,params)=>{executor.pageRuntime.observe(source,method,params);executor.observers.observe(source,method,params);});
 // 中文注释：主框架 DOM 就绪时立刻补完整遮罩；Page 域由预遮罩同步时开启。
 chrome.debugger.onEvent?.addListener((source,method)=>{if(method!=='Page.domContentEventFired'||source?.sessionId||!Number.isInteger(source?.tabId)||!executor.leases.has(source.tabId))return;chrome.tabs.get(source.tabId).then(tab=>executor.tabEvent(source.tabId,'navigated',tab.url,{status:'dom_ready',urlChanged:false})).catch(()=>{});});
-chrome.debugger.onDetach.addListener(({tabId})=>{const expectedClose=executor.closingTabs.has(tabId);executor.attached.delete(tabId);if(expectedClose)return;const t=executor.tasks.get(executor.leases.get(tabId));if(t&&!t.revoked){const current=bridge;void executor.release({taskId:t.id,generation:t.generation,closeAgentTabs:false}).then(()=>current?.request('extension.stop',{taskId:t.id,generation:t.generation})).catch(()=>{});}});
+// 中文注释：分离后原 CDP 通道已失效；先撤销任务，再短暂附加移除残留浮层，清理自己的分离事件不能再停任务。
+chrome.debugger.onDetach.addListener(({tabId})=>{
+ const expectedClose=executor.closingTabs.has(tabId);executor.attached.delete(tabId);
+ if(expectedClose||executor.overlayCleanupTabs.has(tabId))return;
+ const t=executor.tasks.get(executor.leases.get(tabId));if(!t||t.revoked)return;
+ const current=bridge;
+ // 中文注释：立即卸载本地输入拦截，不等待任务资源清理或 daemon 回执。
+ void executor.removeLocalOverlayInput(t,tabId).catch(()=>{});
+ void executor.release({taskId:t.id,generation:t.generation,closeAgentTabs:false})
+  .then(async()=>{await executor.cleanupDetachedOverlay(t,tabId);await current?.request('extension.stop',{taskId:t.id,generation:t.generation});}).catch(()=>{});
+});
 chrome.runtime.onMessage.addListener((m,sender,respond)=>{
  if(m?.type==='approval_panel_view'||m?.type==='approval_panel_decision'){
   if(!notifier?.isSender(sender))return false;
@@ -350,7 +361,7 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
  // 中文注释：弹窗只读取当前浏览器的任务摘要和实际归属页，不返回输入或日志正文。
  if(m.type==='popup_status'){
   // 中文注释：弹窗状态报告与 Native 握手相同的版本。
-  const base={connected,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),visualCursorEnabled:(await chrome.storage.local.get('visualCursorEnabled')).visualCursorEnabled!==false,browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,observedAt:Date.now(),version:'1.5.2'};
+  const base={connected,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),visualCursorEnabled:(await chrome.storage.local.get('visualCursorEnabled')).visualCursorEnabled!==false,browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,observedAt:Date.now(),version:'1.5.3'};
   if(!connected||!bridge)return {...base,tasks:[],page:null};
   const tasks=await bridge.request('extension.tasks');
   const active=(await chrome.tabs.query({active:true,currentWindow:true}))[0];

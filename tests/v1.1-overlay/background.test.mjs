@@ -35,6 +35,8 @@ function harness({hostState='cancelled',stopFails=false,resumeState='ready',resu
   });
  }};
  class FakeExecutor{
+  // 中文注释：本夹具不创建页面浮层，握手清理能力由专项 DOM 回归覆盖。
+  async cleanupOrphanOverlays(){}
   constructor(_api,_onEvent,options){executor=this;this.onOverlayCommand=options?.onOverlayCommand;
    this.tasks=new Map([['task-1',{id:'task-1',instanceId:instance,generation:3,revoked:false,tabIds:new Set([7]),allowedOrigins:['https://example.test'],policy:{activeMode:'smart'}}]]);
    this.docs=new Map([[7,1]]);

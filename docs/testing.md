@@ -141,3 +141,15 @@ Set `HERMES_PYTHON` to the existing test Python with FastAPI/HTTPX and Hermes de
 `tests/v1.5.2/test_install_flow.py` runs in `npm test` and the offline gate using temporary HOME/HERMES_HOME, a verified package outside Git and command stubs. It covers first installation, repeat-install advice, source packaging, Release without Node.js, upgrade data/identity preservation, late corruption and activation rollback, uninstall/purge, deletion confirmation, dry-run without writes, prerequisites, profiles and read-only connection polling. No real installation or browser is operated. The reviewed baseline has 38 steps.
 
 Manual acceptance still requires loading the printed extension path into a temporary Chrome/Edge profile, confirming doctor detects it, enabling popup access yourself and checking restart behavior. Source tests do not replace that acceptance.
+
+### Orphan overlay (1.5.3)
+
+`tests/v1.5.3/overlay-orphan.test.mjs` is registered in the baseline Node gate. The baseline still has 39 steps and the known runner allowlist has 87 files.
+
+Run the manual browser gate from the repository with an isolated test Hermes installation (never the live runtime):
+
+```sh
+HERMES_SOURCE="$PWD/.ci/hermes" HERMES_PYTHON="$PWD/.ci/hermes/.venv/bin/python" node tests/v1.5.3/real-overlay-orphan.mjs --headed
+```
+
+Use `--edge` for Edge. The script uses only temporary profiles and a temporary daemon. It checks debugger detach, extension reload, needs_sync after restarting that daemon, real page input after cleanup, and progress while a long action finishes. A machine that denies localhost/socket binding cannot complete this gate; offline DOM tests do not replace it.

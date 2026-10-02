@@ -165,3 +165,9 @@
 
 - `tests/v1.5.2/test_hook_compatibility.py`：宿主缺失单个、多个或全部钩子时完整插件无警告加载；工具、技能和卸载回调保留，无租约调用仍拒绝。
 - `tests/v1.4.3/test_autoclose.py`：缺生命周期钩子时工具调用更新活动时间，daemon 在空闲期后清理任务。
+
+## 1.5.3 网页浮层断连
+
+- `tests/v1.5.3/overlay-orphan.test.mjs`：登记在 baseline Node 清单；覆盖控制超时、快捷键、断开/未知回执、放开与监听器卸载、重试与迟到回执、页面脚本不能伪造控制、本实例和代次隔离、工作区补页、DevTools 占用及预遮罩清理。
+- `native-bridge/tests/test_cleanup_contract.py`：可信扩展可读取本实例已关闭任务供浮层清理；默认任务列表和跨实例隔离不变。
+- `tests/v1.5.3/real-overlay-orphan.mjs`：手动真实门禁；临时 Chrome/Edge profile 覆盖 debugger 分离、扩展重载、daemon 重启后的 needs_sync，以及长脚本接管进度。支持 `--headed`、`--edge`；`--baseline` 仅记录修复前现象。不进入离线门禁，不依赖 rg/git。

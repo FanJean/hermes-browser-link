@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Hermes Browser Link",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "permissions": [
     "nativeMessaging",
     "debugger",
+    "scripting",
     "tabs",
     "tabGroups",
     "downloads",

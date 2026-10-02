@@ -38,6 +38,8 @@ SKIP_FILES = {'CODEX-AUDIT-REPORT.md', 'CODEX-STREAM-REPORT.md', '.DS_Store', 'b
 NODE_BOUNDARIES = ('.',)
 # Explicit runner inventory: no glob expands into browser, install, or evidence suites.
 NODE_TESTS = (
+    # 中文注释：浮层断连与本地放开回归只使用离线 DOM，不自动运行真实浏览器。
+    'tests/v1.5.3/overlay-orphan.test.mjs',
     # 中文注释：Cookie 镜像只运行合成 API；真实双浏览器脚本不进入门禁。
     'tests/v1.5.0/cookie-mirror.test.mjs',
     # 中文注释：后台审批、权限提醒、弹窗与图标只运行离线合成 API。

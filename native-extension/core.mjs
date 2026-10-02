@@ -648,19 +648,20 @@ const SETTLING_READ_ACTIONS=new Set(['snapshot','page.observe','page.parse','sem
 const TRANSIENT_LOAD_ERROR=/^\{"code":-?\d+,"message":"(?:Cannot find context with specified id|Execution context was destroyed|Inspected target navigated or closed|Cannot find frame|Frame with the given id was not found|No frame for given id)|^DOCUMENT_CHANGED$|^overlay frame changed$|^overlay injection failed$|^FRAME_COVERAGE_INCOMPLETE$/;
 export const isTransientLoadError=error=>TRANSIENT_LOAD_ERROR.test(String(error?.message||'').split(/\r?\n/,1)[0].replace(/^Error: /,''));
 const DISPATCHING_ACTIONS=new Set(['click','ref_click','interaction.click','press','ref_press','ref_set_checked','ref_select_option']);
-export function preveilSource(allowedOrigins){
+export function preveilSource(allowedOrigins,{taskId='',generation=0}={}){
  return `(()=>{try{
  if(window.top!==window||!${JSON.stringify(allowedOrigins)}.includes(location.origin))return;
- let host=null;
+ globalThis.__hermesRemovePreveil?.();let host=null,removed=false;
  // 中文注释：预遮罩也在窗口捕获阶段拦截 top-layer 输入，不能仅依赖 host 命中。
  const keys=['keydown','keypress','keyup','beforeinput','pointerdown','pointerup','mousedown','mouseup','click','dblclick','auxclick','contextmenu','wheel','touchstart','touchmove'];
  const block=event=>{if(host?.isConnected&&event.isTrusted){event.preventDefault();event.stopImmediatePropagation();}};
  const observer=new MutationObserver(mount);
  function mount(){
-  const root=document.documentElement;if(!root)return;
+  if(removed)return;const root=document.documentElement;if(!root)return;
   if([...document.querySelectorAll('[data-hermes-automation-overlay]')].some(node=>!node.hasAttribute('data-hermes-preveil'))){observer.disconnect();host?.remove();for(const type of keys)window.removeEventListener(type,block,true);return;}
   if(!host){
-   host=document.createElement('div');host.setAttribute('data-hermes-automation-overlay','');host.setAttribute('data-hermes-preveil','');host.tabIndex=-1;
+   host=document.createElement('div');host.setAttribute('data-hermes-automation-overlay','');host.setAttribute('data-hermes-preveil','');host.dataset.hermesOverlayTask=${JSON.stringify(taskId)};host.dataset.hermesOverlayGeneration=${JSON.stringify(String(generation))};host.tabIndex=-1;
+   host.addEventListener('hermes-overlay-release',()=>globalThis.__hermesRemovePreveil?.());
    host.style.cssText='position:fixed;inset:0;z-index:2147483647;pointer-events:auto;background:rgba(13,35,25,.10);border:2px solid rgba(31,117,75,.55);box-sizing:border-box;margin:0';
    const label=document.createElement('div');label.textContent='Hermes 正在工作 · 页面加载中';
    label.style.cssText='position:fixed;top:16px;right:16px;padding:12px 16px;border-radius:14px;background:#172a20;color:#fff;font:600 14px/1.4 system-ui,sans-serif';
@@ -672,6 +673,9 @@ export function preveilSource(allowedOrigins){
   for(const type of keys)window.addEventListener(type,block,{capture:true,passive:false});
   if(['IFRAME','FRAME'].includes(document.activeElement?.tagName))host.focus({preventScroll:true});
  }
+ // 中文注释：后台只能通过隔离世界卸载本地输入拦截，不能把任务标成暂停或授权。
+ globalThis.__hermesRemovePreveil=()=>{removed=true;observer.disconnect();host?.remove();for(const type of keys)window.removeEventListener(type,block,true);delete globalThis.__hermesRemovePreveil;};
+ globalThis.__hermesRemovePreveil.taskId=${JSON.stringify(taskId)};globalThis.__hermesRemovePreveil.generation=${generation};
  observer.observe(document,{childList:true,subtree:true});mount();
 }catch{}})()`;
 }
@@ -689,7 +693,7 @@ export class Executor {
   // Only trusted extension background code may supply this callback. It must
   // fence the host task and read back the same task/generation before success.
   this.onOverlayCommand=onOverlayCommand;
-  this.api=api;this.onEvent=onEvent;this.diagnostics=new DiagnosticEventBuffer();this.diagnosticConnection=crypto.randomUUID();this.tasks=new Map();this.leases=new Map();this.taskBarriers=new Map();this.attached=new AttachedTabs();this.semanticWorlds=this.attached.semanticWorlds;this.closingTabs=new Set();this.docs=new Map();this.tabQueues=new Map();this.approvalQueue=Promise.resolve();this.actionGrants=new Map();this.fullGrants=new Set();this.spawnScopes=new Map();this.spawnLineage=new Map();this.pendingInteractionProbes=new Set();this.pendingInteractionCleanups=new Set();this.policy=createApprovalPolicy({verifyFullAccessGrant:g=>this.fullGrants.delete(g.grantId)});
+  this.api=api;this.onEvent=onEvent;this.diagnostics=new DiagnosticEventBuffer();this.diagnosticConnection=crypto.randomUUID();this.tasks=new Map();this.leases=new Map();this.taskBarriers=new Map();this.attached=new AttachedTabs();this.semanticWorlds=this.attached.semanticWorlds;this.closingTabs=new Set();this.overlayCleanupTabs=new Set();this.docs=new Map();this.tabQueues=new Map();this.approvalQueue=Promise.resolve();this.actionGrants=new Map();this.fullGrants=new Set();this.spawnScopes=new Map();this.spawnLineage=new Map();this.pendingInteractionProbes=new Set();this.pendingInteractionCleanups=new Set();this.policy=createApprovalPolicy({verifyFullAccessGrant:g=>this.fullGrants.delete(g.grantId)});
   this.downloads=api.downloads&&typeof onDownloadEvent==='function'?new DownloadTracker(this,{report:onDownloadEvent}):null;
   this.pageRuntime=new PageRuntime(this,{pushEvents:typeof onCdpEvents==='function'?onCdpEvents:async()=>{}});
   this.observers=new PageObservers(this);
@@ -894,8 +898,8 @@ export class Executor {
  async pause(taskId,generation) {
   const t=this.tasks.get(taskId);this.check(t,{generation});
   t.pauseRequested=true;
-  // 中文注释：先让遮罩放行人工输入；在途动作仍由任务屏障收尾，新动作已被 pauseRequested 拒绝。
-  await this.syncTaskOverlays(t,'paused');
+  // 中文注释：先显示等待进度并拒绝后续派发；屏障收尾前不能展示已暂停或放行人工输入。
+  await this.syncTaskOverlays(t,'pausing');
   await this.taskBarrier(taskId,true,async()=>{});
   this.check(t,{generation});
   // 中文注释：人工操作可能改变 DOM 与截图，接管后旧页面引用必须失效。
@@ -903,6 +907,7 @@ export class Executor {
   for(const current of t.interactions.values())current.adapter.close();
   t.interactions.clear();
   t.paused=true;
+  await this.syncTaskOverlays(t,'paused');
   for(const tabId of t.tabIds)void this.syncPreveil(t,tabId).catch(()=>{});
   return {paused:true};
  }
@@ -1243,7 +1248,7 @@ export class Executor {
     this.attached.add(tabId);
    }
    const entry=await this.ensureOverlay(t,tabId,target,guard);
-   if(entry){await this.overlayCall(tabId,entry,'update',{update:{state:t.paused?'paused':'waiting'}});guard();}
+   if(entry){await this.overlayCall(tabId,entry,'update',{update:{state:t.pauseRequested&&!t.paused?'pausing':t.paused?'paused':'waiting'}});guard();}
    return entry;
   })())).then(entry=>{if(entry)void this.syncPreveil(t,tabId);return entry;},()=>null);
  }
@@ -1260,7 +1265,7 @@ export class Executor {
    const have=t.preveils?.get(tabId);
    if(want&&!have){
     await send('Page.enable',{});
-    const added=await send('Page.addScriptToEvaluateOnNewDocument',{source:preveilSource(t.allowedOrigins),worldName:'hermes-automation-preveil'});
+    const added=await send('Page.addScriptToEvaluateOnNewDocument',{source:preveilSource(t.allowedOrigins,{taskId:t.id,generation:t.generation}),worldName:'hermes-automation-preveil'});
     if(typeof added?.identifier==='string'){if(!t.preveils)t.preveils=new Map();t.preveils.set(tabId,added.identifier);}
    }else if(!want&&have){
     t.preveils.delete(tabId);
@@ -1618,6 +1623,63 @@ export class Executor {
   }
   return {cleanupState};
  }
+ // 中文注释：只接收后台读取的本实例任务和工作区日志，不把清理能力暴露给页面或工具协议。
+ async cleanupOrphanOverlays(records,instanceId){
+  const stale=records.filter(t=>t.instanceId===instanceId&&['needs_sync','cancelled','closed','failed'].includes(t.state));
+  if(!stale.length)return;
+  const workspaces=await this.workspaces.status();
+  for(const t of stale){
+   const tabs=new Set(t.tabIds||[]);
+   for(const row of workspaces)if(row.taskId===t.id&&row.generation<=t.generation)for(const tab of row.tabs)tabs.add(tab.tabId);
+   for(const tabId of tabs){
+    if(!Number.isInteger(tabId)||this.leases.has(tabId)||this.attached.has(tabId))continue;
+    await this.cleanupDetachedOverlay(t,tabId);
+   }
+  }
+ }
+ // 中文注释：DOM 事件仅卸载当前任务浮层，即使 debugger 被 DevTools 占用也能恢复本地输入。
+ async removeLocalOverlayInput(task,tabId){
+  await this.api.scripting.executeScript({target:{tabId},world:'ISOLATED',func:scope=>{
+   for(const host of document.querySelectorAll('[data-hermes-automation-overlay]')){
+    if(host.dataset.hermesOverlayTask===scope.taskId&&Number(host.dataset.hermesOverlayGeneration)<=scope.generation)host.dispatchEvent(new Event('hermes-overlay-release'));
+   }
+  },args:[{taskId:task.id,generation:task.generation}]});
+ }
+ // 中文注释：短暂复用原有 debugger 权限进入原隔离世界，完整卸载监听器；不执行网页主世界代码、不接管别的调试会话。
+ async cleanupDetachedOverlay(task,tabId){
+  if(this.overlayCleanupTabs.has(tabId)||this.leases.has(tabId)||this.attached.has(tabId))return;
+  this.overlayCleanupTabs.add(tabId);let attached=false;
+  try{
+   const tab=await this.api.tabs.get(tabId);if(!/^https?:/.test(tab.url||''))return;
+   await this.removeLocalOverlayInput(task,tabId);
+   // 中文注释：升级前的浮层没有卸载事件，通过原隔离世界清理；其他调试会话占用时不抢占。
+   const targets=await this.api.debugger.getTargets();if(targets.some(target=>target.tabId===tabId&&target.attached))return;
+   await this.api.debugger.attach({tabId},'1.3');attached=true;
+   const {frameTree}=await this.api.debugger.sendCommand({tabId},'Page.getFrameTree');
+   const world=await this.api.debugger.sendCommand({tabId},'Page.createIsolatedWorld',{frameId:frameTree.frame.id,worldName:'hermes-automation-overlay',grantUniveralAccess:false});
+   const result=await this.api.debugger.sendCommand({tabId},'Runtime.callFunctionOn',{
+    executionContextId:world.executionContextId,
+    functionDeclaration:`function(scope){
+     const state=globalThis.__hermesAutomationOverlay;
+     if(!state||state.taskId!==scope.taskId||state.generation>scope.generation)return false;
+     state.active=false;
+     if(state.operationToken)state.highlight?.clear({taskId:state.taskId,generation:state.generation,documentId:state.documentId,operationToken:state.operationToken});
+     state.overlay.remove();for(const resolve of state.pending.values())resolve({state:'disconnected'});state.pending.clear();
+     delete globalThis.__hermesAutomationOverlay;return true;
+    }`,arguments:[{value:{taskId:task.id,generation:task.generation}}],returnByValue:true,
+   });
+   if(result.exceptionDetails)throw Error('orphan overlay cleanup failed');
+   // 中文注释：加载中的预遮罩使用独立隔离世界，卸载它的观察器，避免移除后再次挂回。
+   const preveil=await this.api.debugger.sendCommand({tabId},'Page.createIsolatedWorld',{frameId:frameTree.frame.id,worldName:'hermes-automation-preveil',grantUniveralAccess:false});
+   await this.api.debugger.sendCommand({tabId},'Runtime.callFunctionOn',{executionContextId:preveil.executionContextId,functionDeclaration:'function(scope){const remove=globalThis.__hermesRemovePreveil;if(remove?.taskId===scope.taskId&&remove.generation<=scope.generation)remove();return true;}',arguments:[{value:{taskId:task.id,generation:task.generation}}],returnByValue:true});
+  }catch{
+   // 中文注释：页面关闭或其他调试器占用时不抢占；记录清理失败，页面本地超时仍可放开。
+   this.diagnostics.recordSafely({component:'mv3_background',event_type:'action_state',stage:'overlay',status:'failed',error_code:'DISCONNECTED'});
+  }finally{
+   if(attached)await this.api.debugger.detach({tabId}).catch(()=>{});
+   this.overlayCleanupTabs.delete(tabId);
+  }
+ }
  async overlayCall(tabId,entry,op,extra={}){
   const result=await this.api.debugger.sendCommand({tabId},'Runtime.callFunctionOn',{
    executionContextId:entry.contextId,
@@ -1634,6 +1696,7 @@ export class Executor {
     if(op==='reblock'){state.overlay.reblock();return true;}
     if(op==='scope'||op==='scope-running'){if(scope.taskId!==state.taskId||scope.generation!==state.generation||scope.documentId!==state.documentId||!state.active&&scope.modeGeneration<=state.modeGeneration)return false;state.modeGeneration=scope.modeGeneration;state.active=true;if(op==='scope-running')state.overlay.update(scope.update);return true;}
     if(op==='revoke'){state.active=false;if(binding.operationToken){state.highlight?.clear(binding);state.operationToken=null;state.paintedToken=null;}state.overlay.reblock?.();return true;}
+    if(op==='progress'){state.pending.get(scope.commandId)?.progress?.();return true;}
     if(op==='reply'){state.pending.get(scope.commandId)?.(scope.result);state.pending.delete(scope.commandId);return true;}
     return false;}`,
    arguments:[{value:op},{value:{nonce:entry.nonce,...extra}}],returnByValue:true});
@@ -1861,7 +1924,7 @@ export class Executor {
  }
  async markNavigating(t,tabId,step){
   const entry=t.overlays?.get(tabId);
-  if(entry)await this.overlayCall(tabId,entry,'update',{update:{state:'running',step}}).catch(()=>{});
+  if(entry)await this.overlayCall(tabId,entry,'update',{update:{state:t.pauseRequested&&!t.paused?'pausing':t.paused?'paused':'running',step}}).catch(()=>{});
  }
  async ensureOverlay(t,tabId,target,guard,allFrames=false,initialTree=null,initialTab=null){
   if(!this.api.debugger.onEvent?.addListener)return null;
@@ -1881,6 +1944,9 @@ export class Executor {
    if(command?.nonce!==nonce||!['stop','takeover','resume'].includes(command.kind)||!Number.isSafeInteger(command.commandId))return;
    void (async()=>{
     let result={state:'unknown'};
+    // 中文注释：只通过原隔离世界回报控制请求仍在处理，不授予暂停或任务权限；worker 消失后续期自动停止。
+    const progress=()=>this.overlayCall(tabId,entry,'progress',{commandId:command.commandId}).catch(()=>{});
+    void progress();const progressTimer=setInterval(()=>{void progress();},2000);
     try{
      this.check(t,{generation:t.generation});if(this.leases.get(tabId)!==t.id)throw Error('lease changed');
      const current=await this.api.tabs.get(tabId);this.allowed(t,current.url);
@@ -1888,6 +1954,7 @@ export class Executor {
      if(typeof this.onOverlayCommand==='function'){
       if(command.kind==='stop')t.overlayStopping=true;
       const response=await this.onOverlayCommand(Object.freeze({taskId:t.id,generation:t.generation,tabId,origin:origin(tab.url),kind:command.kind}));
+      if(response?.state==='disconnected')result={state:'disconnected'};
       if(command.kind==='takeover'&&response?.state==='paused'&&response?.verified===true&&t.paused)result={state:'paused'};
       if(command.kind==='resume'&&response?.state==='running'&&response?.verified===true&&!t.paused)result={state:'running'};
       // No page-supplied payload can confer termination. The background must
@@ -1897,14 +1964,14 @@ export class Executor {
        if(t.revoked)result={state:'stopped'};
       }
      }
-    }catch{}finally{await this.overlayCall(tabId,entry,'reply',{commandId:command.commandId,result}).catch(()=>{});}
+    }catch{}finally{clearInterval(progressTimer);await this.overlayCall(tabId,entry,'reply',{commandId:command.commandId,result}).catch(()=>{});}
    })();
   };
   this.api.debugger.onEvent.addListener(entry.listener);
   try{
    const result=await this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:contextId,
     functionDeclaration:`function(scope){
-     const states={waiting:'Hermes 正在工作',running:'Hermes 正在工作',pausing:'正在暂停…',paused:'已暂停 · 你可以操作页面',resuming:'正在恢复…',stopping:'正在停止…',stopped:'已停止',unknown:'状态待核查'};
+     const states={waiting:'Hermes 正在工作',running:'Hermes 正在工作',pausing:'正在暂停…',paused:'已暂停 · 你可以操作页面',resuming:'正在恢复…',stopping:'正在停止…',stopped:'已停止',disconnected:'与扩展的连接已断开',unknown:'状态待核查'};
      const interactionLabels={click:'准备点击',input:'正在输入',select:'正在选择',drag:'正在拖动'};
      const stepLabels={tabs:'读取标签页',new_tab:'打开新标签页',navigate:'打开网页',snapshot:'读取页面',click:'点击页面',fill:'填写内容',press:'按键',screenshot:'截取页面','page.parse':'解析页面',semantic_snapshot:'理解页面',frame_catalog:'读取页面结构',ref_click:'点击元素',ref_fill:'填写元素',ref_press:'按键操作',ref_set_checked:'设置选项',ref_select_option:'选择选项','files.upload':'选择网站文件',scroll:'滚动页面',back:'返回上一页'};
      const rectOk=r=>r&&[r.x,r.y,r.width,r.height].every(Number.isFinite)&&r.x>=0&&r.y>=0&&r.width>0&&r.height>0&&r.width<=100000&&r.height<=100000;
@@ -1917,8 +1984,15 @@ export class Executor {
      globalThis.__hermesAutomationOverlay?.overlay.remove();
      for(const node of document.querySelectorAll('[data-hermes-preveil]'))node.remove();
      const pending=new Map();let commandId=0;
-     const command=kind=>new Promise(resolve=>{const id=++commandId;pending.set(id,resolve);globalThis[scope.binding](JSON.stringify({nonce:scope.nonce,commandId:id,kind}));});
-     const overlay=createAutomationOverlay({document,taskId:scope.taskId,generation:scope.generation,tabId:scope.tabId,origin:scope.origin,documentId:scope.documentId,onStop:()=>command('stop'),onTakeover:()=>command('takeover'),onResume:()=>command('resume')});
+     // 中文注释：超时或本地卸载时移除 pending，迟到回执不能改写下一次重试；不向后台发取消或授权。
+     const command=(kind,{signal,onProgress})=>new Promise((resolve,reject)=>{
+      if(signal.aborted){resolve({state:'disconnected'});return;}
+      const id=++commandId,abort=()=>{pending.delete(id);resolve({state:'disconnected'});};
+      const reply=result=>{signal.removeEventListener('abort',abort);resolve(result);};reply.progress=onProgress;pending.set(id,reply);signal.addEventListener('abort',abort,{once:true});
+      try{globalThis[scope.binding](JSON.stringify({nonce:scope.nonce,commandId:id,kind}));}
+      catch(error){pending.delete(id);signal.removeEventListener('abort',abort);reject(error);}
+     });
+     const overlay=createAutomationOverlay({document,taskId:scope.taskId,generation:scope.generation,tabId:scope.tabId,origin:scope.origin,documentId:scope.documentId,onStop:(_scope,options)=>command('stop',options),onTakeover:(_scope,options)=>command('takeover',options),onResume:(_scope,options)=>command('resume',options)});
      overlay.setCursorEnabled(scope.cursorEnabled);
      const state={overlay,nonce:scope.nonce,pending,taskId:scope.taskId,generation:scope.generation,documentId:scope.documentId,origin:scope.origin,modeGeneration:scope.modeGeneration,active:true,operationToken:null,paintedToken:null};
      globalThis.__hermesAutomationOverlay=state;

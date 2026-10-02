@@ -2735,12 +2735,13 @@ class BridgeDaemon:
                         self._finish_approval_locked(key, 'approval_revoked', '审批方式已改变，原确认已撤销')
                 self._persist_tasks()
                 return self._public_task(task)
-        if method == "extension.tasks" and params == {}:
+        # 中文注释：只有可信扩展可为浮层清理读取本实例已关闭任务；默认列表保持原有语义。
+        if method == "extension.tasks" and (params == {} or (set(params) == {"includeClosed"} and params["includeClosed"] is True)):
             with self.state_lock:
                 return [
                     self._public_task(task)
                     for task in self.tasks.values()
-                    if task["instanceId"] == instance_id and task["state"] not in {"closed"}
+                    if task["instanceId"] == instance_id and (params.get("includeClosed") is True or task["state"] != "closed")
                 ]
         if method == "extension.approve":
             # 中文注释：API 请求已归入两档模式，旧的单独审批字段不再接受。

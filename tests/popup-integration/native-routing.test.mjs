@@ -34,6 +34,8 @@ async function harness(initialStorage={}){
   });
  }};
  class TestExecutor{
+  // 中文注释：本夹具不创建页面浮层，握手清理能力由专项 DOM 回归覆盖。
+  async cleanupOrphanOverlays(){}
   constructor(){executor=this;this.tasks=new Map();this.leases=new Map();this.actionGrants=new Map();this.attached=new Set();this.diagnostics=new DiagnosticEventBuffer();}
   async approve(t){this.tasks.set(t.id,{...t,policy:{activeMode:'smart',modeGeneration:t.modeGeneration}});for(const id of t.tabIds)this.leases.set(id,t.id);}
   revokeMode(id){this.tasks.get(id).policy.activeMode='smart';}

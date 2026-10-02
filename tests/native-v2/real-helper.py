@@ -536,7 +536,8 @@ def cleanup(work: Path):
     candidates = (value["plugin"] / "native_bridge/daemon.py", value["hermes"] / "plugin-data/browser-link-native/host-bin/daemon.py")
     expected = [str(path) for path in candidates if path.is_relative_to(value["work"])]
     if command.returncode == 0 and any(path in command.stdout for path in expected) and str(value["hermes"]) in command.stdout:
-        stop_fixture_daemon(value["hermes"])
+        # 中文注释：daemon 被测试终止后可能由临时插件目录内的客户端重新拉起，该路径也在本次临时目录内。
+        stop_fixture_daemon(value["hermes"], extra_daemons=[path for path in expected])
     else:
         raise RuntimeError("refusing to stop non-fixture process")
     return {}
