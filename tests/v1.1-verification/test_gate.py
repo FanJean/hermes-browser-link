@@ -444,7 +444,9 @@ class GateNegativeControls(unittest.TestCase):
         # 中文注释：最终合并新增的三个 runner 必须明确登记且实际执行。
         self.assertTrue(final_delta.issubset(set(gate.REVIEWED_RUNNER_PATHS)))
         # 中文注释：dev-sync 的 PID 身份回归与首次网站读取确认回归都登记在离线执行清单。
-        self.assertEqual(len(gate.known_v11_runner_paths()), 79)
+        self.assertEqual(len(gate.known_v11_runner_paths()), 80)
+        # 中文注释：1.3.6 同任务并发开页用例显式登记。
+        self.assertIn('tests/v1.3.6/test_concurrent_tabs.py', gate.known_v11_runner_paths())
         self.assertIn('tests/native-extension/redirect-ready.test.mjs', gate.NODE_TESTS)
         self.assertIn('tests/v1.1-packaging/dev-sync-daemon.test.mjs', gate.known_v11_runner_paths())
         self.assertIn('tests/v1.1-approval-notify/test_site_read.py', gate.known_v11_runner_paths())
