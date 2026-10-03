@@ -278,6 +278,10 @@ def make_handler(runtime, host_bridge, *, lease_error, clock=time.monotonic, sle
                   'url': opened.get('url', url), 'origin': origin, 'reused': reused,
                   'ready': opened.get('ready'), 'browser': browser.get('browser'),
                   'instance_id': instance_id, 'sessionBinding': 'ready'}
+        # 中文注释：会话拥有的任务工作页一起计数；复用既有页面不会增加计数。
+        result['open_tabs'] = opened.get('open_tabs', task.get('open_tabs', 0))
+        if result['open_tabs'] > 6:
+            result['tab_hint'] = '不再用的网站先 browser_shared_close'
         result.update(primary_note)
         if args.get('summary') is not False:
             reason = None

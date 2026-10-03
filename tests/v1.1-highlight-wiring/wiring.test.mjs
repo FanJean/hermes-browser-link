@@ -40,6 +40,8 @@ function fixture({afterHighlight=null,afterHide=null,overlayEvents=true}={}){
     .find(({r})=>x>=r.x&&y>=r.y&&x<r.x+r.width&&y<r.y+r.height)?.element||null;
   document.elementFromPoint=(x,y)=>hitTest(x,y);
   document.elementsFromPoint=(x,y)=>{const hit=hitTest(x,y);return hit?[hit]:[];};
+  // 中文注释：按钮处理器产生实际 DOM 变化，验收目标高亮和输入后的效果。
+  document.querySelector('#save').onclick=()=>document.querySelector('#save').setAttribute('aria-pressed',String(Date.now()));
   const highlightHost=()=>document.querySelector('[data-hermes-interaction-highlight]');
   const highlightRects=()=>{
     const host=highlightHost();if(!host||host.style.display==='none')return [];

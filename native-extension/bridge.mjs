@@ -13,6 +13,8 @@ function executionError(error,message){
  let code='execution_denied',text='Browser operation could not be completed.';
  // 中文注释：并发资源冲突只拒绝当前请求，保留是否已创建页面的派发事实。
  if(reason==='TASK_BUSY'){code='task_busy';text='任务标签正被其他操作使用，请先核对本次结果。';}
+ // 中文注释：已派发但未观察到效果是失败，禁止当作点击成功。
+ else if(reason==='CLICK_NO_EFFECT'){code='click_no_effect';text='输入已派发，但在观察期限内没有效果；请先读取页面核对。';}
  else if(reason==='TASK_PAUSED'||reason==='task paused'){code='task_paused';text='用户已接管，任务已暂停；请等待用户继续，不会自动重试。';}
  else if(error?.code==='workspace_unknown'){code='workspace_unknown';text='Workspace ownership or operation outcome is uncertain.';}
  else if(reason==='SCREENSHOT_TIMEOUT'){code='screenshot_timeout';text='截图超时，未返回截图；请核对页面状态。';}
@@ -114,6 +116,7 @@ function executionError(error,message){
  const stage = code==='document_changed'||code==='overlay_frame_changed'?{stage:'document',reasonCode:'document_changed'}:code==='overlay_injection_failed'&&error?.stage==='overlay'&&['initialization_exception','return_type_invalid'].includes(error?.reasonCode)?{stage:'overlay',reasonCode:error.reasonCode}:{};
  return {code,message:text,data:{outcomeUnknown:code!=='cdp_error'&&!readOnly&&!filePreDispatch&&!refusedBeforeDispatch&&error?.preDispatch!==true,retryable:readOnly&&['document_changed','stale_reference','stale_screenshot','screenshot_expired','page_not_ready','overlay_frame_changed','overlay_injection_failed'].includes(code),
   ...stage,
+  ...(code==='click_no_effect'?{effect:'unobserved',suggestion:'输入已派发但未观察到效果；请读取目标页核对，检查按钮状态或改用页面支持的操作，不要反复重试。'}:{}),
   ...(['origin_denied','tab_out_of_scope'].includes(code)&&currentOrigin?{currentOrigin,scopeHint:'同站用 goto_url，新站用 browser_shared_open。'}:{}),
   ...(candidates?{candidates}:{}),
   ...(obstruction?{obstruction}:{}),

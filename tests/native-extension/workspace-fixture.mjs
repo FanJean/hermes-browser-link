@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 // Trusted approval metadata is installed via Executor.approve, never execute payloads.
 export const trustedTask = (id = 'a', tabIds = [1]) => ({
   id, instanceId: 'fixture-browser-instance', approvalScope: `fixture-owner-${id}`,
-  generation: 1, state: 'ready', allowedOrigins: ['https://example.com'], tabIds,
+  // 中文注释：这些归属测试显式验收旧 current 模式，独立窗口由 1.6.0 用例覆盖。
+  workWindowMode:'current', generation: 1, state: 'ready', allowedOrigins: ['https://example.com'], tabIds,
 });
 
 // In-memory Chrome API boundary only: use the real Executor/workspace authority/manager.

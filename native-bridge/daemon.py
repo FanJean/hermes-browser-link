@@ -155,6 +155,11 @@ def _safe_error_data(data: Any) -> dict:
         if isinstance(value, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,47}', value):
             safe[key] = value
     # 中文注释：Cookie 错误仅放行计数和固定失败类别，载荷不会进入通用错误结果。
+    # 中文注释：效果错误仅允许固定提示及枚举，不放行任意页面字符串。
+    if data.get('effect') in {'observed', 'unobserved'}:
+        safe['effect'] = data['effect']
+    if data.get('suggestion') == '输入已派发但未观察到效果；请读取目标页核对，检查按钮状态或改用页面支持的操作，不要反复重试。':
+        safe['suggestion'] = data['suggestion']
     safe.update(safe_summary(data))
     return safe
 
@@ -217,7 +222,13 @@ class BridgeDaemon:
         self.vault_private = VaultPrivateService(self)
         # 中文注释：计时归常驻 daemon 管理；非负秒数可为小数，便于临时 profile 验收。
         self.idle_close_seconds = self._idle_seconds('HERMES_BROWSER_IDLE_CLOSE_SECONDS', 600)
-        self.task_idle_timeout_seconds = self._idle_seconds('HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS', 3600)
+        self.task_idle_timeout_seconds = self._idle_seconds('HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS', 1200)
+
+        # 中文注释：配置从可信 daemon 环境下发，模型参数不能选择工作窗口。
+        self.work_window_mode = os.environ.get('HERMES_BROWSER_WORK_WINDOW', 'separate')
+        if self.work_window_mode not in {'separate', 'current'}:
+            raise ValueError('HERMES_BROWSER_WORK_WINDOW must be separate or current')
+        self.needs_sync_sweep_at = 0.0
 
     @staticmethod
     def _idle_seconds(name, default):
@@ -283,9 +294,50 @@ class BridgeDaemon:
             except (ProtocolError, OSError):
                 logging.getLogger('browser-link').warning('空闲任务关闭结果未确认，请核对清理状态。')
 
+    def _sweep_empty_needs_sync(self):
+        # 中文注释：启动及每小时只核对旧 needs_sync，不关闭页面；未知页面证据、暂停和人工等待都保留。
+        now = time.time()
+        def eligible(task):
+            return (task.get('state') == 'needs_sync' and task.get('idleRecoveryState') not in {'paused', 'pending_approval'}
+                    and not task.get('idlePendingHuman') and not self._pending_human(task)
+                    and task.get('lastActivityAt', task.get('createdAt', now)) <= now - 86400
+                    and not task.get('tabIds') and not task.get('agentTabIds') and not task.get('spawnedTabIds')
+                    and not any(row.get('action') in {'new_tab', 'official.new_tab'} and row.get('state') in {'dispatched', 'unknown'}
+                                for row in task.get('requestHistory', [])))
+        with self.state_lock:
+            if now < self.needs_sync_sweep_at:
+                return
+            self.needs_sync_sweep_at = now + 3600
+            candidates = [(t['id'], t['generation'], bool(t.get('workTabs')), self.extensions.get(t['instanceId']))
+                          for t in self.tasks.values() if eligible(t)]
+        for task_id, generation, has_records, extension in candidates:
+            if has_records:
+                if extension is None:
+                    continue
+                try:
+                    proof = self._extension_call(extension, 'browser.cleanup_status',
+                                                 {'taskId': task_id, 'generation': generation}, timeout=2)
+                except (ProtocolError, OSError):
+                    continue
+                if (not isinstance(proof, dict) or proof.get('cleanupState') != 'succeeded'
+                        or any(proof.get(key) != [] for key in ('remainingTabIds', 'preservedTabIds', 'unknownTabIds'))):
+                    continue
+            with self.state_lock:
+                task = self.tasks.get(task_id)
+                if task is None or task['generation'] != generation or not eligible(task):
+                    continue
+                if has_records and self.extensions.get(task['instanceId']) is not extension:
+                    continue
+                self._revoke_task_locked(task, 'closed')
+                task['workTabs'] = []
+                task['cleanupState'] = 'succeeded'
+                task['cleanupReason'] = 'verified_complete'
+                self._persist_tasks()
+
     def _idle_watch(self):
         # 中文注释：启动即扫描；独立线程避免浏览器的有界清理阻塞 socket 接收。
         while not self.stop_event.is_set():
+            self._sweep_empty_needs_sync()
             self._sweep_idle_tasks()
             self.stop_event.wait(0.5)
 
@@ -587,6 +639,7 @@ class BridgeDaemon:
 
         token = self._ensure_token()
         self._load_tasks()
+        self._sweep_empty_needs_sync()
         self._prepare_socket_path()
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server = server
@@ -705,7 +758,7 @@ class BridgeDaemon:
             task.setdefault('lastActivityAt', task.get('updatedAt', task.get('createdAt', time.time())))
             if task.pop('idlePendingHuman', False):
                 task['idleRecoveryState'] = 'paused'
-            elif task.get('state') in {'ready', 'paused'}:
+            elif task.get('state') in {'ready', 'paused', 'pending_approval'}:
                 task['idleRecoveryState'] = task['state']
             if task.get("currentOperation", {}).get("state") == "running":
                 task["currentOperation"]["state"] = "unknown"
@@ -1709,6 +1762,10 @@ class BridgeDaemon:
                                         task.setdefault("workTabs", []).append({k: result[k] for k in ("tabId", "groupId", "windowId")})
                                         task["workspaceState"] = "ready"
                     if post_error is None:
+                        if opened_task_tab and isinstance(result, dict):
+                            result['open_tabs'] = self._public_task(task)['open_tabs']
+                            if result['open_tabs'] > 6:
+                                result['tab_hint'] = '不再用的网站先 browser_shared_close'
                         if action in {'new_tab', 'navigate'} and isinstance(result, dict) and isinstance(result.get('url'), str):
                             redirected = self._www_redirect_origin(params.get('url', ''), result['url'])
                             if redirected and redirected not in task['allowedOrigins']:
@@ -2483,6 +2540,12 @@ class BridgeDaemon:
         # 中文注释：公开状态不包含请求指纹，操作投影使用固定允许字段。
         result = {key: value for key, value in task.items()
                   if key not in {"owner", "agentTabIds", "spawnedTabIds", "requestHistory", "readOrigins", "downloads", "officialBlankTabs", "currentOperation", "operationTimeline", "idleRecoveryState", "autoClosePending"}}
+        # 中文注释：计数仅含本会话仍持有租约的工作页，已关闭页面不计入。
+        result['open_tabs'] = sum(1 for row in self.tasks.values() if row['owner'] == task['owner']
+                                  for tab_id in row.get('agentTabIds', [])
+                                  if self.tab_leases.get((row['instanceId'], tab_id)) == row['id'])
+        # 中文注释：恢复旧任务也使用当前 daemon 配置。
+        result['workWindowMode'] = self.work_window_mode
         fields = {"action", "state", "startedAt", "completedAt", "durationMs", "errorCode", "tabId"}
         if isinstance(task.get("currentOperation"), dict):
             result["currentOperation"] = {key: value for key, value in task["currentOperation"].items() if key in fields}

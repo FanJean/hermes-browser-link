@@ -27,6 +27,8 @@ output_lock = threading.Lock()
 pending_lock = threading.Lock()
 pending: dict[str, dict] = {}
 bridge = BridgeDaemon(Path(os.environ["BRIDGE_TEST_HOME"]))
+# 中文注释：原有恢复夹具固定 current 模式；独立窗口另有专门验收。
+bridge.work_window_mode = "current"
 # 中文注释：真实派发账本需要私有目录，普通快照仍用无副作用桩。
 bridge._prepare_data_dir()
 bridge._persist_tasks = lambda: None

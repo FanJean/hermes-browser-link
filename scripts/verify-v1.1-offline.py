@@ -23,7 +23,8 @@ from datetime import datetime, timezone
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRATCH = Path.home() / '.hermes/cache/scratch'
+# 中文注释：允许会话将验证暂存区放在独立临时目录，不写用户 Hermes 目录。
+SCRATCH = Path(os.environ.get('HERMES_BROWSER_VERIFY_SCRATCH', str(Path.home() / '.hermes/cache/scratch')))
 OUT = ROOT / 'tests/v1.1-verification'
 SKIP_DIR = {'.git', 'node_modules', 'evidence', 'artifacts',
             'isolated', 'native-app', '.tmp', 'tmp', '__pycache__', '.pytest_cache',
@@ -38,6 +39,8 @@ SKIP_FILES = {'CODEX-AUDIT-REPORT.md', 'CODEX-STREAM-REPORT.md', '.DS_Store', 'b
 NODE_BOUNDARIES = ('.',)
 # Explicit runner inventory: no glob expands into browser, install, or evidence suites.
 NODE_TESTS = (
+    # 中文注释：独立工作窗口和效果观察只用合成 API/DOM。
+    'tests/v1.6.0/work-window.test.mjs',
     # 中文注释：浮层断连与本地放开回归只使用离线 DOM，不自动运行真实浏览器。
     'tests/v1.5.3/overlay-orphan.test.mjs',
     # 中文注释：Cookie 镜像只运行合成 API；真实双浏览器脚本不进入门禁。
@@ -105,7 +108,7 @@ PYTHON_SUITES = (
     'bench', 'bench/agent',
     # 中文注释：同任务并发建页跨真实 daemon 与扩展逻辑。
     # 中文注释：改名迁移只使用临时 HOME 与浏览器配置目录。
-    'tests/v1.5.2', 'tests/v1.5.1', 'tests/v1.5.0', 'tests/v1.4', 'tests/v1.4.1', 'tests/v1.4.2', 'tests/v1.4.3', 'tests/v1.4.4', 'tests/v1.3.6',
+    'tests/v1.6.0', 'tests/v1.5.2', 'tests/v1.5.1', 'tests/v1.5.0', 'tests/v1.4', 'tests/v1.4.1', 'tests/v1.4.2', 'tests/v1.4.3', 'tests/v1.4.4', 'tests/v1.3.6',
     'tests/v1.1-script-lane',
     'tests/v1.1-interactions', 'tests/v1.1-approval-notify',
     'tests/v1.1-verification', 'tests/native-v2',
@@ -113,6 +116,8 @@ PYTHON_SUITES = (
 )
 # Some directories contain explicitly unsafe runners: select files by fixed name.
 PYTHON_FILES = {
+    # 中文注释：1.6.0 生命周期 runner 按名称登记，真实浏览器脚本不进入离线门禁。
+    'tests/v1.6.0': ('test_lifecycle.py',),
     # 中文注释：镜像中转与跨层隐私测试按文件登记，新增 runner 必须重新审阅。
     # 中文注释：安装流程仅使用临时 HOME、非 Git 包快照与命令替身。
     'tests/v1.5.2': ('test_install_flow.py', 'test_hook_compatibility.py'),
@@ -744,11 +749,11 @@ def selected_runner_paths(root: Path,
 
 def known_v11_runner_paths() -> set[str]:
     """Static allowlist used to fail closed when runner discovery changes."""
-    known = {path for path in NODE_TESTS if path.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5', 'tests/site-tools', 'tests/network-evidence'))}
+    known = {path for path in NODE_TESTS if path.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5', 'tests/v1.6', 'tests/site-tools', 'tests/network-evidence'))}
     for folder, names in PYTHON_GROUPED_FILES.items():
         known.update((Path(folder) / name).as_posix() for name in names)
     for folder, names in PYTHON_FILES.items():
-        if folder.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5', 'tests/site-tools', 'tests/network-evidence')):
+        if folder.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5', 'tests/v1.6', 'tests/site-tools', 'tests/network-evidence')):
             known.update((Path(folder) / name).as_posix() for name in names)
     known.update(SUPPLEMENTAL_RUNNER_PATHS)
     known.update(REVIEWED_RUNNER_PATHS)
@@ -761,7 +766,7 @@ def v11_coverage(root: Path, selected: set[str]) -> dict:
     rows = []
     runner_suffixes = {'.py', '.mjs', '.js'}
     for folder in sorted(path for path in tests.iterdir()
-                         if path.is_dir() and path.name.startswith(('v1.1', 'v1.3', 'v1.5', 'site-tools', 'network-evidence'))):
+                         if path.is_dir() and path.name.startswith(('v1.1', 'v1.3', 'v1.5', 'v1.6', 'site-tools', 'network-evidence'))):
         candidates = sorted(
             path.relative_to(root).as_posix()
             for path in folder.rglob('*')
@@ -786,7 +791,7 @@ def v11_coverage(root: Path, selected: set[str]) -> dict:
         'missing_expected': missing_expected,
     }
     return {
-        'discovery_rule': 'tests/{v1.1*,v1.3*,v1.5*,site-tools,network-evidence}/**/{test_*.py,test_*.js,test_*.mjs,*.test.js,*.test.mjs}',
+        'discovery_rule': 'tests/{v1.1*,v1.3*,v1.5*,v1.6*,site-tools,network-evidence}/**/{test_*.py,test_*.js,test_*.mjs,*.test.js,*.test.mjs}',
         'runner_file_count': sum(len(row['runner_files']) for row in rows),
         'included_runner_file_count': sum(len(row['included']) for row in rows),
         'not_run_runner_file_count': sum(len(row['not_run']) for row in rows),

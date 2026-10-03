@@ -7,7 +7,8 @@ import {openRealSession,openTask} from '../native-v2/real-session.mjs';
 const fixture=await readFile(new URL('./fixture.html',import.meta.url),'utf8');
 const server=createServer((request,response)=>{
  response.writeHead(200,{'content-type':'text/html; charset=utf-8'});
- response.end(request.url==='/frame'?'<button aria-label="框架按钮">框架按钮</button>':fixture);
+ // 中文注释：跨源负例也由本地 fixture 提供，禁止浏览器向外网发起页面请求。
+ response.end(request.url==='/frame'?'<button aria-label="框架按钮">框架按钮</button>':fixture.replace('https://cross-origin.example.test/',`http://cross.localhost:${server.address().port}/frame`));
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const origin=`http://127.0.0.1:${server.address().port}`;
@@ -23,8 +24,12 @@ try{
   return {binding:page.binding,snapshot_id:page.snapshotId,ref:item.ref};
  };
  await tab.read(`document.querySelector('#inner').src='/frame'`);
- await tab.read(`(()=>{const outer=document.querySelector('#component').attachShadow({mode:'open'});outer.innerHTML='<button aria-label="影子按钮">影子按钮</button><input aria-label="影子输入">';return true})()`);
+ // 中文注释：等待本地同源框架加载，避免拿导航中的旧框架做快照。
+ await tab.read(`new Promise(resolve=>{const f=document.querySelector('#inner');if(f.contentDocument?.querySelector('button'))resolve(true);else f.addEventListener('load',()=>resolve(true),{once:true})})`);
+ await tab.read(`(()=>{const outer=document.querySelector('#component').attachShadow({mode:'open'});outer.innerHTML='<button aria-label="影子按钮">影子按钮</button><input aria-label="影子输入">';outer.querySelector('button').onclick=e=>e.target.setAttribute('aria-pressed','true');return true})()`);
  await tab.read(`(()=>{const combo=document.querySelector('#combo'),option=document.querySelector('#options [role=option]');combo.onclick=()=>combo.setAttribute('aria-expanded','true');option.onclick=()=>option.setAttribute('aria-selected','true');return true})()`);
+ // 中文注释：夹具点击产生可见状态，回归点击交付与效果观察。
+ await tab.read(`document.querySelector('#pointer').onclick=e=>e.currentTarget.textContent='已点击';document.querySelector('#save').onclick=e=>e.currentTarget.setAttribute('aria-pressed','true')`);
  const shadow=await ref('影子按钮',['button']);await run('ref_click',shadow);
  await run('ref_fill',{...await ref('影子输入',['textbox']),text:'测试'});
  const frame=await run('frame_catalog');assert.ok(frame.frames?.length);

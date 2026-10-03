@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -139,7 +140,9 @@ class ProductionConcurrencyTests(unittest.TestCase):
         self.proxy = None
         self.owner_prefix = f"c12-{uuid.uuid4().hex[:12]}"
 
-        ensure_service(self.home)
+        # 中文注释：只向临时 daemon 指定 current，不修改用户配置。
+        with patch.dict(os.environ, {'HERMES_BROWSER_WORK_WINDOW': 'current'}):
+            ensure_service(self.home)
         self.assertEqual(self.rpc("health", {}), {"ok": True, "protocolVersion": 1})
         self.peer = subprocess.Popen(
             ["node", str(Path(__file__).with_name("bridge_executor_peer.mjs")), str(self.home)],

@@ -53,9 +53,8 @@ class FakeDaemon:
 class VaultPrivateTests(unittest.TestCase):
     def setUp(self):
         # 中文注释：隔离门禁的 HOME 路径较长；套接字测试使用其上层 scratch 短路径并在退出时清理。
-        scratch = next((path for path in Path.home().parents
-                        if path.name == "scratch" and path.parent.name == "cache"),
-                       Path.home() / ".hermes" / "cache" / "scratch")
+        # 中文注释：遵循门禁 TMPDIR 的短路径，不推导或写入用户 Hermes 暂存目录。
+        scratch = Path(tempfile.gettempdir()).resolve()
         scratch.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=scratch, prefix="vp-")
         self.addCleanup(self.temp.cleanup)

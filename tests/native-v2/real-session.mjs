@@ -32,7 +32,7 @@ export async function helperCall(...args) {
 }
 
 // 中文注释：启动一个临时 profile 浏览器并完成扩展连接与完整访问授权；restart() 用同一 profile 重启浏览器。
-export async function openRealSession({browser, packageMode = false, hostRules = '', label = 'm', headed = false, idleCloseSeconds, taskIdleTimeoutSeconds, sharedWith = null}) {
+export async function openRealSession({browser, packageMode = false, hostRules = '', label = 'm', headed = false, workWindowMode, idleCloseSeconds, taskIdleTimeoutSeconds, sharedWith = null}) {
   const work = await mkdtemp(path.join(scratch, `${label}${browser[0]}-`));
   const packageRoot = path.join(work, 'package');
   const extensionRoot = packageMode ? path.join(packageRoot, 'native-extension') : path.join(work, 'dist-native');
@@ -63,6 +63,7 @@ export async function openRealSession({browser, packageMode = false, hostRules =
     PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin', LANG: process.env.LANG || 'en_US.UTF-8',
   };
   // 中文注释：生命周期验收仅在本次临时 profile 的 host/daemon 中缩短计时，不修改用户 .env。
+  if(workWindowMode!==undefined)browserEnv.HERMES_BROWSER_WORK_WINDOW=workWindowMode;
   if(idleCloseSeconds!==undefined)browserEnv.HERMES_BROWSER_IDLE_CLOSE_SECONDS=String(idleCloseSeconds);
   if(taskIdleTimeoutSeconds!==undefined)browserEnv.HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS=String(taskIdleTimeoutSeconds);
   const session = {work, profile, downloadsDir, staged, browser, extensionId: expectedExtensionId, logs: ''};
@@ -214,7 +215,7 @@ export async function openTask(session, {owner = 'session-a', origins, url, titl
   if(!Number.isInteger(opened.tabId))throw Object.assign(Error(opened.error||'new_tab failed'),{code:opened.code,bridgeCode:opened.bridgeCode,_diagnostic:opened._diagnostic});
   await session.ui.evaluate(`chrome.tabs.update(${opened.tabId},{active:true}).then(()=>true)`);
   let sequence = 0;
-  const handle = {task, owner, tabId: opened.tabId, instance};
+  const handle = {task, owner, tabId: opened.tabId, instance, opened};
   handle.nextId = () => `${task.id.slice(0, 8)}-${++sequence}`;
   // 中文注释：tabs/new_tab 属于任务级动作，公共协议不允许携带 tab_id；其他动作仍显式绑定当前工作页。
   handle.run = (action, extra = {}, requestId = handle.nextId()) => session.rpc(owner, 'run', {
@@ -234,4 +235,23 @@ export async function openTask(session, {owner = 'session-a', origins, url, titl
     return handle.run(action, {...token, ...extra});
   };
   return handle;
+}
+
+// 中文注释：直接运行本文件时执行最小真实会话验收；被其他矩阵导入时只提供公共助手。
+if(process.argv[1]===import.meta.filename){
+ const {createServer}=await import('node:http');
+ const server=createServer((_req,res)=>{res.setHeader('Content-Type','text/html');res.end('<button id="apply">Apply</button>')});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const origin=`http://127.0.0.1:${server.address().port}`;let session;
+ try{
+  session=await openRealSession({browser:process.argv.includes('--edge')?'edge':'chrome',headed:process.argv.includes('--headed'),label:'session160'});
+  await session.enableFullAccess();
+  const tab=await openTask(session,{owner:'session160',origins:[origin],url:origin,title:'会话验收'});
+  // 中文注释：处理器通过 DOM API 绑定，避免 HTML 属性中混入字符串转义。
+  await tab.read(`document.querySelector('#apply').onclick=e=>e.target.textContent='Applied'`);
+  const result=await tab.act('ref_click',await tab.ref('Apply',['button']));
+  assert.equal(result.error,undefined,JSON.stringify(result));assert.equal(result.effect,'observed');
+  assert.equal(await tab.read(`document.querySelector('#apply').textContent`),'Applied');
+  console.log('PASS 临时 profile 会话、授权、真实点击、效果及关闭');
+ }finally{await session?.close();await new Promise(resolve=>server.close(resolve));}
 }

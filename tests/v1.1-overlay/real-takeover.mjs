@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {openRealSession,openTask} from '../native-v2/real-session.mjs';
 import {waitFor} from '../native-v2/cdp-client.mjs';
-const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html');res.end('<!doctype html><title>接管验收</title><input id="draft"><button id="save" onclick="window.clicks++">点击</button><script>window.clicks=0</script>');});
+const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html');res.end('<!doctype html><title>接管验收</title><input id="draft"><button id="save" onclick="window.clicks++;this.textContent=String(window.clicks)">点击</button><script>window.clicks=0</script>');});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const origin=`http://127.0.0.1:${server.address().port}`,browser=process.argv.includes('--edge')?'edge':'chrome';let session;
 try{
@@ -20,7 +20,8 @@ try{
  // 中文注释：读取和点击在同一次弹窗求值中完成，刷新若切到另一任务，本轮不发送控制命令。
  const clickCurrent=(selector,label,expectedText)=>until(label,()=>session.ui.evaluate(`(()=>{const section=document.querySelector('#page-task'),button=document.querySelector(${JSON.stringify(selector)});const state={taskId:section?.dataset.taskId,tabId:section?.dataset.tabId,text:button?.textContent,disabled:button?.disabled};if(state.taskId!==${JSON.stringify(a.task.id)}||state.tabId!==${JSON.stringify(String(a.tabId))}||state.text!==${JSON.stringify(expectedText)}||state.disabled)return {...state,clicked:false};button.click();return {...state,clicked:true}})()`),s=>s.clicked);
  // 中文注释：测试页中的 popup.html 保持后台，避免它作为普通标签页抢走当前任务页身份；执行真实按钮监听器。
- await session.ui.evaluate(`chrome.tabs.update(${a.tabId},{active:true}).then(()=>chrome.runtime.sendMessage({type:'changed'}))`);
+ // 中文注释：用户接管 UI 的验收将临时 popup 标签移到临时工作窗口，模拟用户主动查看该窗口。
+ await session.ui.evaluate(`(async()=>{const work=await chrome.tabs.get(${a.tabId}),popup=await chrome.tabs.getCurrent();await chrome.tabs.move(popup.id,{windowId:work.windowId,index:-1});await chrome.windows.update(work.windowId,{focused:true});await chrome.tabs.update(${a.tabId},{active:true});return chrome.runtime.sendMessage({type:'changed'})})()`);
  await until('弹窗显示任务甲接管按钮',popupState,s=>s.pageTaskHidden===false&&s.taskId===a.task.id&&s.tabId===String(a.tabId)&&s.activeTabId===a.tabId&&s.text==='接管'&&s.disabled===false);
  await clickCurrent('#takeover','弹窗点击任务甲接管','接管');await until('弹窗接管后任务甲暂停',async()=>({task:await taskState(),popup:await popupState()}),s=>s.task==='paused');
  await until('接管后任务甲两个页面放开',async()=>({first:await pointers(a.tabId),second:await pointers(second.tabId)}),s=>s.first==='none'&&s.second==='none');assert.equal(await pointers(b.tabId),'auto');
@@ -30,6 +31,8 @@ try{
  await until('接管期间第二页仍放开',()=>pointers(second.tabId),s=>s==='none');assert.equal(await taskState(),'paused');
  const denied=await a.run('click',{selector:'#save'});assert.equal(denied.bridgeCode,'task_paused',JSON.stringify(denied));assert.equal(denied.retryable,false);assert.equal(await a.read('window.clicks'),0);
  const other=await b.run('fill',{selector:'#draft',text:'其他任务仍可执行'});assert.equal(other.ok,true,JSON.stringify(other));assert.equal(await b.read("document.querySelector('#draft').value"),'其他任务仍可执行');
+ // 中文注释：任务乙输入会在工作窗口切到乙页，人工继续甲前显式选择甲页。
+ await session.ui.evaluate(`chrome.tabs.update(${a.tabId},{active:true}).then(()=>chrome.runtime.sendMessage({type:'changed'}))`);
  await until('弹窗显示任务甲可用的继续按钮',popupState,s=>s.taskId===a.task.id&&s.tabId===String(a.tabId)&&s.text==='继续'&&s.disabled===false);
  await clickCurrent('#takeover','弹窗点击任务甲继续','继续');await until('弹窗继续后任务甲就绪',async()=>({task:await taskState(),popup:await popupState()}),s=>s.task==='ready');
  await until('继续后任务甲两个页面恢复拦截',async()=>({first:await pointers(a.tabId),second:await pointers(second.tabId)}),s=>s.first==='auto'&&s.second==='auto');

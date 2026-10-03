@@ -80,7 +80,7 @@ test('failed full-mode write cannot upgrade an existing smart task',async()=>{
  // 中文注释：偏好写入失败时不得先向宿主发送 full 或在扩展本地放行。
  const {Executor}=await import('../../native-extension/core.mjs');
  const executor=new Executor({tabs:{get:async()=>({id:7,url:'https://example.test/'})}});
- await executor.approve({id:'smart',instanceId:'browser',approvalScope:'scope',generation:1,tabIds:[7],allowedOrigins:['https://example.test']});
+ await executor.approve({workWindowMode:'current',id:'smart',instanceId:'browser',approvalScope:'scope',generation:1,tabIds:[7],allowedOrigins:['https://example.test']});
  const consent=new module.BrowserConsent({set:async()=>{throw Error('disk failed');}},executor);
  await assert.rejects(consent.setEnabled(true,{closed:false,request:async()=>assert.fail('full RPC before durable write')}),/disk failed/);
  assert.equal(executor.tasks.get('smart').policy.activeMode,'smart');
@@ -90,7 +90,7 @@ test('failed full-mode write cannot upgrade an existing smart task',async()=>{
 test('switching to smart keeps current tasks and reads available',async()=>{
  const {Executor}=await import('../../native-extension/core.mjs');
  const executor=new Executor({tabs:{get:async id=>({id,url:'https://example.test/'})},debugger:{detach:async()=>{}}});
- await executor.approve({id:'old',instanceId:'browser',approvalScope:'scope',generation:1,tabIds:[7],allowedOrigins:['https://example.test']});
+ await executor.approve({workWindowMode:'current',id:'old',instanceId:'browser',approvalScope:'scope',generation:1,tabIds:[7],allowedOrigins:['https://example.test']});
  let finish;const sent=[];
  const consent=new module.BrowserConsent({set:()=>new Promise(resolve=>{finish=resolve;})},executor);
  const disabled=consent.setEnabled(false,{closed:false,request:async(method,params={})=>{sent.push({method,params});return {revoked:true};}});

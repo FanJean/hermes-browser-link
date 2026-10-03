@@ -20,6 +20,7 @@ class ConcurrentTabsTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(prefix='parallel-tabs-')
         self.addCleanup(temp.cleanup)
         self.daemon = daemon_module.BridgeDaemon(Path(temp.name))
+        self.daemon.work_window_mode = 'current'
         self.daemon._persist_tasks = lambda: None
         self.daemon._notify_tasks_changed = lambda _: None
         self.task = dict(id='parallel', owner='owner', title='parallel', instanceId='fixture-browser-instance',

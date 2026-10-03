@@ -287,7 +287,7 @@ _RESULT_TAB = _scalar_fields('id tabId url title active selected index windowId 
 _RESULT_ARTIFACT = _scalar_fields('id taskId sha256 mimeType size')
 _RESULT_TASK = {
     **_scalar_fields('id title browser instanceId state generation activeMode modeGeneration nextStep modeStatus '
-                     'createdAt updatedAt isolation lastError workspaceState cleanupState'),
+                     'createdAt updatedAt isolation lastError workspaceState cleanupState open_tabs'),
     'allowedOrigins': [None], 'tabIds': [None],
     'workTabs': [_scalar_fields('tabId windowId groupId state')],
     'pendingInteraction': _scalar_fields('kind count'),
@@ -327,7 +327,7 @@ _RESULT_PARSE = {
 }
 _RESULT_ACTIONS = {
     'page.parse': _RESULT_PARSE,
-    'navigate': _RESULT_TAB, 'new_tab': _RESULT_TAB, 'select_tab': _RESULT_TAB,
+    'navigate': _RESULT_TAB, 'new_tab': {**_RESULT_TAB, **_scalar_fields('open_tabs tab_hint')}, 'select_tab': _RESULT_TAB,
     'close_tab': _scalar_fields('closed tabId'), 'tabs': {'tabs': [_RESULT_TAB]},
     'snapshot': {**_RESULT_TAB, **_scalar_fields('text truncated'),
                  'contentFilter': _RESULT_CONTENT_FILTER,
@@ -336,8 +336,8 @@ _RESULT_ACTIONS = {
                    'masked': [_scalar_fields('kind role name')]},
     # 中文注释：已完成点击可引发跨来源导航，保留结果状态但不扩大网页字段白名单。
     # 中文注释：可信输入的派发后状态随公共结果透出，调用方据此决定只读核实且不得自动重试。
-    'click': _scalar_fields('ok clicked tabId url ready groupId windowId openedVia unsupported code popupOwnership documentChanged outOfScope outcomeUnknown'), 'fill': _scalar_fields('ok filled tabId'),
-    'press': _scalar_fields('ok pressed tabId'), 'semantic_snapshot': _RESULT_SEMANTIC,
+    'click': _scalar_fields('kind delivery effect ok clicked tabId url ready groupId windowId openedVia unsupported code popupOwnership documentChanged outOfScope outcomeUnknown'), 'fill': _scalar_fields('ok filled tabId'),
+    'press': _scalar_fields('ok pressed tabId delivery effect'), 'semantic_snapshot': _RESULT_SEMANTIC,
     'frame_catalog': {'frames': [_scalar_fields('index origin access kind frameToken parentFrameToken documentId')],
                       'coverage': _scalar_fields('found ready complete depthLimited scope')},
     'scroll': _scalar_fields('tabId scrolled direction'), 'back': _scalar_fields('tabId url ready'),
@@ -359,7 +359,7 @@ _RESULT_ACTIONS = {
     'dialog': {**_scalar_fields('handled action'), 'dialog': _scalar_fields('type message')},
     'interaction.capture': _RESULT_CAPTURE,
     'interaction.bounds': {'ref': None, 'rect': _scalar_fields('x y width height'), 'imageCenter': _RESULT_POINT},
-    'interaction.click': _scalar_fields('ok kind delivery fallbackReason outcomeUnknown'),
+    'interaction.click': _scalar_fields('ok kind delivery fallbackReason effect outcomeUnknown'),
     'interaction.drag_coordinates': {**_scalar_fields('ok kind delivery outcomeUnknown steps'), 'from': _RESULT_POINT, 'to': _RESULT_POINT},
     'interaction.drag_elements': {**_scalar_fields('ok kind delivery outcomeUnknown trusted steps'), 'from': _RESULT_POINT, 'to': _RESULT_POINT},
 }

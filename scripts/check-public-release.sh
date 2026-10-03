@@ -9,8 +9,8 @@ import re
 import subprocess
 import sys
 
-# 中文注释：额外关键词按行传入并按字面匹配，避免用户名或邮箱写入仓库。
-keywords = [word.strip() for word in os.environ.get('PUBLIC_RELEASE_EXTRA_KEYWORDS', '').splitlines() if word.strip()]
+# 中文注释：额外关键词按行或逗号传入并按字面匹配，避免用户名或邮箱写入仓库。
+keywords = [word.strip() for word in os.environ.get('PUBLIC_RELEASE_EXTRA_KEYWORDS', '').replace(',', '\n').splitlines() if word.strip()]
 patterns = {
     'personal-path': re.compile(r'(?:/Users/|/home/)(?!example(?:/|\b)|x(?:/|\b)|private\.txt\b)[\w.-]+|[A-Za-z]:\\Users\\(?!example\b|x\b)[\w.-]+'),
     'private-key': re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----'),

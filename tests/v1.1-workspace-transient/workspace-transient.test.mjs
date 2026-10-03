@@ -5,7 +5,8 @@ import {workspaceFixture} from '../native-extension/workspace-fixture.mjs';
 
 function task(id = 'transient-readback-task') {
   return {
-    id,
+    // 中文注释：现有归属不确定性夹具固定 current 模式。
+    id,workWindowMode:'current',
     instanceId: 'fixture-browser-instance',
     approvalScope: 'fixture-transient-owner',
     generation: 1,

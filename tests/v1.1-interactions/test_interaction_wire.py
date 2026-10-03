@@ -112,9 +112,9 @@ class InteractionWireTests(unittest.TestCase):
         deadline=time.monotonic()+3
         while self.daemon.action_approvals and time.monotonic()<deadline:time.sleep(.01)
         self.assertFalse(self.daemon.action_approvals)
-        self.assertEqual(self.run_action('interaction.click','click',**payload),{'ok':True,'kind':'coordinate-click','delivery':'confirmed'},getattr(self,'last_extension_error',None))
+        self.assertEqual(self.run_action('interaction.click','click',**payload),{'ok':True,'kind':'coordinate-click','delivery':'confirmed','effect':'observed'},getattr(self,'last_extension_error',None))
         self.assertEqual(self.control('noop')['commands'],3)
-        self.assertEqual(self.run_action('interaction.click','click',**payload),{'ok':True,'kind':'coordinate-click','delivery':'confirmed'})
+        self.assertEqual(self.run_action('interaction.click','click',**payload),{'ok':True,'kind':'coordinate-click','delivery':'confirmed','effect':'observed'})
         self.assertEqual(self.control('noop')['commands'],3)
 
     def test_drag_modes_reach_real_executor_and_project_truthful_result(self):

@@ -65,7 +65,8 @@ sys.exit(0 if ok else 1)
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         self.stub('uname', '#!/bin/sh\nprintf "%s\\n" "${TEST_OS:-Darwin}"\n')
-        (self.bin / 'python3').symlink_to(sys.executable)
+        # 中文注释：包装调用保留解释器原位置，不将 standalone Python 当作可重定位二进制。
+        self.stub('python3', '#!/bin/sh\nexec ' + __import__('shlex').quote(sys.executable) + ' "$@"\n')
         (self.bin / 'bash').symlink_to('/bin/bash')
         self.stub('hermes', f'#!{sys.executable}\n' + '''import json, os, pathlib, sys
 if sys.argv[1:] == ['--version']:
@@ -131,7 +132,7 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
     def old_install(self):
         # 中文注释：模拟旧安装的版本面，扩展公钥与来源不变。
         for path in (self.package / 'browser-link/plugin.yaml', self.package / 'native-extension/manifest.json'):
-            path.write_text(path.read_text().replace('1.5.3', '1.5.1'))
+            path.write_text(path.read_text().replace('1.6.0', '1.5.1'))
         rehash(self.package)
         self.invoke()
         config = self.data / 'host-config.json'
@@ -175,10 +176,10 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         old_extension = json.loads((self.extension / 'manifest.json').read_text())
         config = (self.data / 'host-config.json').read_bytes()
         self.invoke('--upgrade')
-        self.assertIn('version: 1.5.3', (self.plugin / 'plugin.yaml').read_text())
+        self.assertIn('version: 1.6.0', (self.plugin / 'plugin.yaml').read_text())
         extension = json.loads((self.extension / 'manifest.json').read_text())
         self.assertEqual(extension['key'], old_extension['key'])
-        self.assertEqual(extension['version'], '1.5.3')
+        self.assertEqual(extension['version'], '1.6.0')
         self.assertEqual((self.data / 'host-config.json').read_bytes(), config)
         self.assert_private_kept(private)
         backups = list((self.hermes / 'plugin-backups').glob('browser-link-1.5.1-*'))

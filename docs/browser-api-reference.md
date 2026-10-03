@@ -152,7 +152,7 @@ Wait until document.readyState reaches ``until``; returns the final state.  The 
 
 ### `click_element(name, *, mode='pointer', tab=None, **options)`
 
-按名称/角色定位后点击一次；回执区分可信输入与后台合成输入。
+按名称/角色点击一次；effect=observed 表示观察到效果，无效果抛 click_no_effect。
 
 扩展能力：`browser_core_v1`。
 

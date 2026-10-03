@@ -141,6 +141,7 @@ function fixtureApi() {
         if (method === 'DOM.getNodeForLocation') return { backendNodeId: 1 };
         if (method === 'DOM.resolveNode') return { object: { objectId: 'object-1' } };
         if (method === 'Runtime.releaseObject') return {};
+        if (method === 'Network.enable') return {};
         if (method === 'Input.dispatchMouseEvent' || method === 'Input.cancelDragging') return {};
         throw new Error(`unexpected CDP method ${method}`);
       },
@@ -171,7 +172,7 @@ test('shared native executor routes semantic snapshot and exact ref actions', as
   assert.equal(snapshot.items[0].ref, 'namespace:e1');
 
   const token = { ...snapshot.binding, snapshotId: snapshot.snapshotId, ref: snapshot.items[0].ref };
-  assert.deepEqual(await executeUserApproved(executor, api, { ...scope('ref_click'), binding: snapshot.binding, snapshotId: token.snapshotId, ref: token.ref }), { clicked: true, kind: 'trusted-input', delivery: 'confirmed', effect: 'unverified', popupOwnership: 'uncertain' });
+  assert.deepEqual(await executeUserApproved(executor, api, { ...scope('ref_click'), binding: snapshot.binding, snapshotId: token.snapshotId, ref: token.ref }), { clicked: true, kind: 'trusted-input', delivery: 'confirmed', effect: 'observed', popupOwnership: 'uncertain' });
   assert.deepEqual(await executeUserApproved(executor, api, { ...scope('ref_fill'), binding: snapshot.binding, snapshotId: token.snapshotId, ref: token.ref, text: 'draft' }), { filled: true, kind: 'dom-synthetic' });
   assert.ok(api.commands.some(([method, params]) => method === 'Runtime.callFunctionOn' && params.arguments?.[0]?.value === 'semantic_snapshot'));
 });
@@ -193,7 +194,7 @@ test('a dispatched click that navigates off the approved site is reported, not d
   const get = api.tabs.get;
   api.tabs.get = async id => left ? { ...(await get(id)), url: 'https://elsewhere.test/' } : get(id);
   const result = await executeUserApproved(executor, api, { ...scope('ref_click'), binding: snapshot.binding, snapshotId: snapshot.snapshotId, ref: snapshot.items[0].ref });
-  assert.deepEqual(result, { clicked: true, kind: 'trusted-input', delivery: 'confirmed', effect: 'unverified', popupOwnership: 'uncertain', documentChanged: true, outOfScope: true });
+  assert.deepEqual(result, { clicked: true, kind: 'trusted-input', delivery: 'confirmed', effect: 'observed', popupOwnership: 'uncertain', documentChanged: true, outOfScope: true });
 });
 
 test('shared native executor preserves V1 screenshot and accepts V1.1 bound interactions', async () => {
@@ -213,7 +214,7 @@ test('shared native executor preserves V1 screenshot and accepts V1.1 bound inte
   assert.deepEqual(bound.imageCenter, { x: 20, y: 15 });
   await assert.rejects(executor.execute({ ...scope('interaction.click'), screenshotId: 'stale', point: bound.imageCenter, expectedRef: bound.ref }), /confirmation required/);
   assert.equal(api.commands.filter(([method]) => method === 'Input.dispatchMouseEvent').length, 0);
-  assert.deepEqual(await executeUserApproved(executor, api, { ...scope('interaction.click'), screenshotId: captured.id, point: bound.imageCenter, expectedRef: bound.ref }), { ok: true, kind: 'coordinate-click', delivery: 'confirmed' });
+  assert.deepEqual(await executeUserApproved(executor, api, { ...scope('interaction.click'), screenshotId: captured.id, point: bound.imageCenter, expectedRef: bound.ref }), { ok: true, kind: 'coordinate-click', delivery: 'confirmed', effect: 'observed' });
   assert.equal(api.commands.filter(([method]) => method === 'Input.dispatchMouseEvent').length, 3);
   await assert.rejects(executor.execute({ ...scope('interaction.bounds'), screenshotId: 'stale', selector: '#button' }), /UNKNOWN_SCREENSHOT/);
   await assert.rejects(executor.execute({ ...scope('raw_cdp') }), /V1 unsupported action/);

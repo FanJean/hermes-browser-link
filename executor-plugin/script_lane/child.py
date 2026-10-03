@@ -24,7 +24,7 @@ from pathlib import Path
 class BrowserError(RuntimeError):
     """A browser action failed. ``outcome_unknown`` means do not replay it."""
 
-    def __init__(self, message, code=None, outcome_unknown=True, final_origin=None, candidates=None, obstruction=None, current_origin=None, stage=None, reason_code=None):
+    def __init__(self, message, code=None, outcome_unknown=True, final_origin=None, candidates=None, obstruction=None, current_origin=None, stage=None, reason_code=None, effect=None, suggestion=None):
         super().__init__(message)
         self.code = code
         self.outcome_unknown = outcome_unknown
@@ -33,6 +33,8 @@ class BrowserError(RuntimeError):
         self.candidates = candidates
         self.obstruction = obstruction
         self.current_origin, self.stage, self.reason_code = current_origin, stage, reason_code
+        # 中文注释：无效果错误向脚本公开固定字段。
+        self.effect, self.suggestion = effect, suggestion
 
     def __str__(self):
         # 中文注释：异常首行保留可信错误码，便于从脚本回溯区分拒绝与未知结果。
@@ -136,7 +138,8 @@ def _call(op, args):
                final_origin=reply.get('finalOrigin') if code == 'redirected_out_of_scope' else None,
                candidates=reply.get('candidates') if code in {'reference_target_missing', 'reference_target_ambiguous', 'element_timeout'} else None,
                obstruction=reply.get('obstruction') if code == 'target_occluded' else None,
-               current_origin=reply.get('currentOrigin'), stage=reply.get('stage'), reason_code=reply.get('reasonCode'))
+               current_origin=reply.get('currentOrigin'), stage=reply.get('stage'), reason_code=reply.get('reasonCode'),
+               effect=reply.get('effect'), suggestion=reply.get('suggestion'))
 
 
 def parallel(fn, tabs):
@@ -547,7 +550,7 @@ def wait_for_element(name, *, role=None, root=None, exact=True, timeout=10.0, ta
 
 @_tab_scoped
 def click_element(name, *, mode='pointer', tab=None, **options):
-    """按名称/角色定位后点击一次；回执区分可信输入与后台合成输入。"""
+    """按名称/角色点击一次；effect=observed 表示观察到效果，无效果抛 click_no_effect。"""
     target = wait_for_element(name, action='click', **options)
     return ref_click(target['snapshot'], target['ref'], mode=mode)
 

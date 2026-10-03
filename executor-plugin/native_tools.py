@@ -612,6 +612,8 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 'download_not_found': '没有找到本任务的这项下载。',
                 'download_not_complete': '下载尚未完成或已中断，不能领取；请先用 list 查看状态。',
                 'download_changed': '下载文件已变化或缺失，拒绝领取。',
+                # 中文注释：无效果回执保留明确错误，不能仅报告桥接失败。
+                'click_no_effect': '输入已派发但未观察到效果；先读取目标页核对，不要反复重试。',
                 'download_missing': '下载文件已不在暂存目录，无法领取。',
                 'download_path_denied': '下载文件不在任务暂存目录内，拒绝领取。',
                 'download_invalid': '下载编号无效。',
@@ -661,8 +663,10 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                       'outcome_unknown': unknown}
             # 中文注释：协议层固定码必须始终传给模型，未知码仍有稳定的分类入口。
             result['bridgeCode'] = code or 'bridge_error'
+            if code == 'click_no_effect':
+                result['code'] = code
             # 中文注释：只转发 client 已校验的固定诊断字段。
-            for key in ('currentOrigin', 'scopeHint', 'stage', 'reasonCode'):
+            for key in ('currentOrigin', 'scopeHint', 'stage', 'reasonCode', 'effect', 'suggestion'):
                 if key in data:
                     result[key] = data[key]
             # 中文注释：跨站跳转只转发 client 已校验的来源，不含路径或查询。

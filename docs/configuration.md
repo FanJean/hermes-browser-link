@@ -9,7 +9,8 @@ Set runtime variables before starting Hermes or the Native Messaging host. Brows
 | `HERMES_BROWSER_DEFAULT` | Unset | Plugin browser selection: `chrome`, `edge`, or an instance ID. Explicit `instance_id` and the selected primary connected browser take precedence. Process environment takes precedence over shared `.env`. Ambiguous matches still require selection. |
 | `HERMES_BROWSER_EXPORT_ROOTS` | Script workspace only | Colon-separated absolute export roots for screenshots/files. Plugin process environment takes precedence over shared `.env`. Existing files and paths outside permitted roots are refused. |
 | `HERMES_BROWSER_IDLE_CLOSE_SECONDS` | `600` | Daemon's grace after a completed turn; finite non-negative seconds, `0` closes immediately. Same-session activity cancels grace. |
-| `HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS` | `3600` | Daemon's ready-task inactivity timeout; finite non-negative seconds. Paused tasks and valid pending human requests are protected. |
+| `HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS` | `1200` | Daemon's ready-task inactivity timeout; finite non-negative seconds. Paused tasks and valid pending human requests are protected. |
+| `HERMES_BROWSER_WORK_WINDOW` | `separate` | `separate` creates one unfocused normal work window per browser instance. Task tab groups use that window; pointer/keyboard actions activate only the target tab and are serialized within the window. Reads do not activate tabs. `current` retains task groups in the current window. |
 | `HERMES_BROWSER_PAUSE_TIMEOUT_S` | `600` | Script action session's takeover/resume wait; integer `1..3600`. |
 | `HERMES_BENCH_PROFILE` | `default` | Agent benchmark runner/scorer profile. Default database is `$HERMES_HOME/state.db`; named profile database is `$HERMES_HOME/profiles/<name>/state.db`. Use the same value for running and scoring. |
 
@@ -42,3 +43,7 @@ These select test dependencies or fixtures; they are not required for installati
 | `HERMES_NATIVE_FIXTURE` | Internal real-browser fixture directory; supplied by the test runner |
 
 `HOME`, `TMPDIR`, `PATH`, locale variables and `PYTHONDONTWRITEBYTECODE` have their standard process meanings. Keep the real `HOME` in browser tests; isolate `HERMES_HOME`, `TMPDIR` and the browser user-data directory instead. Never publish `.env`, token files, live task state, benchmark results or browser evidence.
+
+Work windows are recreated after closure. They are never focused or minimized by automation. CDP input is attempted even if a document remains hidden because the window is minimized or covered. Delivery confirmation alone does not mean a click had an effect: an unverified or synthetic action is observed for up to 1.5 seconds, then returns `effect: observed` or fails with `click_no_effect`.
+
+At startup and once per hour, `needs_sync` tasks older than 24 hours with no live work pages are closed by revoking their permissions. Paused tasks and pending human requests are preserved. An open receipt includes the session work-page count as `open_tabs`; more than six pages adds a close-unused-pages reminder.

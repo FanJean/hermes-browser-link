@@ -14,6 +14,8 @@ function fixture({debuggerEvents=true,pauseAnimationFrames=false,stallPaintProbe
  const {window}=dom,document=window.document,events=[],calls=[],listeners=new Set();
  const getComputedStyle=window.getComputedStyle.bind(window);
  const target=document.querySelector('#target');
+ // 中文注释：测试按钮显示点击状态，为效果观察提供真实 DOM 变化。
+ target.onclick=e=>e.currentTarget.setAttribute('aria-pressed',String(Date.now()));
  Object.defineProperty(window,'innerWidth',{configurable:true,value:100});
  Object.defineProperty(window,'innerHeight',{configurable:true,value:100});
  window.visualViewport=Object.assign(new window.EventTarget(),{scale:1,offsetLeft:0,offsetTop:0});

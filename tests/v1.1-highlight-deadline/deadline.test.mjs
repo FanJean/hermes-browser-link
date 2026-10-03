@@ -18,6 +18,8 @@ function fixture({hangOverlayRemove=false,releaseDeadlineMs,beforeLeaseRelease}=
  let uuid=0,detachCalls=0;
  Object.defineProperty(window.crypto,'randomUUID',{configurable:true,value:()=>`deadline-${++uuid}`});
  const target=document.querySelector('#target');
+ // 中文注释：测试按钮显示点击状态，为效果观察提供真实 DOM 变化。
+ target.onclick=e=>e.currentTarget.setAttribute('aria-pressed',String(Date.now()));
  Object.defineProperty(target,'getBoundingClientRect',{configurable:true,value:()=>({x:10,y:12,left:10,top:12,right:50,bottom:32,width:40,height:20})});
  Object.defineProperty(target,'getClientRects',{configurable:true,value:()=>[{x:10,y:12,left:10,top:12,right:50,bottom:32,width:40,height:20}]});
  document.elementFromPoint=()=>target;
@@ -405,7 +407,7 @@ test('release deadline fences workspace removal that resumes after expiry',async
  const cleanupStarted=new Promise(resolve=>{startedCleanup=resolve;});
  const cleanupFinished=new Promise(resolve=>{finishCleanup=resolve;});
  let canDelete,removalCalls=0;
- f.executor.workspaces={ready:Promise.resolve(),cleanup:async(_cap,options)=>{
+ f.executor.workspaces={withInput:async(_t,_p,_guard,work)=>work(),ready:Promise.resolve(),cleanup:async(_cap,options)=>{
   canDelete=options.canDelete;startedCleanup(true);
   // 中文注释：生产清理器只接受严格 true；defer 是保留后续清理机会的拒绝结果。
   try{await cleanupGate;if(canDelete(99)===true)removalCalls++;return {cleanupState:'succeeded'};}
@@ -461,7 +463,7 @@ test('unknown release cleanup remains unknown after later workspace readback say
  const f=fixture({hangOverlayRemove:true});await authorizeFull(f.executor);
  const action=f.executor.execute(request('click',{selector:'#target'})).then(value=>({value}),error=>({error}));
  const state=f.executor.tasks.get(task.id);state.workspaceCapability={};
- f.executor.workspaces={ready:Promise.resolve(),cleanup:async()=>({cleanupState:'succeeded'}),cleanupStatus:async()=>({
+ f.executor.workspaces={withInput:async(_t,_p,_guard,work)=>work(),ready:Promise.resolve(),cleanup:async()=>({cleanupState:'succeeded'}),cleanupStatus:async()=>({
   cleanupState:'succeeded',remainingTabIds:[],preservedTabIds:[],unknownTabIds:[],remainingCount:0,preservedCount:0,unknownCount:0,cleanupReason:'verified_complete',
  })};
  let releasePromise;

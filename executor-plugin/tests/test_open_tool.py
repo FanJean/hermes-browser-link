@@ -79,6 +79,7 @@ class FakeRuntime:
             opened = {'tabId': 41 + len(self.tabs.get(params['taskId'], [])), 'url': params['url']}
             self.tabs.setdefault(params['taskId'], []).append({'id': opened['tabId'], 'url': params['url']})
             self.tasks[params['taskId']].setdefault('workTabs', []).append({'tabId': opened['tabId']})
+            opened['open_tabs'] = sum(len(task.get('workTabs', [])) for task in self.tasks.values())
             return opened
         raise AssertionError(method)
 
@@ -98,6 +99,13 @@ class OpenToolTests(unittest.TestCase):
             smart = self.open({'url': 'https://shop.example/list'})
         self.assertEqual(smart['instance_id'], 'edge-1')
         self.assertNotIn('primaryUnavailable', smart)
+
+    def test_open_receipt_counts_session_pages_and_reminds_above_six(self):
+        self.make([CHROME])
+        for index in range(7):
+            result = self.open({'url': f'https://site-{index}.example/'}, call=f'open-{index}')
+        self.assertEqual(result['open_tabs'], 7)
+        self.assertEqual(result['tab_hint'], '不再用的网站先 browser_shared_close')
 
     def test_explicit_instance_overrides_primary_and_offline_primary_falls_back(self):
         self.make([{**EDGE, 'primary': True}, CHROME])

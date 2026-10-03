@@ -70,8 +70,10 @@ class UserInputRequired(ApprovalRequired):
 
 class OutcomeUnknown(RuntimeError):
     """A dispatched action's result cannot be established; no automatic replay."""
-    def __init__(self, message, code=None):
+    def __init__(self, message, code=None, data=None):
         super().__init__(message)
+        # 中文注释：未知结果仍禁止重放，只保留 client 已过滤的固定效果字段。
+        self.data = {key: data[key] for key in ('effect', 'suggestion') if isinstance(data, dict) and key in data}
         self.code = code or 'outcome_unknown'
         self.outcomeUnknown = True
 
@@ -326,7 +328,7 @@ class ActionSession:
                 self._pending_kind = None
                 raise ActionRejected(code, data.get('finalOrigin') if isinstance(data, dict) and code == 'redirected_out_of_scope' else None, data) from exc
             self._unknown = True
-            raise OutcomeUnknown('native action outcome unknown; no automatic replay', code=code) from exc
+            raise OutcomeUnknown('native action outcome unknown; no automatic replay', code=code, data=data) from exc
         if not isinstance(receipt, dict):
             self._unknown = True
             raise OutcomeUnknown('invalid native action receipt')

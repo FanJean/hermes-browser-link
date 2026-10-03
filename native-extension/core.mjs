@@ -1,3 +1,5 @@
+import {INPUT_ACTIONS} from './work-window.mjs';
+import {observeInputEffect} from './action-effects.mjs';
 import {DiagnosticEventBuffer,observeAction} from '../browser-diagnostics/js/diagnostics.mjs';
 import {NativeWorkspaces,groupTitle} from './workspace-adapter.mjs';
 import {createApprovalPolicy,POLICY_VERSION} from '../approval-policy/policy.mjs';
@@ -1850,10 +1852,11 @@ export class Executor {
    if(result?.dialogOpened){
     dispatched=true;
     // 中文注释：对话框阻断送达回读时不能把未经确认的指针或语义按键报告为成功。
-    if(['ref_click','interaction.click'].includes(p.action))return {clicked:false,delivery:'unconfirmed',outcomeUnknown:true,effect:'unverified',dialogOpened:result.dialogOpened};
-    if(['ref_set_checked','ref_press'].includes(p.action))return {outcomeUnknown:true,effect:'unverified',dialogOpened:result.dialogOpened};
-    return p.action==='click'?{clicked:true,kind:'dom-synthetic',effect:'unverified',dialogOpened:result.dialogOpened}:
-     {dispatched:true,effect:'unverified',dialogOpened:result.dialogOpened};
+    // 中文注释：新打开的 JS 对话框本身就是已观察到的页面效果。
+    if(['ref_click','interaction.click'].includes(p.action))return {clicked:false,delivery:'unconfirmed',outcomeUnknown:true,effect:'observed',dialogOpened:result.dialogOpened};
+    if(['ref_set_checked','ref_press'].includes(p.action))return {outcomeUnknown:true,effect:'observed',dialogOpened:result.dialogOpened};
+    return p.action==='click'?{clicked:true,kind:'dom-synthetic',effect:'observed',dialogOpened:result.dialogOpened}:
+     {dispatched:true,effect:'observed',dialogOpened:result.dialogOpened};
    }
    operation.guard();dispatched=true;
    return result&&typeof result==='object'&&prepared?.targetSummary?{...result,_targetSummary:prepared.targetSummary}:result;
@@ -2366,12 +2369,16 @@ export class Executor {
   if(inspection?.kind!=='blank_anchor'||typeof inspection.url!=='string')return {unsupported:true,code:'CHILD_CREATION_UNSUPPORTED',clicked:false};
   this.allowed(t,inspection.url);
   const work=await this.openOwnedTab(t,p,guard,inspection.url);
-  return {...work,clicked:false,openedVia:'safe_link_navigation'};
+  return {...work,clicked:false,openedVia:'safe_link_navigation',effect:'observed'};
  }
  async perform(t,p) {
   assertV1Action(p.action);
   this.check(t,p);const modeGeneration=t.policy.modeGeneration;const guard=()=>{this.check(t,p);if(Number.isInteger(p.tabId)&&this.leases.get(p.tabId)!==t.id)throw Error('tab lease denied');if(t.policy.modeGeneration!==modeGeneration)throw Error('mode revoked');};const get=async id=>{const tab=await this.api.tabs.get(id);guard();this.allowed(t,tab.url);return tab;};
   await this.authorize(t,p,guard);guard();
+  // 中文注释：审批完成后才进入窗口输入队列，读操作不切前台。
+  return this.workspaces&&INPUT_ACTIONS.has(p.action)?this.workspaces.withInput(t,p,guard,()=>this.performAuthorized(t,p,guard,get,modeGeneration)):this.performAuthorized(t,p,guard,get,modeGeneration);
+ }
+ async performAuthorized(t,p,guard,get,modeGeneration){
   if(p.action==='official.new_tab')return officialOpenTab(this,t,p,guard);
   if(p.action==='official.goto_url')return officialNavigate(this,t,{...p,_doc:this.docs.get(p.tabId)||0},guard);
   if(p.action==='official.ready_state')return officialReadyState(this,t,p,guard);
@@ -2602,18 +2609,18 @@ export class Executor {
      const inspection=await this.callSemanticWorld(frameTarget,frame.id,'inspect_ref_click',basePayload,guard,entry?.contextId);
      return this.openSafeLink(t,p,guard,inspection);
     }
-    // 中文注释：隐藏文档使用合成点击，空命中不应被误判成目标移动；真实遮挡仍由页面层拒绝。
+    // 中文注释：隐藏文档也先走真实输入，空命中保留已核实的引用几何；真实遮挡仍由页面层拒绝。
     const visibility=['ref_click','ref_set_checked','ref_select_option'].includes(p.action)?
      await this.callSemanticWorld(frameTarget,frame.id,'input_visibility',basePayload,guard,entry?.contextId):null;
     const targetPayload={...basePayload,syntheticHidden:visibility?.visibility==='hidden',...(p.action==='ref_set_checked'?{checked:p.checked}:{})};
+    const effectWork=work=>observeInputEffect({api:this.api,target:frameTarget,contextId:entry?.contextId,guard,work});
     let checkedPlan,selectPlan,relocated=false;
     const deliverSemanticPointer=async(highlightBinding,syntheticOp)=>{
      const payload={...targetPayload,highlightBinding};
      const arm=await this.callSemanticWorld(frameTarget,frame.id,'arm_ref_delivery',payload,guard,entry?.contextId);
      const synthetic=reason=>this.callSemanticWorld(frameTarget,frame.id,syntheticOp,{...payload,checked:p.checked,syntheticHidden:true,fallbackReason:reason},guard,entry?.contextId);
      try{
-      // 中文注释：后台直接交付合成点击。
-      if(arm.visibility==='hidden')return {mode:'synthetic',result:await synthetic('background_tab_input_unreliable')};
+      // 中文注释：Chrome/Edge 本地实验确认后台 CDP 可送达，先走真实输入，再核实送达。
       const interactions=this.interactionsFor(t,p.tabId,guard,resolved?.record||null);
       const readTarget=()=>this.callSemanticWorld(frameTarget,frame.id,'pointer_target',payload,guard,entry?.contextId);
       try{await interactions.clickBoundTarget({taskId:t.id,generation:t.generation},{readTarget,guard});}
@@ -2640,7 +2647,7 @@ export class Executor {
       await this.callSemanticWorld(frameTarget,frame.id,'clear_ref_delivery',payload,guard,entry?.contextId).catch(()=>{});
      }
     };
-    const dispatch=async highlightBinding=>{
+    const dispatch=highlightBinding=>effectWork(async()=>{
      if(p.action==='ref_click'){
       const delivered=await deliverSemanticPointer(highlightBinding,'synthetic_ref_click');
       if(delivered.mode==='synthetic')return delivered.result;
@@ -2698,7 +2705,7 @@ export class Executor {
       }finally{await this.api.debugger.sendCommand(frameTarget,'Emulation.setFocusEmulationEnabled',{enabled:false});}
      }
      return this.callSemanticWorld(frameTarget,frame.id,p.action,{...targetPayload,text:p.text,checked:p.checked,by:p.by,values:p.values,highlightBinding},guard,entry?.contextId);
-    };
+    });
     result=await this.withInteractionHighlight({t,p,entry,guard,visualOnly:true,
      prepare:async highlightBinding=>{
       await this.timed(p,'target_settle',()=>this.settleSemanticTarget(frameTarget,frame.id,targetPayload,guard,entry?.contextId));
@@ -2742,14 +2749,14 @@ export class Executor {
      const centerX=result.rect.x+result.rect.width/2,dpr=result.imageCenter.x/centerX;
      if(Number.isFinite(dpr)&&dpr>0){refs.set(result.ref,{screenshotId:p.screenshotId,selector:p.selector,rect:result.rect,dpr,documentId});while(refs.size>256)refs.delete(refs.keys().next().value);}
     }else if(p.action==='interaction.click'){
-     if(!overlay)result=await this.withSpawnScope(t,p.tabId,()=>interactions.clickCoordinates({...scoped,screenshotId:p.screenshotId,point:p.point,expectedRef:p.expectedRef}));
+     if(!overlay)result=await observeInputEffect({api:this.api,target,contextId:executionContextId,guard,work:async()=>({...await this.withSpawnScope(t,p.tabId,()=>interactions.clickCoordinates({...scoped,screenshotId:p.screenshotId,point:p.point,expectedRef:p.expectedRef})),effect:'unverified'})});
      else{
       const meta=await this.checkedCoordinateTarget(t,p,interactions,p.point,p.expectedRef,guard,documentId);
       result=await this.withInteractionHighlight({t,p,entry:overlay,guard,visualOnly:true,
        prepare:binding=>this.interactionHighlightCall(p.tabId,overlay,'prepare-selector',{binding,selector:meta.selector,kind:'click',point:{x:p.point.x/meta.dpr,y:p.point.y/meta.dpr},allowedOrigins:t.allowedOrigins},guard),
        verify:async()=>{await this.checkedCoordinateTarget(t,p,interactions,p.point,p.expectedRef,guard,documentId);return {ok:true};},
        afterWait:()=>this.checkedCoordinateTarget(t,p,interactions,p.point,p.expectedRef,guard,documentId),
-       dispatch:()=>this.withSpawnScope(t,p.tabId,()=>interactions.clickCoordinates({...scoped,screenshotId:p.screenshotId,point:p.point,expectedRef:p.expectedRef})),
+       dispatch:()=>observeInputEffect({api:this.api,target,contextId:executionContextId,guard,work:async()=>({...await this.withSpawnScope(t,p.tabId,()=>interactions.clickCoordinates({...scoped,screenshotId:p.screenshotId,point:p.point,expectedRef:p.expectedRef})),effect:'unverified'})}),
       });
       t.interactionRefs.delete(p.tabId);
      }
@@ -2810,11 +2817,12 @@ export class Executor {
      result=await this.withInteractionHighlight({t,p,entry:overlay,guard,visualOnly:true,
       prepare:binding=>this.interactionHighlightCall(p.tabId,overlay,'prepare-selector',{binding,selector:p.selector,kind,allowedOrigins:t.allowedOrigins},guard),
       verify:()=>this.callWorld(target,tree.frame.id,t,`confirm_${p.action}`,p.selector,null,null,guard,executionContextId),
-      dispatch:binding=>p.action==='click'?this.withSpawnScope(t,p.tabId,()=>dispatch(binding)):dispatch(binding),
+      dispatch:binding=>p.action==='click'?observeInputEffect({api:this.api,target,contextId:executionContextId,guard,work:async()=>({...await this.withSpawnScope(t,p.tabId,()=>dispatch(binding)),kind:'dom-synthetic',effect:'unverified'})}):dispatch(binding),
      });
     }else result=await dispatch(null);
     if(p.action==='click')result={...result,popupOwnership:'uncertain'};
     if(p.action==='press'){
+     result=await observeInputEffect({api:this.api,target,contextId:executionContextId,guard,work:async()=>{
      const inspection=await this.callWorld(target,tree.frame.id,t,'inspect',null,null,null,guard);if(inspection?.hasSensitiveValue)throw Error('sensitive press blocked');
      await this.callWorld(target,tree.frame.id,t,'press_check',p.selector,null,p.key,guard);
      if(doc!==(this.docs.get(p.tabId)||0))throw Error('document changed');await get(p.tabId);
@@ -2822,6 +2830,8 @@ export class Executor {
      await this.api.debugger.sendCommand(target,'Input.dispatchKeyEvent',{type:'keyDown',key:p.key,code:p.key,...(p.key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{}),windowsVirtualKeyCode:keyCode,nativeVirtualKeyCode:keyCode});guard();
      // 中文注释：Tab 会转移焦点，Enter 可能导航；派发后只核对任务权限，不再要求旧焦点或旧文档存在。
      await this.api.debugger.sendCommand(target,'Input.dispatchKeyEvent',{type:'keyUp',key:p.key,code:p.key,windowsVirtualKeyCode:keyCode,nativeVirtualKeyCode:keyCode});
+     return {...result,effect:'unverified',delivery:'cdp-key-events'};
+     }});
     }
     if(!DISPATCHING_ACTIONS.has(p.action))await this.checkedFrameTree(target,t,guard,false);
    } finally {

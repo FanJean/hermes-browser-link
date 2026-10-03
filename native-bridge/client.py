@@ -83,6 +83,11 @@ class BridgeError(RuntimeError):
         self.message = message
         self.data = {key: data[key] for key in ("outcomeUnknown", "retryable")
                      if isinstance(data, dict) and type(data.get(key)) is bool}
+        # 中文注释：点击错误只保留固定效果和提示，脚本与工具共用该边界。
+        if isinstance(data, dict) and code == 'click_no_effect':
+            self.data['effect'] = 'unobserved'
+            if data.get('suggestion') == '输入已派发但未观察到效果；请读取目标页核对，检查按钮状态或改用页面支持的操作，不要反复重试。':
+                self.data['suggestion'] = data['suggestion']
         if code == 'cookie_mirror_denied':
             # 中文注释：镜像错误与页面错误分开处理，不放行候选、遮挡或任意诊断文本。
             self.data.update(safe_summary(data))

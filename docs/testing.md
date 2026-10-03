@@ -153,3 +153,13 @@ HERMES_SOURCE="$PWD/.ci/hermes" HERMES_PYTHON="$PWD/.ci/hermes/.venv/bin/python"
 ```
 
 Use `--edge` for Edge. The script uses only temporary profiles and a temporary daemon. It checks debugger detach, extension reload, needs_sync after restarting that daemon, real page input after cleanup, and progress while a long action finishes. A machine that denies localhost/socket binding cannot complete this gate; offline DOM tests do not replace it.
+
+### Background input and work windows (1.6.0)
+
+The baseline gate has 40 steps and the known runner inventory has 89 files. `tests/v1.6.0/work-window.test.mjs` and `tests/v1.6.0/test_lifecycle.py` cover the window queue, unfocused creation/recreation, read-only behavior, raw CDP input routing, action effects, error projection, idle defaults, and empty-task reclamation.
+
+Run `node tests/v1.6.0/real-background-input.mjs --headed` and repeat with `--edge`. The local fixture repeats each of five inputs three times in four window states, comparing DOM-synthetic input with CDP. Record the actual `document.visibilityState`; do not infer that an occluded window was reported hidden.
+
+Run `node tests/v1.6.0/real-work-window.mjs --headed` and repeat with `--edge`. The temporary profiles verify three concurrent trusted clicks, unchanged user-window active tab/focus flags, background snapshot/coordinate input, minimized-window input, tool/script no-effect errors, session counts, and recreation after closure. `tests/native-v2/real-session.mjs` now also has a direct local-fixture smoke entry point.
+
+To keep gate scratch files outside the user's Hermes directory, set `HERMES_BROWSER_VERIFY_SCRATCH=/private/tmp/b16` together with `TMPDIR=/private/tmp` when running `npm run verify`. The existing gate still isolates HOME inside its scratch snapshot. No live browser profile or plugin installation is modified.

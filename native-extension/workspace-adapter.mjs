@@ -1,10 +1,11 @@
+import {WorkWindow,INPUT_ACTIONS} from './work-window.mjs';
 import {createAuthority,createWorkspaces,groupTitle,registerWorkspaceStartup} from '../browser-workspaces/index.mjs';
 // 中文注释：扩展入口统一复用适配器导出，构建只需维护一个 workspace 依赖映射。
 export {groupTitle,registerWorkspaceStartup};
 // Private to trusted Executor approval installation; never exposed by Bridge RPC.
 export class NativeWorkspaces {
  constructor(api,instance,isTabLeased=()=>false){
-  this.api=api;this.authority=createAuthority(instance);
+  this.api=api;this.workWindow=new WorkWindow(api);this.authority=createAuthority(instance);
   const guarded={runtime:api.runtime,storage:api.storage,tabGroups:api.tabGroups,tabs:{query:p=>api.tabs.query(p),get:id=>api.tabs.get(id),remove:id=>api.tabs.remove(id),ungroup:id=>api.tabs.ungroup(id),group:p=>api.tabs.group(p),create:async p=>{
    const tab=await api.tabs.create(p);if(isTabLeased(tab.id))throw Error('new tab lease conflict');return tab;
   }}};
@@ -25,10 +26,20 @@ export class NativeWorkspaces {
  async install(task,tabs){
   await this.ready;
   if(task.instanceId!==this.authority.instance)throw Error('WORKSPACE_INSTANCE_MISMATCH');
-  const windowId=tabs[0]?.windowId??(await this.api.windows.getCurrent()).id;
+  // 中文注释：原授权页不移动；新建任务组默认始终进入独立工作窗口。
+  const windowId=task.workWindowMode==='current'?(tabs[0]?.windowId??(await this.api.windows.getCurrent()).id):await this.workWindow.ensure();
   const cap=this.authority.issue({owner:task.approvalScope,task:task.id,generation:task.generation,windowId});
   await this.manager.start(cap);
   return cap;
+ }
+ // 中文注释：只在本扩展工作窗口内切前台；用户拖走的工作页继续遵循既有所有权规则。
+ async withInput(task,p,guard,work){
+  if(task.workWindowMode==='current'||(!INPUT_ACTIONS.has(p.action)&&!(p.action==='cdp.send'&&p.method?.startsWith('Input.')))||!task.workspaceCapability)return work();
+  const windowId=this.authority.resolve(task.workspaceCapability).windowId;
+  if(windowId!==this.workWindow.windowId||!task.agentTabs.has(p.tabId))return work();
+  const tab=await this.api.tabs.get(p.tabId);guard();
+  if(tab.windowId!==windowId||tab.groupId!==task.agentTabGroups?.get(p.tabId))return work();
+  return this.workWindow.input(windowId,p.tabId,guard,work);
  }
  async open(cap,p){
   try{return await this.manager.open(cap,{requestId:p.requestId,url:p.url,title:p.title});}

@@ -178,7 +178,9 @@ function extensionInfo(root) {
   const core=read(root,'native-extension/core.mjs'),background=read(root,'native-extension/background.mjs'),bridge=read(root,'native-extension/bridge.mjs');
   let manifest={};try{manifest=JSON.parse(read(root,'native-extension/manifest.json'));}catch{}
   const actions=arrayLiteral(core,'export const V1_ACTIONS = Object.freeze(');
-  const execute=methodBody(core,'executeAction'),perform=methodBody(core,'perform'),page=methodBody(core,'pageAction'),world=methodBody(core,'callWorld');
+  const execute=methodBody(core,'executeAction'),performEntry=methodBody(core,'perform'),
+    // 中文注释：仅将被审批入口实际调用的工作窗口内动作分支纳入静态路由核对。
+    perform=performEntry+(/this\.performAuthorized\(t,p,guard,get,modeGeneration\)/.test(performEntry)?methodBody(core,'performAuthorized'):''),page=methodBody(core,'pageAction'),world=methodBody(core,'callWorld');
   const bg=/import\s*\{\s*Executor\s*,[^}]*\}\s*from\s*['"]\.\/core\.mjs['"]/.test(background)
     &&/new\s+Executor\s*\(chrome\b/.test(background)&&/new\s+Bridge\s*\(port\s*,\s*executor\b/.test(background)
     &&manifest.background?.service_worker==='background.mjs';

@@ -399,7 +399,7 @@ class HostBridge:
                     'browser_access_required','frame_not_supported','credential_mode_conflict',
                     'cdp_method_denied','js_timeout','js_syntax_error','js_exception','scroll_timeout','parse_budget_too_small','cdp_error','network_capture_stale','network_entry_unavailable',
                     'artifact_origin_denied','artifact_path_denied','file_input_not_unique',
-                    'not_file_input','overlay_scope_stale'} or
+                    'not_file_input','overlay_scope_stale','click_no_effect'} or
                     (code.startswith('interaction_highlight_') and len(code) <= 62 and
                      all(char in 'abcdefghijklmnopqrstuvwxyz_' for char in code))):
                 reply['code'] = code
@@ -411,7 +411,7 @@ class HostBridge:
                 data = getattr(exc, 'data', None)
                 # 中文注释：上游 client 已过滤这些固定诊断字段，不回显页面内容。
                 if isinstance(data, dict):
-                    reply.update({key: data[key] for key in ('currentOrigin', 'scopeHint', 'stage', 'reasonCode') if key in data})
+                    reply.update({key: data[key] for key in ('currentOrigin', 'scopeHint', 'stage', 'reasonCode', 'effect', 'suggestion') if key in data})
                 if isinstance(data, dict) and code in {'reference_target_missing', 'reference_target_ambiguous', 'element_timeout'} and isinstance(data.get('candidates'), list):
                     reply['candidates'] = [{'role': row['role'][:40], 'name': row['name'][:80]}
                                            for row in data['candidates'][:5] if isinstance(row, dict)

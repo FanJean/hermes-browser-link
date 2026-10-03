@@ -171,3 +171,9 @@
 - `tests/v1.5.3/overlay-orphan.test.mjs`：登记在 baseline Node 清单；覆盖控制超时、快捷键、断开/未知回执、放开与监听器卸载、重试与迟到回执、页面脚本不能伪造控制、本实例和代次隔离、工作区补页、DevTools 占用及预遮罩清理。
 - `native-bridge/tests/test_cleanup_contract.py`：可信扩展可读取本实例已关闭任务供浮层清理；默认任务列表和跨实例隔离不变。
 - `tests/v1.5.3/real-overlay-orphan.mjs`：手动真实门禁；临时 Chrome/Edge profile 覆盖 debugger 分离、扩展重载、daemon 重启后的 needs_sync，以及长脚本接管进度。支持 `--headed`、`--edge`；`--baseline` 仅记录修复前现象。不进入离线门禁，不依赖 rg/git。
+
+## 1.6.0 工作窗口和效果回执
+
+- `tests/v1.6.0/work-window.test.mjs`：baseline Node 门禁，覆盖创建/恢复/重建窗口、串行输入、读操作不切标签、current 与用户拖页、observed 与 click_no_effect。
+- `tests/v1.6.0/test_lifecycle.py`：baseline Python 固定文件门禁，覆盖 1200/600 秒默认配置、每小时 needs_sync 清理、人工等待保护、会话 open_tabs、错误/结果白名单。baseline 40 步，已登记 runner 89 个。
+- `tests/v1.6.0/real-background-input.mjs`、`tests/v1.6.0/real-work-window.mjs`：手动 Chrome/Edge 临时 profile 门禁，支持 --edge、--headed，不进入离线清单。

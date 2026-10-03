@@ -187,7 +187,7 @@ test('failed deletion preserves remaining recoverable state without automatic re
  const restored=createWorkspaces({chrome:f.api,authority:f.authority});await restored.reconcile();assert.equal(calls,1);assert.ok(f.tabs.has(a.tabId));
 });
 test('native adapter forwards preservation for live and recovered cleanup',async()=>{
- const f=fixture(),native=new NativeWorkspaces(f.api,'instance');const cap=await native.install({instanceId:'instance',approvalScope:'owner',id:'a',generation:1},[{windowId:1}]);
+ const f=fixture(),native=new NativeWorkspaces(f.api,'instance');const cap=await native.install({workWindowMode:'current',instanceId:'instance',approvalScope:'owner',id:'a',generation:1},[{windowId:1}]);
  const a=await native.open(cap,{requestId:'a',url:'https://example.test'});await native.cleanup(cap,{closeTabs:false});assert.ok(f.tabs.has(a.tabId));
  const restored=new NativeWorkspaces(f.api,'instance');await restored.cleanupRecovered('a',1,{closeTabs:false});assert.ok(f.tabs.has(a.tabId));
  assert.equal((await restored.status())[0].state,'preserved');await restored.cleanupRecovered('a',1);assert.ok(!f.tabs.has(a.tabId));
@@ -343,7 +343,7 @@ test('release deadline queues one cleanup after in-flight tab lock settles',asyn
  for(const settledBeforeReturn of [false,true]){
  const {Executor}=await import('../native-extension/core.mjs'),f=fixture();f.tabs.get(1).url='https://example.test/';
  const e=new Executor(f.api,()=>{},{releaseDeadlineMs:30});
- await e.approve({id:'a',instanceId:'instance',approvalScope:'owner',generation:1,allowedOrigins:['https://example.test'],tabIds:[1]});
+ await e.approve({workWindowMode:'current',id:'a',instanceId:'instance',approvalScope:'owner',generation:1,allowedOrigins:['https://example.test'],tabIds:[1]});
  const t=e.tasks.get('a'),work=await e.workspaces.open(t.workspaceCapability,{requestId:'busy',url:'https://example.test'});
  t.tabIds.add(work.tabId);t.agentTabs.add(work.tabId);e.leases.set(work.tabId,'a');
  let resume,entered;const gate=new Promise(r=>resume=r),started=new Promise(r=>entered=r);

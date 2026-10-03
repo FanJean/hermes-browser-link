@@ -41,6 +41,8 @@ function createFixture({pauseHighlight=false,captureError=false,overlayEvents=tr
   .find(({r})=>x>=r.x&&y>=r.y&&x<r.x+r.width&&y<r.y+r.height)?.element||null;
  document.elementFromPoint=(x,y)=>hitTest(x,y);
  document.elementsFromPoint=(x,y)=>{const hit=hitTest(x,y);return hit?[hit]:[];};
+ // 中文注释：夹具按钮显示点击状态；键盘 mock 模拟 Tab 的浏览器默认焦点转移。
+ document.querySelector('#save').onclick=e=>e.currentTarget.setAttribute('aria-pressed',String(Date.now()));
  const interactionHost=()=>document.querySelector('[data-hermes-interaction-highlight]');
  const targetBox=()=>interactionHost()?.shadowRoot?.querySelector('[data-role="target"]');
  const automationTargetBox=()=>document.querySelector('[data-hermes-automation-overlay]:not([data-hermes-interaction-highlight])')?.shadowRoot?.querySelector('[data-role="target"]');
@@ -83,7 +85,7 @@ function createFixture({pauseHighlight=false,captureError=false,overlayEvents=tr
     calls.push({method,params:copy(params)});
     if(method==='Page.getFrameTree')return {frameTree:{frame:{id:'main',url:origin+'/',loaderId:'fixture-document'}}};
     if(method==='DOM.getDocument')return {root:{nodeName:'HTML',children:[]}};
-    if(['DOM.enable','Target.setAutoAttach'].includes(method))return {};
+    if(['DOM.enable','Network.enable','Target.setAutoAttach'].includes(method))return {};
     if(method==='Page.createIsolatedWorld')return {executionContextId:17};
     if(method==='Runtime.addBinding'){window.hermesOverlayCommand=()=>{};return {};}
     if(method==='Runtime.callFunctionOn'){
@@ -121,6 +123,7 @@ function createFixture({pauseHighlight=false,captureError=false,overlayEvents=tr
      events.push({type:'side-effect',name:method==='Input.dispatchKeyEvent'?'key':'pointer',event:params.type||'',highlightVisible:targetVisible()});
      // 中文注释：JSDOM 无法处理 CDP 鼠标派发；测试边界在 release 时模拟浏览器生成的点击。
      if(method==='Input.dispatchMouseEvent'&&params.type==='mouseReleased')hitTest(params.x,params.y)?.click();
+     if(method==='Input.dispatchKeyEvent'&&params.type==='keyDown'&&params.key==='Tab')document.querySelector('#query').focus();
      return {};
     }
     if(method==='Input.cancelDragging')return {};
@@ -210,7 +213,7 @@ test('press Tab 转移焦点后仍发送 keyUp，且不重放 keyDown',async()=>
    if(method==='Input.dispatchKeyEvent'&&params.type==='keyDown')f.document.querySelector('#query').focus();
    return reply;
   };
-  assert.deepEqual(await f.executor.execute(request('press',{selector:'#save',key:'Tab'})),{ok:true});
+  assert.deepEqual(await f.executor.execute(request('press',{selector:'#save',key:'Tab'})),{ok:true,effect:'observed',delivery:'cdp-key-events'});
   assert.deepEqual(f.calls.filter(call=>call.method==='Input.dispatchKeyEvent').map(call=>call.params.type),['keyDown','keyUp']);
   assert.equal(f.document.activeElement.id,'query');
  }finally{f.dom.window.close();}

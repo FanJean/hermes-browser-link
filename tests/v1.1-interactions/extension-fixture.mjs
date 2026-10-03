@@ -16,9 +16,11 @@ const api={tabs:{get:async id=>({id,url:state.url,windowId:7,groupId:-1}),update
   commands.push({tabId:target.tabId,method,params:p});
   if(method==='Page.getFrameTree')return {frameTree:{frame:{id:'main',loaderId:'loader',url:state.url}}};
   if(method==='DOM.getDocument')return {root:{nodeName:'HTML',children:[]}};
-  if(['DOM.enable','Target.setAutoAttach'].includes(method))return {};
+  if(['DOM.enable','Network.enable','Target.setAutoAttach'].includes(method))return {};
   if(method==='Page.createIsolatedWorld')return {executionContextId:11};
   if(method==='Page.captureScreenshot')return {data:png(100,80)};
+  // 中文注释：协议夹具模拟按钮确实改变页面，DOM 效果另由真实浏览器及离线 DOM 覆盖。
+  if(method==='Runtime.callFunctionOn'&&p.functionDeclaration?.startsWith('function effectProbe'))return {result:{value:true}};
   if(method==='Runtime.callFunctionOn')return {result:{value:p.objectId?false:p.functionDeclaration?.includes('function inspectPage')?{hasSensitiveValue:sensitive}:{ok:true}}};
   if(method==='Runtime.evaluate'){
    const expr=p.expression||'';

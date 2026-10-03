@@ -177,6 +177,11 @@ export class PageRuntime{
   if(!verdict.allowed)throw fail('CDP_METHOD_DENIED',{category:verdict.category});
   const params=p.params===undefined?{}:p.params;
   if(!params||typeof params!=='object'||Array.isArray(params)||JSON.stringify(params).length>MAX_EXPRESSION_CHARS*10)throw fail('INVALID_CDP_PARAMS');
+  // 中文注释：脚本及 CDP 网关的原始输入也共用窗口队列；非输入命令直接执行。
+  const execute=()=>this.sendAuthorized(t,p,guard,{gateway,filesVerified},params,verdict,bounded);
+  return this.executor.workspaces&&p.method.startsWith('Input.')?this.executor.workspaces.withInput(t,{...p,action:'cdp.send'},guard,execute):execute();
+ }
+ async sendAuthorized(t,p,guard,{gateway,filesVerified},params,verdict,bounded){
   if(p.targetId){
    const all=await this.executor.api.debugger.getTargets();guard();
    const page=all.find(row=>debuggerTargetId(row)===p.targetId&&row.type==='page'&&row.tabId===p.tabId);

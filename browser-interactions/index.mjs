@@ -68,7 +68,7 @@ function pageOperation(op,arg={}) {
         if(sensitive(hit))return {error:'SENSITIVE_TARGET'};
       }
     }
-    // 中文注释：隐藏页若无法命中，仅允许截图引用绑定的合成点击继续；实际命中其他元素仍拒绝。
+    // 中文注释：隐藏页无法命中时仍限定已绑定截图引用；命中其他真实元素则拒绝。
     if((!hit&&!(arg.allowHiddenHitUnavailable&&document.visibilityState==='hidden'))||hit&&(hit!==e&&!e.contains(hit))) return {error:'TARGET_OCCLUDED'};
     if(JSON.stringify(rect(e))!==JSON.stringify(item.rect)) return {error:'NODE_MOVED'};
     if(e.matches(':disabled')||getComputedStyle(e).visibility!=='visible'||Number(getComputedStyle(e).opacity)===0) return {error:'TARGET_NOT_ACTIONABLE'};
@@ -182,7 +182,7 @@ export class Interactions {
   async #guard(shot,allowMutation=false) {
     if(this.#now()-shot.createdAt>=this.#ttl) fail('SCREENSHOT_EXPIRED');
     const state=await this.#adapter.evaluate('state');
-    for(const key of ['documentId','token','revision','url','visibility','viewport','dpr','scroll','visual']) if(!(allowMutation&&key==='revision')&&JSON.stringify(state[key])!==JSON.stringify(shot[key])) fail('STALE_SCREENSHOT');
+    for(const key of ['documentId','token','revision','url','viewport','dpr','scroll','visual']) if(!(allowMutation&&key==='revision')&&JSON.stringify(state[key])!==JSON.stringify(shot[key])) fail('STALE_SCREENSHOT');
     return shot;
   }
   #point(shot,p) {
@@ -206,17 +206,12 @@ export class Interactions {
   }
   async #clickCoordinates(r) {
     const shot=await this.#validate(r),point=this.#point(shot,r.point);
-    const hidden=shot.visibility==='hidden';
+    // 中文注释：工作窗口切前台仅改变可见性，不使同文档且几何未变的截图引用失效。
+    const hidden=(await this.#adapter.evaluate('state')).visibility==='hidden';
     await this.#check(point,r.expectedRef,null,{hidden});await this.#validate(r);
     this.#shots.delete(shot.id);
-    if(hidden){
-      // 中文注释：后台截图引用仍受几何和 DOM 命中约束，实际点击由可确认的 DOM 事件交付。
-      const result=await this.#adapter.evaluate('synthetic-click',{...point,ref:r.expectedRef,allowHiddenHitUnavailable:true,fallbackReason:'background_tab_input_unreliable'});
-      if(result.error)fail(result.error);
-      return result;
-    }
     await this.#adapter.send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
-    await this.#guard(shot);await this.#check(point,r.expectedRef);
+    await this.#guard(shot);await this.#check(point,r.expectedRef,null,{hidden});
     const armed=await this.#adapter.evaluate('arm-probe',{ref:r.expectedRef});if(armed.error)fail(armed.error);
     try{
       try {await this.#adapter.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...point});}
@@ -224,7 +219,7 @@ export class Interactions {
       const observed=await this.#deliveryProbe('click');
       if(observed.target.trustedClick)return {ok:true,kind:'coordinate-click',delivery:'confirmed'};
       if(!observed.global.pointerdown&&!observed.global.mousedown&&!observed.global.click){
-        const synthetic=await this.#adapter.evaluate('synthetic-click',{...point,ref:r.expectedRef,fallbackReason:'pointer_input_not_delivered'});
+        const synthetic=await this.#adapter.evaluate('synthetic-click',{...point,ref:r.expectedRef,allowHiddenHitUnavailable:hidden,fallbackReason:'pointer_input_not_delivered'});
         return synthetic.error?{ok:false,kind:'coordinate-click',delivery:'unconfirmed',outcomeUnknown:true}:synthetic;
       }
       return {ok:false,kind:'coordinate-click',delivery:'partial',outcomeUnknown:true};
@@ -248,7 +243,8 @@ export class Interactions {
     const point=await readTarget();
     if(!Number.isFinite(point?.x)||!Number.isFinite(point?.y)||point.x<0||point.y<0||point.x>=before.viewport.width||point.y>=before.viewport.height)fail('INVALID_COORDINATES');
     // 中文注释：语义目标的命中身份由页面侧逐层核实，这里只排除覆盖层，允许开放与封闭 Shadow。
-    await this.#adapter.verifyHit(point,{allowOpenShadow:true,allowClosedShadow:true});guard();
+    // 中文注释：后台 CDP 的 DOM 命中接口可能不可用；readTarget 仍核对引用、遮挡和几何，按派发后可信事件确认送达。
+    if(before.visibility!=='hidden')await this.#adapter.verifyHit(point,{allowOpenShadow:true,allowClosedShadow:true});guard();
     await this.#adapter.send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
     guard();
     const after=await this.#adapter.evaluate('state');
@@ -256,7 +252,7 @@ export class Interactions {
     for(const key of ['documentId','token','url','viewport','dpr','scroll','visual'])if(JSON.stringify(before[key])!==JSON.stringify(after[key]))fail('TARGET_CHANGED');
     const current=await readTarget();guard();
     if(!Number.isFinite(current?.x)||!Number.isFinite(current?.y)||Math.abs(current.x-point.x)>0.5||Math.abs(current.y-point.y)>0.5)fail('NODE_MOVED');
-    await this.#adapter.verifyHit(point,{allowOpenShadow:true,allowClosedShadow:true});guard();
+    if(after.visibility!=='hidden')await this.#adapter.verifyHit(point,{allowOpenShadow:true,allowClosedShadow:true});guard();
     return point;
   }
   async #dragCoordinates(r) {

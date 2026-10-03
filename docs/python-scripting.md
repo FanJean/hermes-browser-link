@@ -166,3 +166,18 @@ See the [module catalog](product-modules.zh-CN.md) for contracts and limits, and
 `redirected_out_of_scope` 表示页面跳到其他来源，错误的 `final_origin` 只含来源；用该来源调用 `browser_shared_open` 新开任务。多台浏览器时，在 Hermes 进程环境设置 `HERMES_BROWSER_DEFAULT=edge`、`chrome` 或具体 instance ID；显式 `instance_id` 优先，未配置仍返回 `browser_choice_required`。
 
 `parallel(fn, tabs)` 对每个页执行 `fn(tab)`，最多八个线程，结果按输入顺序返回。任一分支失败后汇总 `BrowserError.errors` 与已成功的 `BrowserError.results`，不重试动作；用显式 `tab=` 核实未知结果。同一页的动作仍串行，同一会话仍只能运行一个脚本进程。
+
+### Click receipts
+
+`click_element(...)` returns `effect: "observed"` when the action causes a DOM, URL/document, focus, form submission, or request change within about 1.5 seconds. `delivery: "confirmed"` records event delivery. It is not a business success check; read the resulting page and check the expected outcome.
+
+If no effect is observed, it raises `BrowserError` with `code == "click_no_effect"`, `effect == "unobserved"`, and a fixed `suggestion`. Do not loop or automatically replay the click; read the page in a new script or reconcile the uncertain action first. The pointer path uses real CDP input in hidden tabs too; synthetic input is used only when real delivery is unavailable.
+
+```python
+# 中文注释：观察到页面效果后仍检查业务结果；没有效果时不重复点击。
+try:
+    receipt = click_element("Apply", role="button")
+    print(receipt.get("effect"))
+except BrowserError as error:
+    print(error.code, error.effect, error.suggestion)
+```
