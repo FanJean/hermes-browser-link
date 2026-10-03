@@ -24,7 +24,7 @@ HINT = '输入已派发但未观察到效果；请读取目标页核对，检查
 
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir='/private/tmp', prefix='bl160-')
+        self.temp = tempfile.TemporaryDirectory(dir='/private/tmp' if os.path.isdir('/private/tmp') else None, prefix='bl160-')
         self.addCleanup(self.temp.cleanup)
         with patch.dict(os.environ, {'HERMES_BROWSER_WORK_WINDOW': 'separate', 'HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS': '1200'}):
             self.daemon = BridgeDaemon(Path(self.temp.name))

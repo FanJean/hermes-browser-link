@@ -2,6 +2,9 @@
 import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {CdpClient,fetchJson,waitFor} from '../native-v2/cdp-client.mjs';
 import {browserPaths} from '../native-v2/real-session.mjs';
 
@@ -26,7 +29,7 @@ export async function runExperiment(){
  const browser=process.argv.includes('--edge')?'edge':'chrome',headed=process.argv.includes('--headed');
  const server=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(fixture)});
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
- const url=`http://127.0.0.1:${server.address().port}/`,work=await mkdtemp('/private/tmp/bl160-input-');
+ const url=`http://127.0.0.1:${server.address().port}/`,work=await mkdtemp(existsSync('/private/tmp')?'/private/tmp/bl160-input-':join(tmpdir(),'bl160-input-'));
  const proc=spawn(browserPaths[browser],[...(headed?[]:['--headless=new']),`--user-data-dir=${work}`,'--remote-debugging-port=0','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-sync','--use-mock-keychain','--password-store=basic','about:blank'],{detached:true,stdio:'ignore'});
  let root,page;const rows=[];
  try{
