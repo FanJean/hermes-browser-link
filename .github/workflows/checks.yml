@@ -16,6 +16,9 @@ jobs:
         os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    # 中文注释：macOS AF_UNIX 路径最多 103 字节；runner.temp 是工作流拥有的短临时目录。
+    env:
+      TMPDIR: ${{ runner.temp }}
     steps:
       # 中文注释：固定 Action 提交，PR 不取得写权限或个人密钥。
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
