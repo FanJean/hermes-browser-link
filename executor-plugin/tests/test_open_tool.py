@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -123,6 +124,10 @@ class OpenToolTests(unittest.TestCase):
         self.assertTrue(selected['primaryUnavailable'])
 
     def setUp(self):
+        # 中文注释：每个夹具只清空默认浏览器；保留 HOME/TMPDIR，显式配置测试可局部覆盖。
+        default_browser = patch.dict(os.environ, {'HERMES_BROWSER_DEFAULT': ''})
+        default_browser.start()
+        self.addCleanup(default_browser.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
 
@@ -286,7 +291,7 @@ class OpenToolTests(unittest.TestCase):
         (root / '.env').write_text('HERMES_BROWSER_DEFAULT=edge\n')
         self.make([EDGE, CHROME])
         self.runtime.bridge_home = root
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {'HERMES_BROWSER_DEFAULT': ''}):
             self.assertEqual(self.open({'url': 'https://shop.example/'})['instance_id'], 'edge-1')
         with patch.dict(os.environ, {'HERMES_BROWSER_DEFAULT': 'chrome'}):
             self.assertEqual(self.open({'url': 'https://shop.example/', 'instance_id': 'edge-1'},
@@ -361,6 +366,26 @@ class OpenToolTests(unittest.TestCase):
         result = self.open({'url': 'https://shop.example/'}, call='call-7')
         self.assertEqual(result['status'], 'approval_required')
         self.assertEqual(result['request_id'], 'call-7')
+
+
+class OpenToolEnvironmentTests(unittest.TestCase):
+    def test_suite_is_independent_of_parent_default_browser(self):
+        # 中文注释：子进程只选原有 23 个用例，排除此回归类，避免递归运行整个 suite。
+        argv = [sys.executable, '-m', 'unittest', 'test_open_tool.OpenToolTests', '-v']
+        for default in ('edge', 'chrome', '', None):
+            with self.subTest(default=default):
+                env = dict(os.environ)
+                if default is None:
+                    env.pop('HERMES_BROWSER_DEFAULT', None)
+                else:
+                    env['HERMES_BROWSER_DEFAULT'] = default
+                child = subprocess.run(argv, cwd=Path(__file__).resolve().parent,
+                                       env=env, capture_output=True, text=True, timeout=30)
+                output = child.stdout + child.stderr
+                self.assertEqual(child.returncode, 0, output)
+                self.assertIn('Ran 23 tests', output)
+                self.assertNotIn('skipped=', output)
+                self.assertIn('test_default_browser_selects_only_unique_enabled_match', output)
 
 
 if __name__ == '__main__':

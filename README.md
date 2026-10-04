@@ -24,7 +24,7 @@ Read pages and tables, click, fill forms, upload files, track downloads and run 
 1. Download a [Release package](https://github.com/FanJean/hermes-browser-link/releases) and install (no Node.js needed); **Program installed and enabled** confirms success:
 
    ```sh
-   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.6.0/hermes-browser-link-1.6.0.zip -o hermes-browser-link-1.6.0.zip && unzip hermes-browser-link-1.6.0.zip && cd hermes-browser-link-1.6.0 && ./install.sh
+   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.6.1/hermes-browser-link-1.6.1.zip -o hermes-browser-link-1.6.1.zip && unzip hermes-browser-link-1.6.1.zip && cd hermes-browser-link-1.6.1 && ./install.sh
    ```
 
 2. Open `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** → paste the absolute path printed and copied by the installer. It waits up to 3 minutes and shows ✅ when connected; Ctrl+C skips the wait.

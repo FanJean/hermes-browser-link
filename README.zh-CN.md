@@ -24,7 +24,7 @@
 1. 下载 [Release 安装包](https://github.com/FanJean/hermes-browser-link/releases) 并安装（无需 Node.js）；出现“程序安装并启用完成”即成功：
 
    ```sh
-   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.6.0/hermes-browser-link-1.6.0.zip -o hermes-browser-link-1.6.0.zip && unzip hermes-browser-link-1.6.0.zip && cd hermes-browser-link-1.6.0 && ./install.sh
+   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.6.1/hermes-browser-link-1.6.1.zip -o hermes-browser-link-1.6.1.zip && unzip hermes-browser-link-1.6.1.zip && cd hermes-browser-link-1.6.1 && ./install.sh
    ```
 
 2. 在浏览器打开 `chrome://extensions` 或 `edge://extensions` → 开发者模式 → 加载已解压的扩展程序 → 粘贴脚本打印并复制的绝对路径；脚本最多等待 3 分钟，检测成功显示 ✅，可用 Ctrl+C 跳过等待。

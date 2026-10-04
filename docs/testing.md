@@ -156,10 +156,16 @@ Use `--edge` for Edge. The script uses only temporary profiles and a temporary d
 
 ### Background input and work windows (1.6.0)
 
-The baseline gate has 40 steps and the known runner inventory has 89 files. `tests/v1.6.0/work-window.test.mjs` and `tests/v1.6.0/test_lifecycle.py` cover the window queue, unfocused creation/recreation, read-only behavior, raw CDP input routing, action effects, error projection, idle defaults, and empty-task reclamation.
+At 1.6.0, the baseline gate had 40 steps and the known runner inventory had 89 files. These are historical counts, not the current gate declaration. `tests/v1.6.0/work-window.test.mjs` and `tests/v1.6.0/test_lifecycle.py` cover the window queue, unfocused creation/recreation, read-only behavior, raw CDP input routing, action effects, error projection, idle defaults, and empty-task reclamation.
 
 Run `node tests/v1.6.0/real-background-input.mjs --headed` and repeat with `--edge`. The local fixture repeats each of five inputs three times in four window states, comparing DOM-synthetic input with CDP. Record the actual `document.visibilityState`; do not infer that an occluded window was reported hidden.
 
 Run `node tests/v1.6.0/real-work-window.mjs --headed` and repeat with `--edge`. The temporary profiles verify three concurrent trusted clicks, unchanged user-window active tab/focus flags, background snapshot/coordinate input, minimized-window input, tool/script no-effect errors, session counts, and recreation after closure. `tests/native-v2/real-session.mjs` now also has a direct local-fixture smoke entry point.
 
 To keep gate scratch files outside the user's Hermes directory, set `HERMES_BROWSER_VERIFY_SCRATCH=/private/tmp/b16` together with `TMPDIR=/private/tmp` when running `npm run verify`. The existing gate still isolates HOME inside its scratch snapshot. No live browser profile or plugin installation is modified.
+
+### Current gate declaration (1.6.1)
+
+当前 runner 声明为 43 baseline + 2 supplemental + 49 reviewed = 94 个步骤，known runner inventory 仍为 89 个文件。此处记录门禁组成，不声明 1.6.1 全量测试已通过；完整结果须在冻结候选后统一运行 `npm test` 和 `npm run verify` 并记录。
+
+版本闭包定向测试只验证受影响的离线 suite；安装流程 suite 使用合成临时 HOME/HERMES_HOME。真实 Chrome/Edge、Hermes Desktop、安装升级和重启行为仍需单独人工验收，历史浏览器结果不能作为当前版本验收证据。

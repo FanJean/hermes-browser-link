@@ -58,6 +58,8 @@ const ERROR_CODES = new Set([
 ]);
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const encoder = new TextEncoder();
+// 中文注释：严格匹配到字符串末尾，不能接受末尾换行；同时用于事件校验与错误映射。
+const ERROR_CODE_RE = /^[a-z][a-z0-9_]{0,63}(?![\s\S])/;
 
 export class UnsafeDiagnosticField extends TypeError {}
 
@@ -95,7 +97,7 @@ function validateEvent(event) {
   }
   if (event.error_code !== null) {
     // 中文注释：协议错误可用受限的小写码，不能把异常原文放入诊断。
-    rejectUnless(ERROR_CODES.has(event.error_code) || /^[a-z][a-z0-9_]{0,63}$/.test(event.error_code), "error_code is not allowlisted");
+    rejectUnless(typeof event.error_code === "string" && (ERROR_CODES.has(event.error_code) || ERROR_CODE_RE.test(event.error_code)), "error_code is not allowlisted");
   }
   rejectUnless(ACTIONS.has(event.action) && STAGES.has(event.stage), "action or stage is not allowlisted");
   return event;
@@ -238,7 +240,7 @@ export async function observeAction(action, buffer, context, classifyError = err
     let errorCode = "UNCLASSIFIED_ERROR";
     try {
       const candidate = classifyError(error);
-      if (typeof candidate === "string" && (ERROR_CODES.has(candidate) || /^[a-z][a-z0-9_]{0,63}$/.test(candidate))) errorCode = candidate;
+      if (typeof candidate === "string" && (ERROR_CODES.has(candidate) || ERROR_CODE_RE.test(candidate))) errorCode = candidate;
     } catch {
       errorCode = "UNCLASSIFIED_ERROR";
     }

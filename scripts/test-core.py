@@ -1,5 +1,6 @@
 """核心离线测试入口；不启动浏览器、不安装个人插件。"""
 import importlib.util
+from contextlib import nullcontext
 import os
 from pathlib import Path
 import subprocess
@@ -11,8 +12,8 @@ spec = importlib.util.spec_from_file_location('offline_gate', ROOT / 'scripts/ve
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
-# 中文注释：使用短临时路径，保证 macOS Unix socket 不超过路径上限。
-with tempfile.TemporaryDirectory(prefix='hbc-', dir='/tmp') as scratch:
+# 中文注释：指定 TMPDIR 时直接使用该根，避免嵌套目录超出 Unix socket 路径上限。
+with (nullcontext(os.environ['TMPDIR']) if 'TMPDIR' in os.environ else tempfile.TemporaryDirectory(prefix='hbc-', dir='/tmp')) as scratch:
     # 中文注释：复用已审阅的显式用例清单，避免通配符启动真实浏览器测试。
     env = {**os.environ, 'TMPDIR': str(Path(scratch).resolve()), 'PYTHONDONTWRITEBYTECODE': '1'}
     commands = [

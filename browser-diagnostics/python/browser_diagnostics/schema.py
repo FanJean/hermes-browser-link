@@ -119,7 +119,7 @@ def validate_event(event: Mapping[str, Any]) -> Dict[str, Any]:
 
     error_code = event["error_code"]
     # 中文注释：协议错误保留具体小写码；固定长度与字符集阻止异常文字进入诊断。
-    if error_code is not None and error_code not in _ERROR_CODES and not (isinstance(error_code, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,63}', error_code)):
+    if error_code is not None and not (isinstance(error_code, str) and (error_code in _ERROR_CODES or re.fullmatch(r'[a-z][a-z0-9_]{0,63}', error_code))):
         raise UnsafeDiagnosticField("error_code is not allowlisted")
 
     if event["action"] not in _ACTIONS or event["stage"] not in _STAGES:

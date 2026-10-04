@@ -15,6 +15,60 @@ function setup(options={}){
 }
 const token=(page,item)=>({...page.binding,snapshotId:page.snapshotId,ref:item.ref});
 
+// 中文注释：旧引用的唯一性只在原文档及原 Shadow 树内成立，不能接替到其他作用域。
+test('引用重定位隔离两个同源 iframe，保留原 frame 内唯一替换并拒绝歧义',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<iframe></iframe><iframe></iframe>';
+  const frames=[...f.document.querySelectorAll('iframe')];
+  for(const frame of frames){frame.contentWindow.HTMLElement.prototype.getClientRects=()=>[{}];frame.contentDocument.body.innerHTML='<button id="save">Save</button>';}
+  const page=f.semantics.snapshot({composed:true}),old=token(page,page.items[0]);
+  assert.equal(f.semantics.resolve(old),frames[0].contentDocument.querySelector('button'));
+  frames[0].contentDocument.querySelector('button').remove();
+  assert.throws(()=>f.semantics.resolve(old),/REF_TARGET_MISSING/);
+  frames[0].contentDocument.body.innerHTML='<button id="save">Save</button>';
+  assert.equal(f.semantics.resolve(old),frames[0].contentDocument.querySelector('button'));
+  assert.equal(f.semantics.relocation(),true);
+  frames[0].contentDocument.body.innerHTML='<button id="save">Save</button><button id="save">Save</button>';
+  assert.throws(()=>f.semantics.resolve(old),/REF_TARGET_AMBIGUOUS/);
+ }finally{f.close();}
+});
+
+test('引用禁止 light 到 shadow、shadow 到 shadow 重定位，原 Shadow 树内替换有效',()=>{
+ for(const origin of ['light','shadow']){
+  const f=setup();try{
+   f.document.body.innerHTML='<div><button id="save">Save</button></div><div></div>';
+   const [host,other]=f.document.querySelectorAll('div'),foreign=other.attachShadow({mode:'open'});
+   const root=origin==='light'?host:host.attachShadow({mode:'open'});
+   if(origin==='shadow'){host.querySelector('button').remove();root.innerHTML='<button id="save">Save</button>';}
+   const page=f.semantics.snapshot({composed:true}),old=token(page,page.items.find(i=>i.name==='Save'));
+   root.querySelector('button').remove();foreign.innerHTML='<button id="save">Save</button>';
+   assert.throws(()=>f.semantics.resolve(old),/REF_TARGET_MISSING/);
+   root.innerHTML='<button id="save">Save</button>';
+   assert.equal(f.semantics.resolve(old),root.querySelector('button'));
+  }finally{f.close();}
+ }
+});
+
+test('引用拒绝 frame 文档替换、移除、重挂及 Shadow 宿主重挂或替换',()=>{
+ for(const change of ['document','remove-frame','reparent-frame','reparent-shadow','replace-shadow','move-target']){
+  const f=setup();try{
+   f.document.body.innerHTML='<section><iframe></iframe><div></div></section><aside></aside>';
+   const frame=f.document.querySelector('iframe'),host=f.document.querySelector('div'),aside=f.document.querySelector('aside');
+   frame.contentWindow.HTMLElement.prototype.getClientRects=()=>[{}];
+   const root=change.includes('shadow')?host.attachShadow({mode:'open'}):frame.contentDocument.body;
+   root.innerHTML='<button id="save">Save</button>';
+   const page=f.semantics.snapshot({composed:true}),old=token(page,page.items.find(i=>i.name==='Save'));
+   if(change==='document')frame.contentDocument.replaceChild(frame.contentDocument.createElement('html'),frame.contentDocument.documentElement);
+   if(change==='remove-frame')frame.remove();
+   if(change==='reparent-frame')aside.append(frame);
+   if(change==='reparent-shadow')aside.append(host);
+   if(change==='replace-shadow'){const replacement=f.document.createElement('div');replacement.attachShadow({mode:'open'}).innerHTML='<button id="save">Save</button>';host.replaceWith(replacement);}
+   if(change==='move-target')aside.append(root.querySelector('button'));
+   assert.throws(()=>f.semantics.resolve(old),/DOCUMENT_REPLACED|STALE_REF/,change);
+  }finally{f.close();}
+ }
+});
+
 test('单页应用重渲染仅唯一目标可重定位，重复目标拒绝猜测',()=>{
  const f=setup();try{
   const page=f.semantics.snapshot({query:'保存'}),item=page.items[0];

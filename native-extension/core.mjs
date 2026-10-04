@@ -170,6 +170,14 @@ export const semanticWorldDeclaration=`function(op,p){
   const [a,b,c,d]=m[1].split(',').map(Number);
   return b===0&&c===0&&a>0&&d>0;
  };
+ // 中文注释：可操作性检查和指针定位共用同源 frame 坐标换算，错误码仍由调用阶段指定。
+ const framePoint=(frame,point,code)=>{
+  const style=frame.ownerDocument.defaultView.getComputedStyle(frame);
+  if(!axisAligned(style.transform))throw Error('UNSUPPORTED_FRAME_TRANSFORM');
+  const box=frame.getBoundingClientRect(),scaleX=box.width/frame.offsetWidth,scaleY=box.height/frame.offsetHeight;
+  if(!Number.isFinite(scaleX)||!Number.isFinite(scaleY)||scaleX<=0||scaleY<=0)throw Error(code);
+  return {x:box.left+(frame.clientLeft+point.x)*scaleX,y:box.top+(frame.clientTop+point.y)*scaleY};
+ };
  const actionable=(e,preferredPoint=null)=>{
   if(!e?.isConnected)throw Error('TARGET_NOT_ACTIONABLE');
   const first=e.getBoundingClientRect();let point=preferredPoint||{x:first.left+first.width/2,y:first.top+first.height/2};
@@ -201,13 +209,8 @@ export const semanticWorldDeclaration=`function(op,p){
    if(root.host){current=root.host;continue;}
    if(doc===document)break;
    const frame=view.frameElement;if(!frame?.isConnected)throw Error('TARGET_NOT_ACTIONABLE');
-   const box=frame.getBoundingClientRect();
    // 中文注释：跨同源 frame 时逐层换算 CSS 视口坐标；旋转/倾斜 frame 暂时显式拒绝。
-   const frameStyle=frame.ownerDocument.defaultView.getComputedStyle(frame);
-   if(!axisAligned(frameStyle.transform))throw Error('UNSUPPORTED_FRAME_TRANSFORM');
-   const scaleX=box.width/frame.offsetWidth,scaleY=box.height/frame.offsetHeight;
-   if(!Number.isFinite(scaleX)||!Number.isFinite(scaleY)||scaleX<=0||scaleY<=0)throw Error('TARGET_NOT_ACTIONABLE');
-   point={x:box.left+(frame.clientLeft+point.x)*scaleX,y:box.top+(frame.clientTop+point.y)*scaleY};
+   point=framePoint(frame,point,'TARGET_NOT_ACTIONABLE');
    current=frame;
   }
  };
@@ -272,6 +275,16 @@ export const semanticWorldDeclaration=`function(op,p){
  const pending=(reading||usingSelection)&&state.pendingTarget?.snapshotId===p.snapshotId&&state.pendingTarget?.ref===p.ref?state.pendingTarget:null;
  if((reading||usingSelection)&&!pending||usingDelivery&&!deliveryMatches())throw Error('STALE_REF');
  const node=(usingDelivery?delivery.node:pending?.node)||state.semantics.resolve({...p.binding,snapshotId:p.snapshotId,ref:p.ref});
+ // 中文注释：预审、准备和填写复用同一资格判断；disabled 仍由各阶段原有检查拒绝。
+ const fillable=()=>!(!['INPUT','TEXTAREA'].includes(node.tagName)&&!node.isContentEditable&&node.getAttribute('contenteditable')!=='true'||node.type==='file'||node.type==='hidden'||node.readOnly);
+ // 中文注释：计划和指针定位共用选项查找，保留缺失、歧义及禁用检查，不缓存页面节点。
+ const ariaList=ids=>node.getAttribute('role')==='listbox'?node:node.getRootNode().getElementById?.(ids[0])||node.ownerDocument.getElementById(ids[0]);
+ const ariaOption=list=>{
+  const matches=[...(list?.querySelectorAll('[role="option"]')||[])].filter(option=>(p.by==='label'?(option.getAttribute('aria-label')||option.textContent||'').trim():option.getAttribute('data-value')??option.getAttribute('value'))===p.values[0]);
+  if(matches.length!==1)throw Error(matches.length?'SELECT_OPTION_AMBIGUOUS':'SELECT_OPTION_MISSING');
+  if(matches[0].disabled||matches[0].getAttribute('aria-disabled')==='true')throw Error('SELECT_OPTION_DISABLED');
+  return matches[0];
+ };
  if(reading)state.pendingTarget=null;
  if(op==='input_visibility')return {visibility:document.visibilityState};
  if(op==='ref_relocation')return {relocated:state.semantics.relocation()};
@@ -290,7 +303,7 @@ export const semanticWorldDeclaration=`function(op,p){
  if(op==='assess_ref_fill'||op==='assess_ref_press'){
   if(sensitive(node))return {targetAssessment:'sensitive',fieldKind:fieldKind(node)};
   // 中文注释：预审只判字段类别；视口和遮挡留给批准后的 prepare 阶段滚动并重查。
-  if(op==='assess_ref_fill'&&(!['INPUT','TEXTAREA'].includes(node.tagName)&&!node.isContentEditable&&node.getAttribute('contenteditable')!=='true'||node.type==='file'||node.type==='hidden'||node.readOnly||node.disabled))throw Error('TARGET_NOT_ACTIONABLE');
+  if(op==='assess_ref_fill'&&(!fillable()||node.disabled))throw Error('TARGET_NOT_ACTIONABLE');
   if(op==='assess_ref_press'&&(typeof node.focus!=='function'||node.disabled||node.matches?.('input[type="file"],input[type="hidden"]')))throw Error('TARGET_NOT_ACTIONABLE');
   return {targetAssessment:'ordinary'};
  }
@@ -342,7 +355,7 @@ export const semanticWorldDeclaration=`function(op,p){
  if(op==='prepare_ref_select_option')return prepareHighlight('click',node);
  if(op==='prepare_ref_press')return prepareHighlight('input',node);
  if(op==='prepare_ref_fill'){
-  if(!['INPUT','TEXTAREA'].includes(node.tagName)&&!node.isContentEditable&&node.getAttribute('contenteditable')!=='true'||node.type==='file'||node.type==='hidden'||node.readOnly)throw Error('TARGET_NOT_ACTIONABLE');
+  if(!fillable())throw Error('TARGET_NOT_ACTIONABLE');
   return prepareHighlight('input',node);
  }
  if(op==='verify_ref_click'||op==='verify_ref_fill'||op==='verify_ref_press'||op==='verify_ref_set_checked'||op==='verify_ref_select_option')return verifyHighlight(op==='verify_ref_set_checked'?controlVisual(node):node);
@@ -362,11 +375,8 @@ export const semanticWorldDeclaration=`function(op,p){
   // 中文注释：派发前复核指针命中。
   let target=p.checked!==undefined?controlVisual(node):node;
   if(p.optionTarget){
-   const role=node.getAttribute('role'),ids=(node.getAttribute('aria-controls')||'').trim().split(/\\s+/).filter(Boolean);
-   const list=role==='listbox'?node:node.getRootNode().getElementById?.(ids[0])||node.ownerDocument.getElementById(ids[0]);
-   const matches=[...(list?.querySelectorAll('[role="option"]')||[])].filter(option=>(p.by==='label'?(option.getAttribute('aria-label')||option.textContent||'').trim():option.getAttribute('data-value')??option.getAttribute('value'))===p.values[0]);
-   if(matches.length!==1)throw Error(matches.length?'SELECT_OPTION_AMBIGUOUS':'SELECT_OPTION_MISSING');
-   target=matches[0];if(target.disabled||target.getAttribute('aria-disabled')==='true')throw Error('SELECT_OPTION_DISABLED');
+   const ids=(node.getAttribute('aria-controls')||'').trim().split(/\\s+/).filter(Boolean);
+   target=ariaOption(ariaList(ids));
    target.scrollIntoView({behavior:'instant',block:'nearest',inline:'nearest'});
   }
   const r=target.getBoundingClientRect();let point={x:p.optionTarget?r.left+Math.min(12,r.width/4):r.left+r.width/2,y:r.top+r.height/2},doc=target.ownerDocument;
@@ -374,11 +384,7 @@ export const semanticWorldDeclaration=`function(op,p){
   // 中文注释：逐层映射 frame 坐标。
   while(doc!==document){
    const frame=doc.defaultView?.frameElement;if(!frame)throw Error('POINTER_FRAME_UNSUPPORTED');
-   const style=frame.ownerDocument.defaultView.getComputedStyle(frame);
-   if(!axisAligned(style.transform))throw Error('UNSUPPORTED_FRAME_TRANSFORM');
-   const box=frame.getBoundingClientRect(),scaleX=box.width/frame.offsetWidth,scaleY=box.height/frame.offsetHeight;
-   if(!Number.isFinite(scaleX)||!Number.isFinite(scaleY)||scaleX<=0||scaleY<=0)throw Error('POINTER_FRAME_UNSUPPORTED');
-   point={x:box.left+(frame.clientLeft+point.x)*scaleX,y:box.top+(frame.clientTop+point.y)*scaleY};
+   point=framePoint(frame,point,'POINTER_FRAME_UNSUPPORTED');
    doc=frame.ownerDocument;
   }
   return point;
@@ -441,20 +447,16 @@ export const semanticWorldDeclaration=`function(op,p){
   if(p.by==='index'||p.values.length!==1)throw Error('INVALID_SELECT_OPTIONS');
   const role=node.getAttribute('role'),ids=(node.getAttribute('aria-controls')||'').trim().split(/\\s+/).filter(Boolean);
   if(!['combobox','listbox'].includes(role)||role==='combobox'&&ids.length!==1)throw Error('INVALID_SELECT_OPTIONS');
-  const list=role==='listbox'?node:node.getRootNode().getElementById?.(ids[0])||node.ownerDocument.getElementById(ids[0]);
+  const list=ariaList(ids);
   if(op==='plan_ref_select_option'&&role==='combobox'&&node.getAttribute('aria-expanded')!=='true'&&!list){
    state.pendingTarget={snapshotId:p.snapshotId,ref:p.ref,node};
    return {kind:'aria',needsChange:true,needsOpen:true};
   }
-  const matches=[...(list?.querySelectorAll('[role="option"]')||[])].filter(option=>(p.by==='label'?(option.getAttribute('aria-label')||option.textContent||'').trim():option.getAttribute('data-value')??option.getAttribute('value'))===p.values[0]);
-  if(matches.length!==1)throw Error(matches.length?'SELECT_OPTION_AMBIGUOUS':'SELECT_OPTION_MISSING');
-  if(matches[0].disabled||matches[0].getAttribute('aria-disabled')==='true')throw Error('SELECT_OPTION_DISABLED');
-  const selected=matches[0].getAttribute('aria-selected')==='true';
+  const option=ariaOption(list),selected=option.getAttribute('aria-selected')==='true';
   if(op==='plan_ref_select_option'){state.pendingTarget={snapshotId:p.snapshotId,ref:p.ref,node};return {kind:'aria',needsChange:!selected,needsOpen:role==='combobox'&&node.getAttribute('aria-expanded')!=='true'};}
   if(op==='synthetic_ref_select_option'){
 
    if(p.needsOpen)node.click();
-   const option=matches[0];
    option.scrollIntoView({behavior:'instant',block:'nearest',inline:'nearest'});
    actionable(option);
    let clicks=0;const capture=()=>clicks++;
@@ -464,11 +466,11 @@ export const semanticWorldDeclaration=`function(op,p){
    return {changed:true,verified,selectedCount:option.getAttribute('aria-selected')==='true'?1:0,
     kind:'dom-synthetic',delivery:clicks>0?'confirmed':'unconfirmed',fallbackReason:p.fallbackReason,...(verified?{}:{outcomeUnknown:true})};
   }
-  const verified=matches[0].isConnected&&selected;
+  const verified=option.isConnected&&selected;
   return {changed:true,verified,selectedCount:selected?1:0,kind:'trusted-input',delivery:verified?'confirmed':'unconfirmed',...(verified?{}:{outcomeUnknown:true})};
  }
  if(op==='ref_fill'){
-  if(!['INPUT','TEXTAREA'].includes(node.tagName)&&!node.isContentEditable&&node.getAttribute('contenteditable')!=='true'||node.type==='file'||node.type==='hidden'||node.readOnly)throw Error('TARGET_NOT_ACTIONABLE');
+  if(!fillable())throw Error('TARGET_NOT_ACTIONABLE');
   if(node.isContentEditable||node.getAttribute('contenteditable')==='true'){node.focus();node.textContent=p.text;}
   else{
    const proto=node.tagName==='INPUT'?HTMLInputElement.prototype:HTMLTextAreaElement.prototype;

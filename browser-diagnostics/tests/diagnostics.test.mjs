@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
@@ -39,6 +41,50 @@ test("machine-readable contract matches the MV3 event shape", () => {
   for (const status of contract.properties.status.enum) createDiagnosticEvent(baseEvent({ status }));
   for (const error_code of contract.properties.error_code.oneOf[1].enum) {
     createDiagnosticEvent(baseEvent({ error_code }));
+  }
+});
+
+// 中文注释：直接检查发布 Schema 的类型、枚举和 pattern 关键字，并与实际 JS/Python 校验器对照。
+test("错误码的 JSON Schema、JS 和 Python 三份契约一致", () => {
+  const contract = JSON.parse(readFileSync(new URL("../schema-v1.json", import.meta.url), "utf8"));
+  const branches = contract.properties.error_code.oneOf;
+  assert.equal(branches.length, 3);
+  assert.deepEqual(branches[0], { type: "null" });
+  assert.equal(branches[2].type, "string");
+  const cases = [
+    ...[null, ...branches[1].enum, "target_occluded", "execution_denied", "a", "a".repeat(64), "a_0"].map(value => [value, true]),
+    ...[false, true, 0, 1, [], ["target_occluded"], {}, { code: "execution_denied" }, "", "0bad", "_bad", "Mixed", "UNKNOWN_UPPER", "a".repeat(65), "bad-code", "target_occluded\n", "target_occluded\r\n", "bad/path", "bad?token=secret", "bad secret", "<payload>", "é"].map(value => [value, false]),
+  ];
+  for (const [value, accepted] of cases) {
+    const matching = branches.filter(branch =>
+      branch.type === "null" ? value === null : branch.enum ? branch.enum.includes(value)
+        : branch.type === "string" && typeof value === "string" && new RegExp(branch.pattern).test(value));
+    assert.equal(matching.length === 1, accepted, `JSON Schema: ${JSON.stringify(value)}`);
+    if (accepted) assert.equal(createDiagnosticEvent(baseEvent({ error_code: value })).error_code, value);
+    else assert.throws(() => createDiagnosticEvent(baseEvent({ error_code: value })), UnsafeDiagnosticField);
+  }
+  // 中文注释：子进程只导入源码并校验合成值，不写文件或调用个人服务；意外异常必须使测试失败。
+  const python = spawnSync("python3", ["-c", `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from browser_diagnostics import make_event, UnsafeDiagnosticField
+results = []
+for value in json.load(sys.stdin):
+    try:
+        make_event(component='native_bridge', event_type='request_state', status='failed', error_code=value)
+        results.append(True)
+    except UnsafeDiagnosticField:
+        results.append(False)
+print(json.dumps(results))
+`, fileURLToPath(new URL("../python", import.meta.url))], { input: JSON.stringify(cases.map(([value]) => value)), encoding: "utf8" });
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(JSON.parse(python.stdout), cases.map(([, accepted]) => accepted));
+});
+
+test("错误码拒绝 JS 字符串强制转换及末尾换行", () => {
+  // 中文注释：数组、包装字符串和自定义对象不能通过正则转换成合法码。
+  for (const error_code of [["target_occluded"], Object("execution_denied"), { toString: () => "target_occluded" }, "target_occluded\n"]) {
+    assert.throws(() => createDiagnosticEvent(baseEvent({ error_code })), UnsafeDiagnosticField);
   }
 });
 

@@ -4,6 +4,8 @@
 
 ## 核心 Node
 
+- `browser-diagnostics/tests/diagnostics.test.mjs`：发布 JSON Schema 关键字、JS 与真实 Python 源码错误码契约对照，类型及末尾换行拒绝
+
 - `bench/site/server.test.mjs`：本地站重定向、目录懒加载、第二主机查询、分页、multipart 提交与日志重置；不绑定 TCP 端口
 - `bench/mechanical-metrics.test.mjs`：同站与四页机械指标的 N 轮样本、p50/p90 和失败样本排除
 - `browser-workspaces/workspaces.test.mjs`：含 1.3.4 人工移交后保留标签组、旧工作区拒绝继续操作
@@ -15,7 +17,7 @@
 - `tests/network-evidence/network.test.mjs`
 - `tests/network-evidence/page-request.test.mjs`
 - `tests/v1.1-packaging/directory-swap.test.mjs`
-- `tests/v1.3/parser.test.mjs`
+- `tests/v1.3/parser.test.mjs`：组合树 schema/ARIA 选项的记录及隐私边界、colspan 全列区间表头关联
 - `tests/v1.3/ledger.test.mjs`
 - `tests/v1.1-interactions/test_inflight_guard.mjs`
 - `tests/v1.1-semantics/enhancement.test.mjs`
@@ -38,10 +40,10 @@
 - `tests/popup-integration/content-filter.test.mjs`
 - `page-semantics/long-text.test.mjs`
 - `page-semantics/controls.test.mjs`
-- `tests/complex-ui/semantics.test.mjs`：重定位、Shadow/iframe、推断点击、组合框、富文本、虚拟列表、表格和 canvas
+- `tests/complex-ui/semantics.test.mjs`：重定位的原文档/Shadow 树身份及边界重挂拒绝、Shadow/iframe、推断点击、组合框、富文本、虚拟列表、表格和 canvas
 - `tests/native-extension/sensitive-fields.test.mjs`：普通字段误判与密码、卡号、验证码正例；旧版失败已复现。
 - `tests/native-extension/bridge-cdp-errors.test.mjs`：扩展固定错误码及结果不确定语义。
-- `tests/complex-ui/actions.test.mjs`：引用操作、受控输入读回、portal 选择计划和遮挡拒绝
+- `tests/complex-ui/actions.test.mjs`：公共 ref_fill 跨同源 iframe 旧引用拒绝、引用操作、受控输入读回、portal 选择计划和遮挡拒绝；实际 CDP 安装及热调用执行填写资格、ARIA 选项和 frame 坐标换算回归
 - `executor-plugin/tests/test_result_privacy.py`：新增字段经公共工具投影到 Hermes，并过滤输入值、属性值和页面异常原文
 - `native-bridge/tests/test_tasks.py`：daemon 错误摘要裁剪；涉及 socket 的集成用例需本机补跑
 - `tests/v1.1-single-tools/test_adapter.py`：官方单工具保留 canvas 覆盖率、推断标记和重定位
@@ -175,5 +177,7 @@
 ## 1.6.0 工作窗口和效果回执
 
 - `tests/v1.6.0/work-window.test.mjs`：baseline Node 门禁，覆盖创建/恢复/重建窗口、串行输入、读操作不切标签、current 与用户拖页、observed 与 click_no_effect。
-- `tests/v1.6.0/test_lifecycle.py`：baseline Python 固定文件门禁，覆盖 1200/600 秒默认配置、每小时 needs_sync 清理、人工等待保护、会话 open_tabs、错误/结果白名单。baseline 40 步，已登记 runner 89 个。
+- `tests/v1.6.0/test_lifecycle.py`：baseline Python 固定文件门禁，覆盖 1200/600 秒默认配置、每小时 needs_sync 清理、人工等待保护、会话 open_tabs、错误/结果白名单。诊断三份固定 Python runner 登记后 baseline 43 步，核心 Node runner 53 个。
+- `browser-diagnostics/tests/test_schema.py`、`test_runtime.py`、`test_sink.py`：只运行固定诊断源码契约、运行时及临时日志回归。
+- `tests/v1.1-verification/test_gate.py`：核心入口直接传递指定 TMPDIR，避免 Unix socket 路径被额外嵌套。
 - `tests/v1.6.0/real-background-input.mjs`、`tests/v1.6.0/real-work-window.mjs`：手动 Chrome/Edge 临时 profile 门禁，支持 --edge、--headed，不进入离线清单。

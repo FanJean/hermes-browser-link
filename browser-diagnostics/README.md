@@ -25,11 +25,13 @@ Every stored or buffered event has exactly these keys. Additional keys are rejec
 | `generation` | Opaque string or `null` |
 | `status` | `pending`, `running`, `succeeded`, `failed`, `cancelled`, `unknown`, `connected`, `disconnected`, `dropped`, `rotated`, or `recovered` |
 | `duration_ms` | Finite number from 0 through 86,400,000, or `null` |
-| `error_code` | `null` or one exact code listed below |
+| `error_code` | `null`, one exact uppercase code listed below, or a lowercase protocol code matching `[a-z][a-z0-9_]{0,63}` in full |
 
 Opaque identifiers must match `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`. They are correlation tokens only—not user text, URLs, paths, account names, or other descriptive values.
 
 Allowed error codes:
+
+Lowercase protocol codes include `target_occluded` and `execution_denied`. JSON Schema, JS and Python accept the same string grammar; non-string values, trailing newlines and payload text are rejected.
 
 - `UNCLASSIFIED_ERROR`
 - `TIMEOUT`
@@ -153,4 +155,3 @@ node --test tests/diagnostics.test.mjs
 python3 -m compileall -q python tests
 node --check js/diagnostics.mjs
 ```
-

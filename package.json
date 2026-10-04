@@ -1,6 +1,6 @@
 {
   "name": "hermes-browser-link",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "description": "Hermes Agent plugin for authorized automation in existing Chrome and Edge browsers over local Native Messaging.",
   "type": "module",

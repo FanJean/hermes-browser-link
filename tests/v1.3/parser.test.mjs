@@ -44,3 +44,134 @@ test('form groups and validation messages remain associated without values',()=>
  const f=fixture('<form><fieldset><legend>账户资料</legend><label>名称<input value="PRIVATE_VALUE" required aria-invalid="true" aria-errormessage="validation"></label><p id="validation">名称需要至少两个字</p></fieldset></form>');
  try{const r=f.parser.parse({sections:['forms']});assert.equal(r.forms[0].groupLabel,'账户资料');assert.equal(r.forms[0].validationMessage,'名称需要至少两个字');assert.equal(r.forms[0].state.invalid,true);assert(r.forms[0].groupRef);assert(!JSON.stringify(r).includes('PRIVATE_VALUE'));}finally{f.close();}
 });
+
+// 中文注释：字段候选复用组合树扫描，但仍受记录、解析根、可见性及隐私边界限制。
+test('组合树 schema 读取 Shadow 字段，普通 DOM 和非组合模式保持原行为',()=>{
+ const f=fixture('<main><article id="record"></article><article id="other"><h2>其他记录</h2></article></main>');
+ try{
+  const record=f.dom.window.document.querySelector('#record'),shadow=record.attachShadow({mode:'open'});
+  shadow.innerHTML='<h2>Shadow</h2><h2 hidden>隐藏</h2><h2 data-private>私密</h2>';
+  const schema={record:'article',fields:{title:{selector:'h2',required:true}}};
+  let result=f.parser.parse({composed:true,root:'#record',sections:[],schema});
+  assert.equal(result.records[0].fields.title,'Shadow');assert.equal(result.records[0].states.title.status,'ok');assert.equal(result.records[0].valid,true);
+  assert.equal(result.records[0].sources.title.targetPath[0].kind,'shadow');
+  assert.equal(f.parser.parse({composed:false,sections:[],schema}).records[0].states.title.status,'missing');
+  record.innerHTML='<h2>Light</h2>';
+  result=f.parser.parse({composed:false,sections:[],schema});assert.equal(result.records[0].fields.title,'Light');
+  result=f.parser.parse({composed:true,sections:[],schema});assert.equal(result.records[0].states.title.status,'ambiguous');assert.equal(result.records[0].valid,false);
+  assert.equal(result.records[1].fields.title,'其他记录');
+  record.querySelector('h2').remove();shadow.querySelector('h2').remove();
+  assert.equal(f.parser.parse({composed:true,sections:[],schema}).records[0].states.title.status,'missing');
+ }finally{f.close();}
+});
+
+test('组合树 schema 包含同源 iframe 字段，排除其他记录中的 iframe',()=>{
+ const f=fixture('<article id="record"><iframe></iframe></article><article id="other"><iframe></iframe></article>');
+ try{
+  const frames=[...f.dom.window.document.querySelectorAll('iframe')];
+  for(const [index,frame] of frames.entries()){
+   frame.contentWindow.HTMLElement.prototype.getClientRects=()=>[{}];
+   frame.contentDocument.body.innerHTML=`<h2>Frame ${index}</h2>`;
+  }
+  const schema={record:'article',fields:{title:{selector:'h2',required:true}}};
+  const result=f.parser.parse({composed:true,sections:[],schema});
+  assert.deepEqual(result.records.map(r=>r.fields.title),['Frame 0','Frame 1']);
+  assert.equal(result.records[0].sources.title.targetPath[0].kind,'frame');
+  assert.equal(f.parser.parse({composed:false,sections:[],schema}).records[0].states.title.status,'missing');
+  frames[0].setAttribute('data-private','');
+  assert.equal(f.parser.parse({composed:true,sections:[],schema}).records[0].states.title.status,'missing');
+ }finally{f.close();}
+});
+
+// 中文注释：iframe 扫描不包含 html，祖先关系不能依赖扫描节点数量。
+function frameBody(frame,html){
+ frame.contentWindow.HTMLElement.prototype.getClientRects=()=>[{}];
+ frame.contentDocument.body.innerHTML=html;
+ return frame.contentDocument.body;
+}
+const frameSchema={record:'article',fields:{title:{selector:'h2',required:true}}};
+for(const extra of ['', '<span></span>'])test(`最小选定根 iframe 字段不受无关 span 影响：${extra?'有 span':'无 span'}`,()=>{
+ const f=fixture('<article id="record"><iframe></iframe></article>');
+ try{
+  frameBody(f.dom.window.document.querySelector('iframe'),`<h2>Frame title</h2>${extra}`);
+  const r=f.parser.parse({root:'#record',composed:true,sections:[],schema:frameSchema});
+  assert.equal(r.coverage.scanned,extra?5:4);assert.equal(r.status,'complete');
+  assert.equal(r.records[0].states.title.status,'ok');assert.equal(r.records[0].fields.title,'Frame title');assert.equal(r.records[0].valid,true);
+  assert.deepEqual(r.records[0].sources.title.targetPath.map(p=>p.kind),['frame']);
+  assert.equal(f.parser.parse({root:'#record',composed:false,sections:[],schema:frameSchema}).records[0].states.title.status,'missing');
+ }finally{f.close();}
+});
+
+// 中文注释：嵌套 frame 的字段只能归属其记录，解析根、frame 和字段的隐私及隐藏边界均生效。
+test('最小嵌套 iframe 字段与记录、根、可见性和隐私边界',()=>{
+ const f=fixture('<article id="record"><iframe></iframe></article><article id="other"><iframe></iframe></article>');
+ try{
+  const record=f.dom.window.document.querySelector('#record'),outer=record.querySelector('iframe');
+  const body=frameBody(outer,'<iframe></iframe>'),inner=body.querySelector('iframe');
+  const title=frameBody(inner,'<h2>Nested title</h2>').querySelector('h2');
+  frameBody(f.dom.window.document.querySelector('#other iframe'),'<h2>Other title</h2>');
+  const options={root:'#record',composed:true,sections:[],schema:frameSchema};
+  const r=f.parser.parse(options);
+  assert.equal(r.coverage.scanned,6);assert.equal(r.status,'complete');assert.equal(r.records.length,1);
+  assert.equal(r.records[0].fields.title,'Nested title');assert.equal(r.records[0].valid,true);
+  assert.deepEqual(r.records[0].sources.title.targetPath.map(p=>p.kind),['frame','frame']);
+  assert.deepEqual(f.parser.parse({composed:true,sections:[],schema:frameSchema}).records.map(r=>r.fields.title),['Nested title','Other title']);
+  assert.equal(f.parser.parse({...options,composed:false}).records[0].states.title.status,'missing');
+  for(const node of [outer,inner,title])for(const attribute of ['hidden','data-private']){
+   node.setAttribute(attribute,'');
+   const excluded=f.parser.parse(options);assert.equal(excluded.records[0].states.title.status,'missing');assert.equal(excluded.records[0].valid,false);
+   assert(!JSON.stringify(excluded).includes('Nested title'));assert(!JSON.stringify(excluded).includes('Other title'));
+   node.removeAttribute(attribute);
+  }
+  for(const attribute of ['hidden','data-private']){
+   record.setAttribute(attribute,'');assert.deepEqual(f.parser.parse(options).records,[]);record.removeAttribute(attribute);
+  }
+  title.remove();const absent=f.parser.parse(options);assert.equal(absent.records[0].states.title.status,'missing');assert.equal(absent.records[0].valid,false);
+ }finally{f.close();}
+});
+
+// 中文注释：组合框也使用同一祖先关系，最小 iframe 选项仍须保留来源边界及过滤规则。
+test('最小选定组合框读取 iframe 选项，非组合及隐藏私密选项排除',()=>{
+ const f=fixture('<div id="combo" role="combobox" aria-label="地区"><iframe></iframe></div><div role="option">Other option</div>');
+ try{
+  const frame=f.dom.window.document.querySelector('iframe');
+  const option=frameBody(frame,'<div role="option" aria-selected="true">Frame option</div>').firstElementChild;
+  const options={root:'#combo',composed:true,sections:['forms']};
+  const r=f.parser.parse(options);assert.equal(r.coverage.scanned,4);assert.equal(r.status,'complete');
+  assert.deepEqual(r.forms[0].options,[{text:'Frame option',selected:true}]);
+  assert.deepEqual(f.parser.parse({...options,composed:false}).forms[0].options,[]);
+  for(const node of [frame,option])for(const attribute of ['hidden','data-private']){
+   node.setAttribute(attribute,'');assert.deepEqual(f.parser.parse(options).forms[0].options,[]);node.removeAttribute(attribute);
+  }
+ }finally{f.close();}
+});
+
+test('组合框选项包含 Shadow 子树，排除其他控件和隐藏或私密选项',()=>{
+ const f=fixture('<div role="combobox" id="combo" aria-label="地区"></div><div role="option">其他控件</div>');
+ try{
+  const shadow=f.dom.window.document.querySelector('#combo').attachShadow({mode:'open'});
+  shadow.innerHTML='<div role="option" aria-selected="true">公开选项</div><div role="option" hidden>隐藏选项</div><div role="option" data-private>私密选项</div>';
+  assert.deepEqual(f.parser.parse({composed:true,sections:['forms']}).forms[0].options,[{text:'公开选项',selected:true}]);
+  assert.deepEqual(f.parser.parse({composed:false,sections:['forms']}).forms[0].options,[]);
+ }finally{f.close();}
+});
+
+// 中文注释：隐式表头关联按完整列区间相交计算，保留多级表头、显式覆盖及行跨度隔离。
+test('colspan 单元关联所有覆盖列的表头，普通列保持 A/B 对应',()=>{
+ const f=fixture('<table><tr><th id="a">A</th><th id="b">B</th></tr><tr><td>one</td><td>two</td></tr><tr><td colspan="2">both</td></tr></table>');
+ try{
+  const r=f.parser.parse({sections:['tables']}),[a,b]=r.tables[0].cells.map(c=>c.sourceRef);
+  assert.deepEqual(r.tables[1].cells.map(c=>c.headerRefs),[[a],[b]]);
+  assert.deepEqual(r.tables[2].cells[0].headerRefs,[a,b]);assert.equal(r.tables[2].cells[0].colSpan,2);
+ }finally{f.close();}
+});
+
+test('colspan 关联多层列组，显式 headers 覆盖且行表头只在 rowSpan 内生效',()=>{
+ const f=fixture('<table><tr><th scope="col" rowspan="2">行</th><th id="group" scope="colgroup" colspan="2">组</th></tr><tr><th id="a" scope="col">A</th><th id="b" scope="col">B</th></tr><tr><th id="r1" scope="row" rowspan="2">R1</th><td colspan="2">both</td></tr><tr><td colspan="2" headers="b r1">explicit</td></tr><tr><th scope="row">R2</th><td colspan="2">next</td></tr></table>');
+ try{
+  const r=f.parser.parse({sections:['tables']}),group=r.tables[0].cells[1].sourceRef,[a,b]=r.tables[1].cells.map(c=>c.sourceRef),row1=r.tables[2].cells[0].sourceRef,row2=r.tables[4].cells[0].sourceRef;
+  assert.deepEqual(r.tables[2].cells[1].headerRefs,[group,a,b,row1]);
+  assert.deepEqual(r.tables[3].cells[0].headerRefs,[b,row1]);
+  assert.deepEqual(r.tables[4].cells[1].headerRefs,[group,a,b,row2]);
+ }finally{f.close();}
+});

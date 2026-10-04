@@ -39,6 +39,8 @@ SKIP_FILES = {'CODEX-AUDIT-REPORT.md', 'CODEX-STREAM-REPORT.md', '.DS_Store', 'b
 NODE_BOUNDARIES = ('.',)
 # Explicit runner inventory: no glob expands into browser, install, or evidence suites.
 NODE_TESTS = (
+    # 中文注释：诊断三契约对照只导入源码并校验合成值，纳入显式离线清单。
+    'browser-diagnostics/tests/diagnostics.test.mjs',
     # 中文注释：独立工作窗口和效果观察只用合成 API/DOM。
     'tests/v1.6.0/work-window.test.mjs',
     # 中文注释：浮层断连与本地放开回归只使用离线 DOM，不自动运行真实浏览器。
@@ -104,6 +106,7 @@ NODE_TESTS = (
     'tests/v1.4.4/round1f.test.mjs',
 )
 PYTHON_SUITES = (
+    'browser-diagnostics/tests',
     # 中文注释：基准对比和评分测试含生命周期三类重复打开、tasks.json 快照与新增任务正确性。
     'bench', 'bench/agent',
     # 中文注释：同任务并发建页跨真实 daemon 与扩展逻辑。
@@ -116,6 +119,8 @@ PYTHON_SUITES = (
 )
 # Some directories contain explicitly unsafe runners: select files by fixed name.
 PYTHON_FILES = {
+    # 中文注释：诊断用例只使用合成事件和临时日志目录，按名称限定运行范围。
+    'browser-diagnostics/tests': ('test_schema.py', 'test_runtime.py', 'test_sink.py'),
     # 中文注释：1.6.0 生命周期 runner 按名称登记，真实浏览器脚本不进入离线门禁。
     'tests/v1.6.0': ('test_lifecycle.py',),
     # 中文注释：镜像中转与跨层隐私测试按文件登记，新增 runner 必须重新审阅。
@@ -599,6 +604,7 @@ def build_run_environment(work_path: Path, tree: Path, home: Path, scratch: Path
         'TMPDIR': str(scratch),
         'PYTHONDONTWRITEBYTECODE': '1',
         'UV_CACHE_DIR': str(uv_cache),
+        # 中文注释：通用导入路径只含桥接与 scratch 依赖；源码由需要的测试局部引入。
         'PYTHONPATH': os.pathsep.join((str(tree / 'native-bridge'), str(work_path / 'pytest-deps'))),
         'HERMES_SOURCE': hermes_source,
         'HERMES_PYTHON': py,

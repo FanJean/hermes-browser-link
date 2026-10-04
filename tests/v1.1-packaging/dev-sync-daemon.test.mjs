@@ -26,16 +26,20 @@ test('dev-sync 不向 PID 文件指向的无关进程发送 SIGTERM',async t=>{
 });
 
 test('dev-sync 只停止认证套接字及启动命令均匹配的 daemon',async t=>{
- const home=await mkdtemp(path.join(tmpdir(),'dev-sync-live-'));
+ const home=await mkdtemp(path.join(tmpdir(),'ds-live-'));
+ let daemon;
+ t.after(async()=>{
+  if(daemon&&daemon.exitCode===null&&daemon.signalCode===null){daemon.kill('SIGKILL');await once(daemon,'exit');}
+  await rm(home,{recursive:true,force:true});
+ });
  const pidFile=path.join(home,'plugin-data','browser-link-native','daemon.pid');
+ // 中文注释：macOS 的 AF_UNIX 路径最多 103 字节；启动前核对最终路径的 UTF-8 长度。
+ const socketPath=path.join(path.dirname(pidFile),'bridge.sock');
+ assert.ok(Buffer.byteLength(socketPath,'utf8')<=103,'临时 daemon 的 socket 路径超过 103 字节');
  const daemonScript=path.join(home,'plugins/browser-link/native_bridge/daemon.py');
  await mkdir(path.dirname(daemonScript),{recursive:true});
  await cp(path.resolve('native-bridge'),path.dirname(daemonScript),{recursive:true});
- const daemon=spawn('python3',[daemonScript,'--home',home],{stdio:'ignore'});
- t.after(async()=>{
-  if(daemon.exitCode===null&&daemon.signalCode===null){daemon.kill('SIGKILL');await once(daemon,'exit');}
-  await rm(home,{recursive:true,force:true});
- });
+ daemon=spawn('python3',[daemonScript,'--home',home],{stdio:'ignore'});
  let ready=false;
  for(let i=0;i<100;i++){
   try{ready=(await readFile(pidFile,'utf8')).trim()===String(daemon.pid);}catch{}

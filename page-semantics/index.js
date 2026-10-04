@@ -307,6 +307,19 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     while(parent&&ancestors.length<4){ancestors.push([parent.localName,parent.getAttribute('role')||'',parent.id||'']);parent=parent.parentElement||parent.getRootNode().host;}
     return JSON.stringify([node.localName,value.role,value.name,attrs,ancestors]);
   }
+  // 中文注释：保存真实文档、Shadow 树及边界节点身份，路径名称相同不能替代原作用域。
+  function targetScope(node){
+    const scope=[];
+    for(let root=node.getRootNode();root;){
+      const owner=root.ownerDocument||root,boundary=root.host||(owner!==doc?owner.defaultView?.frameElement:null);
+      scope.push(root,owner.documentElement);
+      if(!boundary)break;
+      // 中文注释：平铺身份序列同时保存边界父节点、连通性及其当前树，供逐项严格比较。
+      scope.push(boundary,boundary.parentNode,boundary.isConnected,root.host?shadowRootOf(boundary):boundary.contentDocument);
+      root=boundary.getRootNode();
+    }
+    return scope;
+  }
   let lastRelocated=false;
   function relocation(){return lastRelocated;}
   function snapshot(options={}){
@@ -382,7 +395,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     const records=new Map();
     for(const c of candidates.slice(0,materialized.length)){
       active.set(c.value.ref,c.node);
-      records.set(c.value.ref,{node:c.node,value:c.value,key:stableKey(c.node,c.value),documentRoot:c.node.ownerDocument.documentElement});
+      records.set(c.value.ref,{node:c.node,value:c.value,key:stableKey(c.node,c.value),scope:targetScope(c.node)});
     }
     savedSnapshots.set(currentId,{records,mode,epoch});
     while(savedSnapshots.size>5)savedSnapshots.delete(savedSnapshots.keys().next().value);
@@ -397,7 +410,9 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     const savedSnapshot=savedSnapshots.get(token.snapshotId),record=savedSnapshot?.records.get(token.ref);
     if(!record)throw new Error('STALE_REF');
     let node=record.node;lastRelocated=record.relocated===true;
-    if(node.ownerDocument.documentElement!==record.documentRoot)throw new Error('DOCUMENT_REPLACED');
+    const root=record.scope[0],owner=root.ownerDocument||root,currentScope=targetScope(root);
+    if(owner.documentElement!==record.scope[1])throw new Error('DOCUMENT_REPLACED');
+    if(currentScope.length!==record.scope.length||currentScope.some((part,i)=>part!==record.scope[i])||node.isConnected&&node.getRootNode()!==root)throw new Error('STALE_REF');
     const saved=record.value;
     let current;
     if(node.isConnected && saved?.fragment){
@@ -405,9 +420,10 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       current=part?fragmentItem(value,part,saved.fragment.part):null;
     } else if(node.isConnected)current=savedSnapshot.mode==='interactive'?item(node):fullItem(node);
     if(node.isConnected&&visible(node,false)&&JSON.stringify(current)===JSON.stringify(saved))return node;
-    // 中文注释：只在原文档内搜索；替换了 documentElement 的导航已由 sync 拒绝。
-    const coverage={skippedFrames:0},matches=[];
-    for(const candidate of composedElements(doc.body,coverage)){
+    // 中文注释：只遍历原作用域的普通子树，不进入其他 frame 或 Shadow 树。
+    const matches=[],scope=root.host?root:owner.body;
+    const walker=owner.createTreeWalker(scope,1);
+    for(let candidate=scope;candidate;candidate=walker.nextNode()){
       if(matches.length>5)break;
       if(!candidate.matches?.(selectors[savedSnapshot.mode])||!visible(candidate,false))continue;
       const description=savedSnapshot.mode==='interactive'?item(candidate):fullItem(candidate);

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {JSDOM} from 'jsdom';
-import {semanticWorldDeclaration} from '../../native-extension/core.mjs';
+import {Executor,semanticWorldDeclaration} from '../../native-extension/core.mjs';
 const html=readFileSync(new URL('./fixture.html',import.meta.url),'utf8');
 function setup(){
  const dom=new JSDOM(html,{url:'https://fixture.example.test/',runScripts:'outside-only',pretendToBeVisual:true});
@@ -17,6 +17,85 @@ function setup(){
  return {dom,window,document,call,binding,find,setHit:node=>{hit=node;},close(){dom.window.close();}};
 }
 
+// 中文注释：执行实际安装声明及热调用声明，不把页面库替换成计数桩；只有 CDP 传输在离线 DOM 中模拟。
+function installedCaller(f){
+ const commands=[];
+ const executor=new Executor({tabs:{},debugger:{sendCommand:async(_target,method,params)=>{
+  assert.equal(method,'Runtime.callFunctionOn');commands.push(params);
+  try{return {result:{value:await f.window.eval(`(${params.functionDeclaration})`)(...(params.arguments||[]).map(argument=>argument.value))}};}
+  catch(error){return {exceptionDetails:{exception:{description:error.toString()}}};}
+ }}});
+ return {commands,call:(op,payload)=>executor.callSemanticWorld({tabId:7},'main',op,payload,()=>{},17)};
+}
+
+test('实际 CDP 安装后填写各阶段保留资格检查和敏感拒绝，不额外派发',async()=>{
+ const cases=[['input','',true],['textarea','',true],['div','contenteditable="true"',true],
+  ['div','role="textbox"',false],['input','readonly',false],['input','disabled',false],['input','type="file"',false],['input','type="password"','sensitive']];
+ for(const [tag,attributes,allowed] of cases){
+  const f=setup();try{
+   f.document.body.innerHTML=`<${tag} id="field" aria-label="字段" ${attributes}></${tag}>`;
+   const field=f.document.querySelector('#field'),api=installedCaller(f);f.setHit(field);
+   let events=0;field.addEventListener('input',()=>events++);
+   const page=await api.call('semantic_snapshot',{binding:f.binding,options:{query:'字段'}});
+   const token={binding:f.binding,snapshotId:page.snapshotId,ref:page.items[0].ref};
+   if(allowed===true){
+    assert.equal((await api.call('assess_ref_fill',token)).targetAssessment,'ordinary');
+    assert.equal((await api.call('prepare_ref_fill',token)).code,'HIGHLIGHT_UNAVAILABLE');
+    assert.equal((await api.call('ref_fill',{...token,text:'测试填写'})).verified,true);assert.equal(events,1);
+   }else{
+    if(allowed==='sensitive')assert.equal((await api.call('assess_ref_fill',token)).fieldKind,'password');
+    else await assert.rejects(api.call('assess_ref_fill',token),/TARGET_NOT_ACTIONABLE/);
+    for(const op of ['prepare_ref_fill','ref_fill'])await assert.rejects(api.call(op,{...token,text:'禁止填写'}),error=>error.preDispatch===true&&/TARGET_NOT_ACTIONABLE|TARGET_DISABLED|SENSITIVE_TARGET/.test(error.message));
+    assert.equal(events,0);assert.equal(field.value||field.textContent,'');
+   }
+   assert.equal(api.commands.filter(params=>params.functionDeclaration.includes('const createPageSemantics=')).length,1);
+  }finally{f.close();}
+ }
+});
+
+test('实际安装的 ARIA 计划与指针阶段一致拒绝缺失、歧义及禁用选项',async()=>{
+ for(const role of ['combobox','listbox'])for(const by of ['value','label']){
+  const f=setup();try{
+   const inside=role==='listbox';
+   f.document.body.innerHTML=`<div id="combo" role="${role}" aria-label="地区" aria-controls="options" aria-expanded="true">${inside?'<div role="option" data-value="cn">中国</div>':''}</div>${inside?'':'<div id="options"><div role="option" data-value="cn">中国</div></div>'}`;
+   const combo=f.document.querySelector('#combo'),option=f.document.querySelector('[role="option"]'),api=installedCaller(f);
+   option.getBoundingClientRect=()=>({left:200,top:20,right:300,bottom:50,width:100,height:30});
+   f.document.elementFromPoint=x=>x<150?combo:option;
+   const page=await api.call('semantic_snapshot',{binding:f.binding,options:{query:'地区'}});
+   const token={binding:f.binding,snapshotId:page.snapshotId,ref:page.items[0].ref,by,values:[by==='value'?'cn':'中国']};
+   assert.equal((await api.call('plan_ref_select_option',token)).needsChange,true);
+   assert.deepEqual(JSON.parse(JSON.stringify(await api.call('pointer_target',{...token,selectionTarget:true,optionTarget:true}))),{x:212,y:35});
+   for(const [state,code] of [['disabled','SELECT_OPTION_DISABLED'],['ambiguous','SELECT_OPTION_AMBIGUOUS'],['missing','SELECT_OPTION_MISSING']]){
+    option.removeAttribute('aria-disabled');f.document.querySelector('#duplicate')?.remove();
+    if(state==='disabled')option.setAttribute('aria-disabled','true');
+    if(state==='ambiguous'){const duplicate=option.cloneNode(true);duplicate.id='duplicate';option.after(duplicate);}
+    if(state==='missing')option.remove();
+    for(const op of ['plan_ref_select_option','pointer_target'])await assert.rejects(api.call(op,{...token,selectionTarget:true,optionTarget:true}),error=>error.preDispatch===true&&error.message.includes(code));
+   }
+   assert.equal(api.commands.filter(params=>params.functionDeclaration.includes('const createPageSemantics=')).length,1);
+  }finally{f.close();}
+ }
+});
+
+test('实际安装的同源 frame 指针保留缩放、边框换算及无效变换拒绝',async()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<iframe></iframe>';const frame=f.document.querySelector('iframe'),child=frame.contentDocument;
+  frame.style.transform='matrix(1,0,0,1,0,0)';
+  frame.getBoundingClientRect=()=>({left:100,top:120,right:300,bottom:240,width:200,height:120});
+  Object.defineProperties(frame,{offsetWidth:{configurable:true,value:100},offsetHeight:{value:60},clientLeft:{value:2},clientTop:{value:3}});
+  child.body.innerHTML='<button aria-label="框架按钮">框架按钮</button>';const button=child.querySelector('button');
+  child.defaultView.HTMLElement.prototype.getClientRects=()=>[{}];
+  button.getBoundingClientRect=()=>({left:10,top:15,right:50,bottom:35,width:40,height:20});
+  child.elementFromPoint=()=>button;f.setHit(frame);
+  const api=installedCaller(f),page=await api.call('semantic_snapshot',{binding:f.binding,options:{composed:true,query:'框架按钮'}});
+  const token={binding:f.binding,snapshotId:page.snapshotId,ref:page.items[0].ref};
+  assert.deepEqual(JSON.parse(JSON.stringify(await api.call('pointer_target',token))),{x:164,y:176});
+  frame.style.transform='matrix(1,1,0,1,0,0)';await assert.rejects(api.call('pointer_target',token),/UNSUPPORTED_FRAME_TRANSFORM/);
+  frame.style.transform='matrix(1,0,0,1,0,0)';Object.defineProperty(frame,'offsetWidth',{value:0});
+  await assert.rejects(api.call('pointer_target',token),/TARGET_NOT_ACTIONABLE/);
+ }finally{f.close();}
+});
+
 test('受控输入与富文本填写派发事件并核对读回值，回执不含输入内容',()=>{
  const f=setup();try{
   let events=0;f.document.querySelector('#controlled').addEventListener('input',()=>events++);
@@ -26,6 +105,23 @@ test('受控输入与富文本填写派发事件并核对读回值，回执不�
   const editor=f.find('正文',['textbox']);f.setHit(f.document.querySelector('#editor'));
   const rich=f.call('ref_fill',{...editor,text:'编辑内容'});assert.equal(rich.verified,true);
   assert.equal(f.document.querySelector('#editor').textContent,'编辑内容');
+ }finally{f.close();}
+});
+
+// 中文注释：公共执行入口必须在派发前拒绝跨 frame 的旧引用，不能填写另一文档的控件。
+test('公共 ref_fill 拒绝把已移除的 iframe 输入框接替到另一同源文档',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<iframe></iframe><iframe></iframe>';
+  const frames=[...f.document.querySelectorAll('iframe')];
+  for(const frame of frames){
+   frame.contentWindow.HTMLElement.prototype.getClientRects=()=>[{}];
+   frame.contentDocument.body.innerHTML='<input id="field" aria-label="字段">';
+  }
+  const page=f.call('semantic_snapshot',{binding:f.binding,options:{composed:true,query:'字段'}});
+  frames[0].contentDocument.querySelector('input').remove();
+  let dispatched=0;const foreign=frames[1].contentDocument.querySelector('input');foreign.addEventListener('input',()=>dispatched++);
+  assert.throws(()=>f.call('ref_fill',{binding:f.binding,snapshotId:page.snapshotId,ref:page.items[0].ref,text:'不应派发'}),/REF_TARGET_MISSING/);
+  assert.equal(foreign.value,'');assert.equal(dispatched,0);
  }finally{f.close();}
 });
 

@@ -1,4 +1,5 @@
 """Native API: trusted profile owner registry, never HTTP-selected identity."""
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -129,7 +130,16 @@ class NativeApiTests(unittest.TestCase):
         self.assertEqual(self.client.post(PREFIX + '/tasks/tool-task/approve').status_code, 404)
 
     def test_profile_query_matches_only_the_runtime_profile_across_shared_routes(self):
-        import hermes_constants
+        # 中文注释：只在本测试导入期加入明确指定的真实源码，随后恢复完整路径顺序。
+        hermes_root = Path(os.environ['HERMES_SOURCE']).resolve()
+        original_path = sys.path[:]
+        sys.path.insert(0, str(hermes_root))
+        try:
+            import hermes_constants
+        finally:
+            sys.path[:] = original_path
+        self.assertEqual(sys.path, original_path)
+        self.assertEqual(Path(hermes_constants.__file__).resolve(), hermes_root / 'hermes_constants.py')
 
         root = Path(self.tmp.name) / '.hermes'
         work_home = root / 'profiles' / 'work'

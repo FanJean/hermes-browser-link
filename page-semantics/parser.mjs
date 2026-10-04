@@ -33,6 +33,18 @@ export function createPageParser(context) {
    if(coverage.scanned>=maxScan){coverage.traversalComplete=false;warnings.add('scan_limit');break;}
    coverage.scanned++;if(visible(node,false))nodes.push(node);
   }
+  // 中文注释：按真实祖先链回溯至解析根；frame 的 html 未被扫描，不能用扫描数限深。重复节点拒绝解析，避免循环或误报缺失。
+  const contains=(container,node)=>{
+   if(!composed)return container.contains(node);
+   const seen=new Set();
+   for(let current=node;current;current=parent(current)){
+    if(seen.has(current))throw Error('INVALID_DOM_ANCESTRY');
+    seen.add(current);
+    if(current===container)return true;
+    if(current===scope)break;
+   }
+   return false;
+  };
   if(coverage.skippedFrames)warnings.add('unread_frames');
   const entries=[];
   const safe=node=>{const value=read(node);if(value.truncated)warnings.add('text_truncated');return value;};
@@ -85,7 +97,8 @@ export function createPageParser(context) {
      const explicitNodes=explicit.map(id=>cell.getRootNode().getElementById?.(id));
      if(explicitNodes.some(n=>!n||!visible(n,false)||nearest(n,a=>matches(a,'table,[role="table"],[role="grid"]'))!==table))warnings.add('unresolved_header');
      const related=explicit.length?explicitNodes.filter(n=>n&&visible(n,false)&&nearest(n,a=>matches(a,'table,[role="table"],[role="grid"]'))===table).map(n=>source(n).sourceRef)
-      :[...headers.filter(h=>h.column<=column&&h.column+h.colSpan>column),...rowHeaders.filter(h=>h.row<=r&&h.row+h.rowSpan>r)].map(h=>h.sourceRef);
+      // 中文注释：数据单元和列表头的半开区间相交即关联，不能只检查数据起始列。
+      :[...headers.filter(h=>h.column<column+colSpan&&h.column+h.colSpan>column),...rowHeaders.filter(h=>h.row<=r&&h.row+h.rowSpan>r)].map(h=>h.sourceRef);
      const entry={...evidence(cell),text:value.text,row:r,column,rowSpan,colSpan,header,headerRole,headerRefs:related};
      cells.push(entry);if(headerRole==='column')headers.push(entry);if(headerRole==='row')rowHeaders.push(entry);
      for(let c=column;c<column+colSpan;c++)occupied.set(c,r+rowSpan);
@@ -101,7 +114,7 @@ export function createPageParser(context) {
    const group=nearest(node,n=>matches(n,'fieldset,[role="group"]'));
    const legend=group?.querySelector('legend');
    const related=(node.getAttribute('aria-describedby')||'').split(/\s+/).slice(0,10).map(id=>node.getRootNode().getElementById?.(id)).filter(n=>n&&visible(n,false));
-   const optionNodes=node.localName==='select'?[...node.options].filter(n=>!n.hidden):nodes.filter(n=>matches(n,'[role="option"]')&&node.contains(n));
+   const optionNodes=node.localName==='select'?[...node.options].filter(n=>!n.hidden):nodes.filter(n=>matches(n,'[role="option"]')&&contains(node,n));
    if(optionNodes.length>100)warnings.add('option_limit');
    const options=optionNodes.slice(0,100).map(n=>({text:context.option(n).text,selected:n.selected===true||n.getAttribute('aria-selected')==='true'}));
    add('forms',{...evidence(node),formRef:form?source(form).sourceRef:null,groupRef:group?source(group).sourceRef:null,groupLabel:legend?name(legend):group?context.attribute(group,'aria-label').text:'',label:field.name,role:field.role,validationMessage:errors.map(name).join(' '),
@@ -119,7 +132,7 @@ export function createPageParser(context) {
     const fields={},sources={},states={};
     for(const [key,rule] of Object.entries(schema.fields)){
      if(!/^[A-Za-z_][\w-]{0,63}$/.test(key)||!rule||typeof rule!=='object'||Array.isArray(rule)||Object.keys(rule).some(k=>!['selector','type','attribute','required'].includes(k))||typeof rule.selector!=='string'||rule.selector.length>512||!['text','number','url'].includes(rule.type||'text')||!['href','src','alt','title','datetime',undefined].includes(rule.attribute)||('required' in rule&&typeof rule.required!=='boolean'))fail();
-     const candidates=rule.selector===':scope'?[record]:nodes.filter(n=>(n===record||record.contains(n))&&matches(n,rule.selector));
+     const candidates=rule.selector===':scope'?[record]:nodes.filter(n=>contains(record,n)&&matches(n,rule.selector));
      let status=candidates.length===0?'missing':candidates.length>1?'ambiguous':'ok',value=null,raw=null;
      if(candidates.length===1){
       const node=candidates[0];sources[key]=evidence(node);

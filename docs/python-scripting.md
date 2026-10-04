@@ -110,6 +110,8 @@ The following helpers use the existing task, origin and lease checks. Parsing is
 | `wait_for(selector, state='present', text=None, count=None, timeout=10, interval=0.25)` | Read-only wait for `present`, `absent`, `text`, `count` or `stable`. Returns `satisfied`, `timed_out` and the last observation. Partial reads never prove absence. |
 | `expect_response(url=None, timeout=15)` / `expect_navigation(url=None, timeout=15)` | Context managers that subscribe before your action and expose a matching event in `.result`. Matching is observation by filter, not proof that your action caused it or that business processing succeeded. Ambiguous events, overflow and timeouts fail without replaying the action. |
 
+With `composed=True`, schema fields and ARIA form options include descendants across accessible Shadow trees and same-origin frames within the selected root and record/control. Hidden and private content stays excluded; multiple matching fields remain ambiguous. With `composed=False`, containment uses the light DOM. Implicit table column headers associate with every column interval covered by a cell's `colSpan`; explicit `headers` take priority and row headers stay limited to their row spans. These associations do not normalize a table into a spreadsheet.
+
 ```python
 # 中文注释：先选定业务记录范围，再按明确字段读取；字段缺失会保留状态。
 result = extract({

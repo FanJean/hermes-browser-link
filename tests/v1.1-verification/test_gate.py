@@ -1,11 +1,15 @@
 """Offline gate's negative controls; no browser, install, or evidence write."""
 import importlib.util
 import json
+import os
 from pathlib import Path
+import runpy
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'scripts/verify-v1.1-offline.py'
 spec = importlib.util.spec_from_file_location('offline_gate', SCRIPT)
@@ -15,6 +19,20 @@ spec.loader.exec_module(gate)
 
 
 class GateNegativeControls(unittest.TestCase):
+    # 中文注释：运行真实核心入口但拦截子命令，验证所有临时目录遵守调用方指定的 TMPDIR。
+    def test_core_runner_honors_tmpdir_and_passes_owned_scratch_to_children(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary).resolve()
+            original = tempfile.TemporaryDirectory
+            with patch.dict(os.environ, {'TMPDIR': str(parent)}), patch('tempfile.TemporaryDirectory', wraps=original) as directories, patch('subprocess.run') as run:
+                run.return_value.returncode = 0
+                runpy.run_path(str(SCRIPT.with_name('test-core.py')), run_name='__main__')
+            directories.assert_not_called()
+            self.assertGreater(len(run.call_args_list), 0)
+            for call in run.call_args_list:
+                child = Path(call.kwargs['env']['TMPDIR'])
+                self.assertEqual(child, parent)
+
     # 中文注释：审计报告是生成输出，不能把写报告误判为运行源码漂移；真实源码仍须校验。
     def test_audit_reports_are_outputs_not_runtime_sources(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -249,6 +267,68 @@ class GateNegativeControls(unittest.TestCase):
             time.sleep(1.0)
             self.assertFalse(marker.exists(), 'a child with detached output must not survive the runner timeout')
 
+    def test_child_python_preserves_local_namespace_with_private_environment(self):
+        # 中文注释：上游 regular tests 不得遮蔽本地 namespace；真实 API 单独核对源码来源。
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            work, scratch = root / 'run', root / 'scratch'
+            tree, source, parent = work / 'source', root / 'selected-hermes', root / 'parent-path'
+            native, deps = tree / 'native-bridge', work / 'pytest-deps'
+            for directory in (native, deps, source, parent, scratch):
+                directory.mkdir(parents=True)
+            for directory in (native, deps, source, parent):
+                (directory / 'gate_native_marker.py').write_text('VALUE = "native-order"\n')
+            for directory in (deps, source, parent):
+                (directory / 'gate_deps_marker.py').write_text('VALUE = "deps-order"\n')
+            for directory in (source, parent):
+                (directory / 'gate_source_marker.py').write_text('VALUE = "source-order"\n')
+            (parent / 'gate_parent_only_marker.py').write_text('VALUE = "parent-only"\n')
+            (native / 'tests').mkdir()
+            (native / 'tests/support.py').write_text('VALUE = "local-support"\n')
+            (source / 'tests').mkdir()
+            (source / 'tests/__init__.py').write_text('# 中文注释：模拟上游 regular package。\n')
+            self.assertFalse((native / 'tests/__init__.py').exists())
+            home = gate.prepare_scratch_home(work / 'home')
+            probe = (
+                'import importlib.util, json, os; '
+                'import tests; print("tests_paths=" + repr(list(tests.__path__)), flush=True); '
+                'import gate_native_marker, gate_deps_marker, tests.support; '
+                'print(json.dumps({"modules": [module.__file__ for module in '
+                '(gate_native_marker, gate_deps_marker, tests.support)], '
+                '"tests_file": tests.__file__, "tests_paths": list(tests.__path__), '
+                '"source_visible": importlib.util.find_spec("gate_source_marker") is not None, '
+                '"parent_visible": importlib.util.find_spec("gate_parent_only_marker") is not None, '
+                '"env": {key: os.environ[key] for key in '
+                '("HOME", "HERMES_HOME", "TMPDIR", "UV_CACHE_DIR", "PYTHONDONTWRITEBYTECODE", '
+                '"HERMES_SOURCE", "HERMES_PYTHON", "PYTHONPATH")}}))'
+            )
+            # 中文注释：任意父 PYTHONPATH 不得混入；子进程按真实环境执行导入。
+            with patch.dict(os.environ, {'PYTHONPATH': os.pathsep.join((str(parent), '/unused/parent-path'))}):
+                env = gate.build_run_environment(
+                    work, tree, home, scratch, sys.executable, str(source),
+                    '/unused/browser-use', Path('/unused/browser-use-source'))
+                child = subprocess.run([sys.executable, '-c', probe], cwd=tree,
+                                       env={**os.environ, **env}, capture_output=True, text=True, timeout=10)
+            self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+            observed = json.loads(child.stdout.splitlines()[-1])
+            self.assertEqual(observed['modules'], [str(native / 'gate_native_marker.py'),
+                                                   str(deps / 'gate_deps_marker.py'),
+                                                   str(native / 'tests/support.py')])
+            self.assertIsNone(observed['tests_file'])
+            self.assertEqual(observed['tests_paths'], [str(native / 'tests')])
+            self.assertFalse(observed['source_visible'])
+            self.assertFalse(observed['parent_visible'])
+            self.assertEqual(observed['env'], {
+                'HOME': str(home), 'HERMES_HOME': str(work / 'hermes'), 'TMPDIR': str(scratch),
+                'UV_CACHE_DIR': str(work / 'uv-cache'), 'PYTHONDONTWRITEBYTECODE': '1',
+                'HERMES_SOURCE': str(source), 'HERMES_PYTHON': sys.executable,
+                'PYTHONPATH': os.pathsep.join((str(native), str(deps))),
+            })
+            self.assertTrue((work / 'uv-cache').is_dir())
+            self.assertTrue((home / '.hermes/cache/scratch').is_dir())
+            self.assertFalse((home / '.hermes/hermes-agent').exists())
+            self.assertFalse(any(root.rglob('__pycache__')))
+
     def test_uv_cache_is_private_to_the_current_scratch_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -380,8 +460,8 @@ class GateNegativeControls(unittest.TestCase):
 
     def test_baseline_and_supplemental_step_counts_are_separate(self):
         # 中文注释：当前显式矩阵已纳入新增基准与版本回归，保持实际审阅后的数量。
-        # 中文注释：Cookie 镜像 Python runner 新增一个基准步骤，原有步骤全部保留。
-        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 40)
+        # 中文注释：诊断三个固定 Python runner 各新增一步，原有四十步全部保留。
+        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 43)
         self.assertEqual(len(gate.supplemental_matrix(Path('/scratch/source'), '/scratch/python')), 2)
 
     def test_browser_use_cli_source_is_discovered_from_cli_without_executing_it(self):
