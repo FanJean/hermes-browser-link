@@ -62,9 +62,9 @@ Upgrade an existing installation from this source or package first, then enable 
 ./install.sh --auto-update install
 ```
 
-每小时检查 GitHub 最新正式 Release；开发预览版（包括 1.7.0）不属于自动更新通道。Chrome、Edge 或 Hermes 运行时延后到下一次检查；不会退出应用。更新校验 GitHub 附件 SHA256、包内完整文件清单、扩展 ID 和版本，沿用原升级备份及失败回滚，包含此前安装的 profile。后台更新不打开浏览器或修改剪贴板。更新后，下次打开浏览器时重载扩展，再启动 Hermes。
+每小时检查 GitHub 最新正式 Release；开发预览版（包括 1.7.1）不属于自动更新通道。Chrome、Edge 或 Hermes 运行时延后到下一次检查；不会退出应用。更新校验 GitHub 附件 SHA256、包内完整文件清单、扩展 ID 和版本，沿用原升级备份及失败回滚，包含此前安装的 profile。后台更新不打开浏览器或修改剪贴板。更新后，下次打开浏览器时重载扩展，再启动 Hermes。
 
-Checks the latest stable GitHub Release hourly; developer previews, including 1.7.0, are excluded. Installation waits until Chrome, Edge and Hermes exit. The updater validates the asset SHA256, package file inventory, extension identity and version, and reuses transactional backups and rollback for all installed profiles. Reload the extension after opening the browser, then start Hermes.
+Checks the latest stable GitHub Release hourly; developer previews, including 1.7.1, are excluded. Installation waits until Chrome, Edge and Hermes exit. The updater validates the asset SHA256, package file inventory, extension identity and version, and reuses transactional backups and rollback for all installed profiles. Reload the extension after opening the browser, then start Hermes.
 
 ```sh
 # 只自动检查 / Automatically check without installing

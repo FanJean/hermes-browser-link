@@ -165,7 +165,7 @@ def migrate(package, home, browser_root, *, apply=False):
     # 中文注释：1.5.3 沿用固定身份，保留已支持的迁移版本并核对扩展身份。
     digest = installer.hashlib.sha256(base64.b64decode(extension['key'], validate=True)).hexdigest()[:32]
     identity = ''.join(chr(97 + int(c, 16)) for c in digest)
-    if extension['version'] not in {'1.4.0', '1.4.1', '1.4.2', '1.4.3', '1.4.4', '1.4.5', '1.5.0', '1.5.1', '1.5.2', '1.5.3', '1.6.0', '1.6.1', '1.7.0'} or ORIGIN != f'chrome-extension://{identity}/':
+    if extension['version'] not in {'1.4.0', '1.4.1', '1.4.2', '1.4.3', '1.4.4', '1.4.5', '1.5.0', '1.5.1', '1.5.2', '1.5.3', '1.6.0', '1.6.1', '1.7.0', '1.7.1'} or ORIGIN != f'chrome-extension://{identity}/':
         raise ValueError('需要身份匹配的 1.4.x 安装包')
     configs = [p for p in [home / 'config.yaml', *sorted((home / 'profiles').glob('*/config.yaml'))] if p.exists()]
     rewrites = {p: rewrite_config(p.read_bytes()) for p in configs}

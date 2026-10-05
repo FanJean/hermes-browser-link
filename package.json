@@ -1,8 +1,8 @@
 {
   "name": "hermes-browser-link",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "private": true,
-  "description": "Hermes browser automation for Chrome and Edge with smart approval, Python workflows, automatic content shielding, a persistent task cursor and Cookie mirroring.",
+  "description": "让 Hermes 在已登录的 Chrome/Edge 中完成网页任务，支持智能审批、Python 工作流、自动文本与截图屏蔽、持续任务鼠标和 Cookie 镜像。",
   "type": "module",
   "author": "FanJean",
   "repository": {

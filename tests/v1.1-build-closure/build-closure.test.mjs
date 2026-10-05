@@ -319,19 +319,23 @@ test('native build refuses to replace its source directory without changing it',
   }
 });
 
-test('1.7.0 发布入口报告同一个版本', async () => {
+test('1.7.1 发布入口报告同一个版本', async () => {
   // 中文注释：以包版本为发布基准，插件、桌面 API、扩展和 Native 握手必须一致。
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const plugin = await readFile(path.join(root, 'executor-plugin/plugin.yaml'), 'utf8');
   const version = /^version:\s*([^\s]+)$/m.exec(plugin)?.[1];
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(pkg.version, '1.7.0');
+  assert.equal(pkg.version, '1.7.1');
   assert.equal(version, pkg.version);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);
   const desktop = JSON.parse(await readFile(path.join(root, 'executor-plugin/dashboard/manifest.json'), 'utf8'));
   const extension = JSON.parse(await readFile(path.join(root, 'native-extension/manifest.json'), 'utf8'));
+  // 中文注释：对外的安装包、扩展与插件描述统一中文，避免仅改 GitHub 简介而漏掉管理页元数据。
+  assert.match(pkg.description, /[\u4e00-\u9fff]/u);
+  assert.match(extension.description, /[\u4e00-\u9fff]/u);
+  assert.match(/^description:\s*(.+)$/m.exec(plugin)[1], /[\u4e00-\u9fff]/u);
   const background = await readFile(path.join(root, 'native-extension/background.mjs'), 'utf8');
   assert.equal(desktop.version, version);
   assert.equal(extension.version, version);

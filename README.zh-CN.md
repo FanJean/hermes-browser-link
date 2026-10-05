@@ -1,6 +1,6 @@
 # Hermes Browser Link
 
-**1.7.0 — macOS 开发预览。** 支持受授权网页任务、自动文本与截图屏蔽、持续任务鼠标、桌面 Cookie 镜像和正式版自动更新。
+**1.7.1 — macOS 开发预览。** 支持受授权网页任务、自动文本与截图屏蔽、持续任务鼠标、桌面 Cookie 镜像和正式版自动更新。
 
 ![Hermes Browser Link](docs/assets/readme-banner.png)
 
@@ -38,7 +38,7 @@
 1. 下载 [Release 安装包](https://github.com/FanJean/hermes-browser-link/releases) 并安装（无需 Node.js）；出现“程序安装并启用完成”即成功：
 
    ```sh
-   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.7.0/hermes-browser-link-1.7.0.zip -o hermes-browser-link-1.7.0.zip && unzip hermes-browser-link-1.7.0.zip && cd hermes-browser-link-1.7.0 && ./install.sh
+   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.7.1/hermes-browser-link-1.7.1.zip -o hermes-browser-link-1.7.1.zip && unzip hermes-browser-link-1.7.1.zip && cd hermes-browser-link-1.7.1 && ./install.sh
    ```
 
 2. 在浏览器打开 `chrome://extensions` 或 `edge://extensions` → 开发者模式 → 加载已解压的扩展程序 → 粘贴脚本打印并复制的绝对路径；脚本最多等待 3 分钟，检测成功显示 ✅，可用 Ctrl+C 跳过等待。
@@ -46,7 +46,7 @@
 
 升级：在新包目录运行 `./install.sh --upgrade`（自动备份，失败回滚），再重载扩展和重启桌面端。卸载：`./install.sh --uninstall`（默认保留任务私有数据；加 `--purge` 才删除）。
 
-自动更新只接收正式版，会跳过包括本次 1.7.0 在内的开发预览版。安装本次更新组件后运行 `./install.sh --auto-update install`，每小时检查正式 Release，在浏览器和 Hermes 退出后安装。更新后重载扩展再启动 Hermes。仅检查用 `--auto-update check`，关闭用 `--auto-update off`；立即更新用 `--update`。详见 [自动更新](docs/installation.md#automatic-updates--自动更新)。
+自动更新只接收正式版，会跳过包括本次 1.7.1 在内的开发预览版。安装本次更新组件后运行 `./install.sh --auto-update install`，每小时检查正式 Release，在浏览器和 Hermes 退出后安装。更新后重载扩展再启动 Hermes。仅检查用 `--auto-update check`，关闭用 `--auto-update off`；立即更新用 `--update`。详见 [自动更新](docs/installation.md#automatic-updates--自动更新)。
 
 [源码、手动安装、多 profile 与故障排查](docs/installation.md) · [代理安装提示词](docs/agent-install-prompt.md)。
 

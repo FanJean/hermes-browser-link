@@ -166,9 +166,9 @@ Run `node tests/v1.6.0/real-work-window.mjs --headed` and repeat with `--edge`. 
 
 To keep gate scratch files outside the user's Hermes directory, set `HERMES_BROWSER_VERIFY_SCRATCH=/private/tmp/b16` together with `TMPDIR=/private/tmp` when running `npm run verify`. The existing gate still isolates HOME inside its scratch snapshot. No live browser profile or plugin installation is modified.
 
-### Current gate declaration (1.7.0)
+### Current gate declaration (1.7.1)
 
-当前 runner 声明为 44 baseline + 2 supplemental + 49 reviewed = 95 个步骤，known runner inventory 仍为 90 个文件。此处记录门禁组成，不声明 1.7.0 全量测试已通过；完整结果须在冻结候选后统一运行 `npm test` 和 `npm run verify` 并记录。
+当前 runner 声明为 44 baseline + 2 supplemental + 49 reviewed = 95 个步骤，known runner inventory 仍为 90 个文件。此处记录门禁组成，不声明 1.7.1 全量测试已通过；完整结果须在冻结候选后统一运行 `npm test` 和 `npm run verify` 并记录。
 
 版本闭包定向测试只验证受影响的离线 suite；安装流程 suite 使用合成临时 HOME/HERMES_HOME。真实 Chrome/Edge、Hermes Desktop、安装升级和重启行为仍需单独人工验收，历史浏览器结果不能作为当前版本验收证据。
 

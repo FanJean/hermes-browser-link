@@ -1,6 +1,6 @@
 # Features and limits
 
-This catalog describes **1.7.0 macOS developer preview**. Local/offline checks, isolated browser checks, installed runtime checks and GitHub publication are distinct evidence states. Current acceptance commands and limits are in [testing](testing.md).
+This catalog describes **1.7.1 macOS developer preview**. Local/offline checks, isolated browser checks, installed runtime checks and GitHub publication are distinct evidence states. Current acceptance commands and limits are in [testing](testing.md).
 
 ## Capabilities
 
@@ -53,4 +53,4 @@ Cookie copying does not copy localStorage, IndexedDB, device keys or MFA state, 
 
 After installing the maintenance component, use `./install.sh --check-update`, `--update`, or `--auto-update check|install|off`. Scheduled checks run hourly; automatic installation waits until Chrome, Edge and Hermes exit. GitHub asset digest, archive paths, complete package inventory, version and extension identity are checked before the existing backup/rollback transaction. Manual upgrade, update and uninstall share the installation lock.
 
-Only stable releases qualify. GitHub pre-releases, including 1.7.0, are skipped; installing a preview uses its downloaded package and `--upgrade`. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
+Only stable releases qualify. GitHub pre-releases, including 1.7.1, are skipped; installing a preview uses its downloaded package and `--upgrade`. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
