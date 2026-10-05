@@ -14,11 +14,11 @@ Task states: `pending_approval` → `authorizing` → `ready` / `running` → `c
 
 ## Automatic task cleanup (1.4.3)
 
-A completed turn starts a 10-minute grace period in the daemon. Any `browser_shared_*` call in the same Hermes session cancels it, including health, reference and script calls. CLI exit after a completed turn preserves the grace period. Failed or interrupted turns and `/stop` immediately end that session's tasks using handoff. An unmapped stop event logs a warning and closes no tasks.
+A completed turn closes its work tabs immediately by default. If a positive grace period is configured, any `browser_shared_*` call in the same Hermes session cancels it, including health, reference and script calls. CLI exit preserves a configured grace period. Failed or interrupted turns and `/stop` immediately end that session's tasks using handoff. An unmapped stop event logs a warning and closes no tasks.
 
 The daemon also closes ready tasks after 60 minutes without calls, scanning once at startup and then every 0.5 seconds. A task-specific call updates that task's activity; a session-level call updates its active tasks. Paused tasks and tasks waiting for manual input or approval are exempt. After a daemon restart, previously paused/manual tasks require explicit resume and retain this protection. Running operations are not closed by the idle scan.
 
-Set `HERMES_BROWSER_IDLE_CLOSE_SECONDS` (default `600`, `0` closes immediately) and `HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS` (default `3600`) in the daemon's launch environment. Values must be finite non-negative seconds. Restart the daemon through your normal installation workflow to apply changes. This release does not change `.env` or the running installation automatically.
+Set `HERMES_BROWSER_IDLE_CLOSE_SECONDS` (default `0`, positive values enable grace) and `HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS` (default `1200`) in the daemon's launch environment. Values must be finite non-negative seconds. Restart the daemon through your normal installation workflow to apply changes. This release does not change `.env` or the running installation automatically.
 
 Use `browser_shared_close(task_id, keep_tabs=true)` for pages the user must finish. The task loses authority, its created tabs stay open, and its group is removed when the private creation journal proves ownership. Tabs moved to a user's group and tabs the user opened stay unchanged. Renaming a task group does not remove its identity; browser restart invalidates the old creation proof. Use `python3 scripts/sweep-stale-tasks.py --help` to inspect the one-time cleanup options.
 

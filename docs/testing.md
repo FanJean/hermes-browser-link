@@ -19,6 +19,8 @@ node tests/v1.4.4/real-round1f.mjs --edge
 ```sh
 node tests/v1.4.3/real-autoclose.mjs
 node tests/v1.4.3/real-autoclose.mjs --edge
+node tests/v1.4.3/real-autoclose.mjs --immediate
+node tests/v1.4.3/real-autoclose.mjs --edge --immediate
 ```
 
 The fixture uses a temporary profile and local server. Its completed hook runs in a short-lived Python process, followed by session finalize, while the daemon retains a three-second grace. It covers continuation cancelling grace, stop/interrupted/failed immediate closure, group renaming, `keep_tabs=true` page retention and an unchanged user-created group with the same title. It is not part of the offline runner. Mechanical navigation/click/fill p50 must remain within 110% of the same-browser baseline; use [the benchmark commands](bench.md).

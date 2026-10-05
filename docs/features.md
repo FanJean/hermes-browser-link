@@ -1,6 +1,6 @@
 # Features and limits
 
-This catalog describes **1.8.0 macOS stable release**. Local/offline checks, isolated browser checks, installed runtime checks and GitHub publication are distinct evidence states. Current acceptance commands and limits are in [testing](testing.md).
+This catalog describes **1.8.1 macOS stable release**. Local/offline checks, isolated browser checks, installed runtime checks and GitHub publication are distinct evidence states. Current acceptance commands and limits are in [testing](testing.md).
 
 ## Capabilities
 
@@ -53,7 +53,7 @@ Cookie copying does not copy localStorage, IndexedDB, device keys or MFA state, 
 
 After installing the maintenance component, use `./install.sh --check-update`, `--update`, or `--auto-update check|install|off`. Scheduled checks run hourly; automatic installation waits until Chrome, Edge and Hermes exit. GitHub asset digest, archive paths, complete package inventory, version and extension identity are checked before the existing backup/rollback transaction. Manual upgrade, update and uninstall share the installation lock.
 
-Only stable releases qualify. GitHub pre-releases are skipped. Version 1.8.0 is stable; upgrade an older installation manually once to install the current update source. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
+Only stable releases qualify. GitHub pre-releases are skipped. Version 1.8.1 is stable; upgrade an older installation manually once to install the current update source. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
 ## 独立云端连接
 
 扩展弹窗提供云端连接码、配对管理和独立完全访问开关。网页端显示已配对浏览器的实际在线状态；云端只授权任务页，原本地权限保持独立。

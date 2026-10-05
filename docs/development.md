@@ -52,7 +52,7 @@ docs/                   Documentation
    {"extensionDir": "/absolute/path/to/native-extension"}
    ```
 
-2. Run `npm run dev:sync`. It refuses to run while browser tasks are active, packages the source, syncs the plugin and extension, reloads Hermes plugins and restarts the local daemon. A temporary backup is kept only if the sync fails. It refuses when the installed extension version differs from the source; for a version upgrade (source newer, same extension) run `npm run dev:sync -- --allow-upgrade` after making your own backup.
+2. Run `npm run dev:sync`. It refuses to run while browser tasks are active, packages the source, syncs the root plugin, installed profile copies and extension, reloads Hermes plugins and restarts the local daemon. A temporary backup is kept only if the sync fails. It refuses when the installed extension version differs from the source; for a version upgrade (source newer, same extension) run `npm run dev:sync -- --allow-upgrade` after making your own backup.
 3. Click **Reload** on the extension in each browser. Restart Hermes Desktop if you changed `executor-plugin/dashboard/plugin_api.py`.
 
 For Desktop-page-only work, `npm run dev:watch` re-syncs `executor-plugin/desktop/plugin.js` on every save.

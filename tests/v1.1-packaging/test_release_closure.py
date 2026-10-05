@@ -13,13 +13,14 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 SCRATCH = Path.home() / '.hermes/cache/scratch'
 ORIGIN = 'chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/'
-INPUTS = ('package.json', 'executor-plugin', 'native-bridge', 'native-extension',
+# 中文注释：版本闭包校验包含锁文件和云端版本元数据，fixture 不能遗漏这些输入。
+INPUTS = ('package.json', 'package-lock.json', 'executor-plugin', 'native-bridge', 'native-extension',
           # 中文注释：云端 Native 入口与运行时也属于正式包的已提交输入。
           'cloud-link', 'browser-workspaces', 'browser-diagnostics', 'page-semantics',
           'browser-interactions', 'approval-policy',
           'CHANGELOG.md',
           'scripts/install-executor.py', 'scripts/install-cli.py', 'install.sh', 'docs/installation.md',
-          'docs/python-scripting.md', 'LICENSE')
+          'docs/python-scripting.md', 'LICENSE', 'cloud-link/site/package.json', 'cloud-link/site/package-lock.json')
 
 
 def load_installer():

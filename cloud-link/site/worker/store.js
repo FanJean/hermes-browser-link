@@ -3,6 +3,8 @@ export class Denied extends Error {
   constructor(code, status = 403) { super(code); this.status = status; }
 }
 export const now = () => Math.floor(Date.now() / 1000);
+// 中文注释：覆盖 15 秒网络超时、3 秒重连等待及心跳写入间隔；网页和入队共用过期边界。
+const connectionOnline = device => device.state === 'active' && device.last_seen !== null && device.last_seen > now() - 30;
 export async function hash(value) {
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))),
     n => n.toString(16).padStart(2, '0')).join('');
@@ -109,8 +111,8 @@ export class Store {
     return result.results.map(row => ({ device_id: row.id, label: row.label, instance_id: row.instance_id,
       allowed_origins: JSON.parse(row.origins), state: row.state, browser: row.browser,
       full_access: row.full_access === 1, access_scope: row.access_scope, last_seen: row.last_seen,
-      connection_online: row.state === 'active' && row.last_seen > now() - 15,
-      online: row.state === 'active' && row.browser_connected === 1 && row.last_seen > now() - 15 }));
+      connection_online: connectionOnline(row),
+      online: connectionOnline(row) && row.browser_connected === 1 }));
   }
   async heartbeat(device, args) {
     if (device.state === 'pending') return { status: 'pending_pairing' };
@@ -184,7 +186,7 @@ export class Store {
       if (existing.digest !== digest) throw new Denied('request_conflict', 409);
       return this.consume(existing);
     }
-    if (device.last_seen < now() - 15 || device.last_seen === null || device.browser_connected !== 1) throw new Denied('device_offline', 409);
+    if (!connectionOnline(device) || device.browser_connected !== 1) throw new Denied('device_offline', 409);
     // 中文注释：不同会话的建任务标记必须是新 UUID，避免常见的 create-1 导致两个对话误复用同一任务。
     if (suffix === 'create' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new Denied('create_request_uuid_required',400);
     let session;

@@ -71,12 +71,18 @@ def write_installer_package(root: Path, *, include_api_client: bool = True) -> P
 def write_packager_source(root: Path, *, include_api_client: bool = False) -> Path:
     """Create all packager preflight inputs, leaving only the requested omission."""
     files = {
+        # 中文注释：合成源树也遵守完整版本闭包，负例只破坏被测文件。
         "package.json": b'{"version":"1.3.0"}\n',
+        "package-lock.json": b'{"version":"1.3.0","packages":{"":{"version":"1.3.0"}}}\n',
+        "executor-plugin/dashboard/manifest.json": b'{"version":"1.3.0"}\n',
+        "cloud-link/site/package.json": b'{"version":"1.3.0"}\n',
+        "cloud-link/site/package-lock.json": b'{"version":"1.3.0","packages":{"":{"version":"1.3.0"}}}\n',
         "native-bridge/client.py": b"# client\n",
         "native-bridge/daemon.py": b"# daemon\n",
         "native-bridge/host.py": b"# host\n",
         "native-extension/manifest.json": b'{"manifest_version":3,"version":"1.3.0"}\n',
         "native-extension/build.mjs": b"// build entry fixture\n",
+        "native-extension/background.mjs": b"// 中文注释：版本握手夹具。\nconst hello={version:'1.3.0'};const popup={version:'1.3.0'};\n",
         "executor-plugin/plugin.yaml": b"name: browser-link\nversion: 1.3.0\n",
         "executor-plugin/__init__.py": b"\"\"\"Plugin fixture.\"\"\"\n",
         "executor-plugin/open_tool.py": b"# open tool\n",

@@ -59,6 +59,18 @@ class CloudTests(unittest.TestCase):
         self.assertEqual(self.bridge.tasks['local-task']['state'], 'ready')
         self.assertEqual(self.bridge.tasks['cloud-task']['state'], 'closed')
         self.assertFalse(any(p.get('owner') == 'local-owner' for _, p in self.bridge.calls))
+    def test_idle_close_removes_work_pages_but_disconnect_hands_them_back(self):
+        # 中文注释：闲置和正常断线分开验证，所有清理仍仅限本云端 owner。
+        self.create()
+        self.assertTrue(self.executor.handoff_session('cloud-session-a', keep_tabs=False))
+        calls=[params for method,params in self.bridge.calls if method=='shared.handoff']
+        self.assertFalse(calls[-1]['keepTabs'])
+        self.assertEqual(self.bridge.tasks['local-task']['state'],'ready')
+        self.create()
+        self.assertTrue(self.executor.handoff_session('cloud-session-a'))
+        calls=[params for method,params in self.bridge.calls if method=='shared.handoff']
+        self.assertTrue(calls[-1]['keepTabs'])
+
     def test_shutdown_reclaims_creation_that_finishes_after_first_scan(self):
         # 中文注释：首轮扫描尚无任务时，关闭必须等在途创建结束并再次核实回收。
         entered,release=threading.Event(),threading.Event()

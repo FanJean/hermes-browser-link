@@ -222,3 +222,9 @@ test('虚拟表格保留真实 ARIA 行列索引和声明总量',()=>{
  const f=fixture('<div role="grid" aria-rowcount="1000" aria-colcount="10"><div role="row" aria-rowindex="51"><span role="gridcell" aria-colindex="4">A</span><span role="gridcell" aria-colindex="7">B</span></div></div>');
  try{const r=f.parser.parse({sections:['tables']});assert.equal(r.tables[0].row,50);assert.equal(r.tables[0].domRow,0);assert.equal(r.tables[0].declaredRows,1000);assert.equal(r.tables[0].observedRows,1);assert.deepEqual(r.tables[0].cells.map(c=>c.column),[3,6]);assert.equal(r.status,'partial');}finally{f.close();}
 });
+
+// 中文注释：结构化表单和动作快照复用编辑属性选择器，不能一处能填写另一处漏掉。
+test('结构化表单识别空属性和纯文本编辑区',()=>{
+ const f=fixture('<form><div contenteditable aria-label="正文"></div><div contenteditable="plaintext-only" aria-label="备注"></div><div contenteditable="false">只读</div></form>');
+ try{const page=f.parser.parse({sections:['forms']});assert.deepEqual(page.forms.map(item=>[item.label,item.role]),[['正文','textbox'],['备注','textbox']]);}finally{f.close();}
+});

@@ -46,7 +46,7 @@ class LifecycleTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             daemon = BridgeDaemon(Path(self.temp.name))
         self.assertEqual(daemon.task_idle_timeout_seconds, 1200)
-        self.assertEqual(daemon.idle_close_seconds, 600)
+        self.assertEqual(daemon.idle_close_seconds, 0)
         self.assertEqual(daemon.work_window_mode, 'separate')
         with patch.dict(os.environ, {'HERMES_BROWSER_WORK_WINDOW': 'current'}):
             self.assertEqual(BridgeDaemon(Path(self.temp.name)).work_window_mode, 'current')

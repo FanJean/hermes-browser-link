@@ -41,7 +41,9 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   }
   function revoke(){revoked=true;active.clear();savedSnapshots.clear();frameDocuments.clear();baseline=null;cursorState=null;observer.disconnect();}
   function stats(){return {activeRefs:active.size,baselineItems:baseline?.items.length||0,cursors:cursorState?1:0,maxItems,maxScan,maxText};}
-  const selectors={interactive:'button,a[href],input,select,textarea,summary,[contenteditable="true"],[role],[tabindex],div,span',content:'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,[role="heading"]',table:'tr,[role="row"],[data-ui-name="Body.Row"]'};
+  // 中文注释：复用合法 HTML 编辑属性形式，空值和纯文本模式与 true 使用相同解析链路。
+  const editable='[contenteditable="true" i],[contenteditable=""],[contenteditable="plaintext-only" i]';
+  const selectors={interactive:`button,a[href],input,select,textarea,summary,${editable},[role],[tabindex],div,span`,content:'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,[role="heading"]',table:'tr,[role="row"],[data-ui-name="Body.Row"]'};
   function ref(node){if(!refs.has(node))refs.set(node,`${instance}:e${++sequence}`);return refs.get(node);}
   function quotedValueEnd(text,start,quote){
     for(let i=start+1;i<text.length;i++){
@@ -241,7 +243,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   // A fragment is a distinct delta entry, but every fragment retains its node ref.
   function itemKey(value){const f=value.fragment;return f?JSON.stringify([value.ref,f.field,f.index??null,f.start]):value.ref;}
   // 中文注释：链接/按钮内部的子元素不重复推断；cursor 会继承，只认从父元素起新设的 pointer。
-  const interactiveAncestor='a[href],button,summary,label,select,textarea,input,[role],[onclick],[contenteditable="true"]';
+  const interactiveAncestor=`a[href],button,summary,label,select,textarea,input,[role],[onclick],${editable}`;
   function inferredClick(node){
     if(!['div','span'].includes(node.localName)||node.parentElement?.closest(interactiveAncestor))return false;
     if(typeof node.onclick==='function'||node.hasAttribute('onclick'))return true;
@@ -251,7 +253,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   function role(node){const explicit=node.getAttribute('role');if(explicit)return explicit.split(/\s+/)[0];const tag=node.localName;
     if(tag==='input'){const type=node.type;return ['checkbox','radio','range','number'].includes(type)?({range:'slider',number:'spinbutton'}[type]||type):['submit','reset','button','image'].includes(type)?'button':'textbox';}
     if(tag==='select' && (node.multiple || node.size>1))return 'listbox';
-    return ({button:'button',a:'link',select:'combobox',textarea:'textbox',summary:'button',tr:'row',li:'listitem'})[tag] || (node.getAttribute('data-ui-name')==='Body.Row'?'row':inferredClick(node)?'button':/^h[1-6]$/.test(tag)?'heading':node.isContentEditable||node.getAttribute('contenteditable')==='true'?'textbox':'text');
+    return ({button:'button',a:'link',select:'combobox',textarea:'textbox',summary:'button',tr:'row',li:'listitem'})[tag] || (node.getAttribute('data-ui-name')==='Body.Row'?'row':inferredClick(node)?'button':/^h[1-6]$/.test(tag)?'heading':node.isContentEditable||node.matches(editable)?'textbox':'text');
   }
   // 中文注释：组件库常在行与单元格之间加入包装层；按最近行归属读取，排除嵌套表格。
   function rowCells(row){
@@ -380,7 +382,9 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     const attrs=['id','name','type','data-testid','data-ui-name','aria-rowindex','aria-colindex','aria-posinset'].map(key=>node.getAttribute(key)||'');
     const ancestors=[];let parent=node.parentElement||node.getRootNode().host;
     while(parent&&ancestors.length<4){ancestors.push([parent.localName,parent.getAttribute('role')||'',parent.id||'',parent.getAttribute('aria-rowindex')||parent.getAttribute('aria-posinset')||'']);parent=parent.parentElement||parent.getRootNode().host;}
-    return JSON.stringify([node.localName,value.role,value.name,attrs,ancestors]);
+    // 中文注释：虚拟记录索引来自语义祖先，不能因组件包装层超过四层而漏掉身份变化。
+    const positions=value.context?.filter(entry=>entry.index!==undefined).map(entry=>[entry.role,entry.index])||[];
+    return JSON.stringify([node.localName,value.role,value.name,attrs,ancestors,positions]);
   }
   // 中文注释：保存真实文档、Shadow 树及边界节点身份，路径名称相同不能替代原作用域。
   function targetScope(node){
@@ -456,7 +460,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       output.coverage.scanned++;
       if(node.localName==='canvas'&&visible(node,false))output.coverage.unsupportedCanvas++;
       if(!node.matches(selectors[mode]))continue;
-      if(mode==='interactive' && !node.matches('button,a[href],input,select,textarea,summary,[contenteditable="true"],[tabindex]') && !['button','link','textbox','checkbox','radio','combobox','listbox','option','menuitem','menuitemcheckbox','menuitemradio','switch','slider','spinbutton','tab','treeitem'].includes(role(node)))continue;
+      if(mode==='interactive' && !node.matches(`button,a[href],input,select,textarea,summary,${editable},[tabindex]`) && !['button','link','textbox','searchbox','checkbox','radio','combobox','listbox','option','menuitem','menuitemcheckbox','menuitemradio','switch','slider','spinbutton','tab','treeitem'].includes(role(node)))continue;
       if(!visible(node,viewport) || (mode==='interactive' && node.matches('input[type="hidden"]'))){output.coverage.filtered++;continue;}
       const value=mode==='interactive'?item(node,scope):fullItem(node,mode);
       if((roles.length && !roles.includes(value.role)) || (query && !value.name.toLocaleLowerCase().includes(redact(query).toLocaleLowerCase()))){output.coverage.filtered++;continue;}
@@ -516,19 +520,26 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     const root=record.scope[0],owner=root.ownerDocument||root,currentScope=targetScope(root);
     if(owner.documentElement!==record.scope[1])throw new Error('DOCUMENT_REPLACED');
     if(currentScope.length!==record.scope.length||currentScope.some((part,i)=>part!==record.scope[i])||node.isConnected&&node.getRootNode()!==root)throw new Error('STALE_REF');
+    // 中文注释：重定位不能越过调用者选定的根；根被替换时旧引用失效。
+    const within=node=>{for(let n=node;n;n=n.parentElement||n.getRootNode().host||n.ownerDocument.defaultView?.frameElement)if(n===savedSnapshot.root)return true;return false;};
+    if(!savedSnapshot.root.isConnected)throw new Error('STALE_REF');
     const saved=record.value;
     let current;
     if(node.isConnected && saved?.fragment){
       const value=fullItem(node),part=fragments(value)?.[saved.fragment.part];
       current=part?fragmentItem(value,part,saved.fragment.part):null;
     } else if(node.isConnected)current=savedSnapshot.mode==='interactive'?item(node,savedSnapshot.root):fullItem(node);
-    if(node.isConnected&&visible(node,false)&&JSON.stringify(current)===JSON.stringify(saved))return node;
+    // 中文注释：同一真实控件沿用结构身份，周边进度文本不作废引用；AX 和正文片段仍严格比较。
+    const identity=value=>JSON.stringify({...value,context:value.context?.map(({name:_name,...entry})=>entry)});
+    if(node.isConnected&&within(node)&&visible(node,false)&&(JSON.stringify(current)===JSON.stringify(saved)||savedSnapshot.mode==='interactive'&&saved.nameSource!=='accessibility'&&stableKey(node,current)===record.key&&identity(current)===identity(saved)))return node;
     // 中文注释：只遍历原作用域的普通子树，不进入其他 frame 或 Shadow 树。
-    const matches=[],scope=root.host?root:owner.body;
+    const matches=[],scope=root===doc?savedSnapshot.root:root.host?root:owner.body;
     const walker=owner.createTreeWalker(scope,1);
+    let scanned=0;
     for(let candidate=scope;candidate;candidate=walker.nextNode()){
+      if(++scanned>maxScan)throw new Error('STALE_REF');
       if(matches.length>5)break;
-      if(!candidate.matches?.(selectors[savedSnapshot.mode])||!visible(candidate,false))continue;
+      if(!within(candidate)||!candidate.matches?.(selectors[savedSnapshot.mode])||!visible(candidate,false))continue;
       const description=savedSnapshot.mode==='interactive'?item(candidate,savedSnapshot.root):fullItem(candidate);
       if(stableKey(candidate,description)===record.key)matches.push(candidate);
     }
@@ -542,7 +553,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     return node;
   }
   // 中文注释：解析器仅复用受限读取，不向模型暴露节点或可执行引用。
-  const parsingContext=()=>({doc,binding,visible,describe:item,cells:rowCells,optionVisible,
+  const parsingContext=()=>({doc,binding,visible,editable,describe:item,cells:rowCells,optionVisible,
     revision:()=>{sync();return epoch;},
     read:node=>{truncated=false;const value=readText(node,true,4096);return {text:value.trim(),truncated};},
     option:node=>{truncated=false;return {text:bounded(node.label||node.textContent||'',1024),truncated};},

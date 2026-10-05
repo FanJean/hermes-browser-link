@@ -156,7 +156,7 @@ export const semanticWorldDeclaration=`function(op,p){
  const createPageParser=${createPageParser.toString().replace(/^\s*\/\/[^\n]*\n/gm,'')};
  const same=(a,b)=>a&&b&&a.taskId===b.taskId&&a.documentId===b.documentId&&a.leaseId===b.leaseId;
  // 中文注释：扩展重载后旧隔离世界还可能存在；实现版本变化必须撤销旧引用并重新创建语义实例。
- const make=()=>({version:3,binding:p.binding,semantics:createPageSemantics({document,taskId:p.binding.taskId,documentId:p.binding.documentId,leaseId:p.binding.leaseId,
+ const make=()=>({version:4,binding:p.binding,semantics:createPageSemantics({document,taskId:p.binding.taskId,documentId:p.binding.documentId,leaseId:p.binding.leaseId,
   shadowRootOf:node=>node.shadowRoot||globalThis.__hermesClosedShadowRoots?.get(node)||null})});
  const classifySensitiveField=${classifySensitiveField.toString()};
  const sensitive=e=>classifySensitiveField(e)!==null;
@@ -242,13 +242,13 @@ export const semanticWorldDeclaration=`function(op,p){
  };
  let state=globalThis.__hermesNativeSemanticsV2;
  if(op==='semantic_snapshot'||op==='page.parse'){
-  if(!state||state.version!==3||!same(state.binding,p.binding)){try{state?.semantics.revoke();}catch{}state=make();globalThis.__hermesNativeSemanticsV2=state;}
+  if(!state||state.version!==4||!same(state.binding,p.binding)){try{state?.semantics.revoke();}catch{}state=make();globalThis.__hermesNativeSemanticsV2=state;}
   try{if(op==='page.parse'){state.parser??=createPageParser(state.semantics.parsingContext());return state.parser.parse(p.options||{});}return state.semantics.snapshot(p.options||{});}catch(error){
    if(error?.message!=='DOCUMENT_REPLACED')throw error;
    try{state.semantics.revoke();}catch{}state=make();globalThis.__hermesNativeSemanticsV2=state;if(op==='page.parse'){state.parser=createPageParser(state.semantics.parsingContext());return state.parser.parse(p.options||{});}return state.semantics.snapshot(p.options||{});
   }
  }
- if(!state||state.version!==3||!same(state.binding,p.binding))throw Error('BINDING_MISMATCH');
+ if(!state||state.version!==4||!same(state.binding,p.binding))throw Error('BINDING_MISMATCH');
  // 中文注释：只有宿主内部 CDP 查询使用节点对象，模型工具不会公开这两个操作。
  if(op==='accessibility_node')return state.semantics.accessibilityNode({...p.binding,snapshotId:p.snapshotId,ref:p.ref});
  if(op==='apply_accessibility'){state.semantics.applyAccessibility({...p.binding,snapshotId:p.snapshotId},p.values);return true;}
@@ -288,7 +288,9 @@ export const semanticWorldDeclaration=`function(op,p){
  if((reading||usingSelection)&&!pending||usingDelivery&&!deliveryMatches())throw Error('STALE_REF');
  const node=(usingDelivery?delivery.node:pending?.node)||state.semantics.resolve({...p.binding,snapshotId:p.snapshotId,ref:p.ref});
  // 中文注释：预审、准备和填写复用同一资格判断；disabled 仍由各阶段原有检查拒绝。
- const fillable=()=>!(!['INPUT','TEXTAREA'].includes(node.tagName)&&!node.isContentEditable&&node.getAttribute('contenteditable')!=='true'||node.type==='file'||node.type==='hidden'||node.readOnly);
+ // 中文注释：编辑区判断覆盖 HTML 空属性和 plaintext-only，填写及回读使用同一资格。
+ const editable=()=>node.isContentEditable||node.matches('[contenteditable="true" i],[contenteditable=""],[contenteditable="plaintext-only" i]');
+ const fillable=()=>!(!['INPUT','TEXTAREA'].includes(node.tagName)&&!editable()||node.type==='file'||node.type==='hidden'||node.readOnly);
  // 中文注释：计划和指针定位共用选项查找，保留缺失、歧义及禁用检查，不缓存页面节点。
  const ariaList=ids=>node.getAttribute('role')==='listbox'?node:node.getRootNode().getElementById?.(ids[0])||node.ownerDocument.getElementById(ids[0]);
  const ariaOption=list=>{
@@ -483,13 +485,13 @@ export const semanticWorldDeclaration=`function(op,p){
  }
  if(op==='ref_fill'){
   if(!fillable())throw Error('TARGET_NOT_ACTIONABLE');
-  if(node.isContentEditable||node.getAttribute('contenteditable')==='true'){node.focus();node.textContent=p.text;}
+  if(editable()){node.focus();node.textContent=p.text;}
   else{
    const proto=node.tagName==='INPUT'?HTMLInputElement.prototype:HTMLTextAreaElement.prototype;
    Object.getOwnPropertyDescriptor(proto,'value').set.call(node,p.text);
   }
   node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));
-  const readBack=node.isContentEditable||node.getAttribute('contenteditable')==='true'?node.textContent:node.value;
+  const readBack=editable()?node.textContent:node.value;
   return {filled:readBack===p.text,verified:readBack===p.text,kind:'dom-synthetic',...(readBack===p.text?{}:{outcomeUnknown:true})};
  }
  throw Error('unsupported semantic action');

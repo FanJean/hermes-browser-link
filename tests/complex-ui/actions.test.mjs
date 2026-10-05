@@ -29,7 +29,7 @@ function installedCaller(f){
 }
 
 test('实际 CDP 安装后填写各阶段保留资格检查和敏感拒绝，不额外派发',async()=>{
- const cases=[['input','',true],['textarea','',true],['div','contenteditable="true"',true],
+ const cases=[['input','',true],['textarea','',true],['div','contenteditable="true"',true],['div','contenteditable',true],['div','contenteditable="plaintext-only"',true],
   ['div','role="textbox"',false],['input','readonly',false],['input','disabled',false],['input','type="file"',false],['input','type="password"','sensitive']];
  for(const [tag,attributes,allowed] of cases){
   const f=setup();try{

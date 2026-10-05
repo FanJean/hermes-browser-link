@@ -128,7 +128,11 @@ test('Sites 转发保留身份校验并恢复现代 MCP 发现和工具路由头
       body: JSON.stringify({ jsonrpc: '2.0', id: 3, method, params: { ...params, _meta: meta } }) }), { DB: db });
   }
   const discover = await invoke('server/discover', {});
-  assert.equal(discover.status, 200); assert.equal((await discover.json()).result.resultType, 'complete');
+  assert.equal(discover.status, 200); const discovered=(await discover.json()).result;
+  assert.equal(discovered.resultType, 'complete');
+  // 中文注释：核对真正 MCP 发现响应的版本与收尾指令，不只检查源码常量。
+  assert.equal(discovered._meta['io.modelcontextprotocol/serverInfo'].version,'1.8.1');
+  assert.match(discovered.instructions,/cloud_browser_close/);
   const tools = await invoke('tools/list', {});
   assert.equal(tools.status, 200); assert.equal((await tools.json()).result.tools.length, 9);
   const devices = await invoke('tools/call', { name: 'cloud_browser_devices', arguments: {} });
@@ -145,6 +149,23 @@ test('浏览器断开时不能只靠客户端心跳显示在线或接收命令',
  await store.heartbeat(device,{browser_connected:false,full_access:false});
  const rows=await store.devices('owner-a');assert.equal(rows[0].connection_online,true);assert.equal(rows[0].online,false);
  await assert.rejects(store.enqueue('owner-a','create',{device_id:id,request_id:rid('offline'),title:'x',allowed_origins:['https://example.com']}),/device_offline/);
+});
+
+test('一次网络超时后的重连窗口仍在线，过期边界统一拒绝新命令',async t=>{
+ // 中文注释：固定时间核对网页与入队使用同一边界，断线和撤权仍立即拒绝。
+ const {store,id,db}=await fixture();
+ const timestamp=now();t.mock.method(Date,'now',()=>timestamp*1000);
+ const args={device_id:id,request_id:rid('reconnect-window'),title:'x',allowed_origins:['https://example.com']};
+ for(const age of [15,20,29]){
+  db.db.prepare('UPDATE devices SET last_seen=? WHERE id=?').run(timestamp-age,id);
+  assert.equal((await store.devices('owner-a'))[0].online,true);
+  assert.equal((await store.enqueue('owner-a','create',{...args,request_id:rid(`age-${age}`)})).state,'queued');
+ }
+ for(const age of [30,31]){
+  db.db.prepare('UPDATE devices SET last_seen=? WHERE id=?').run(timestamp-age,id);
+  const row=(await store.devices('owner-a'))[0];assert.equal(row.online,false);assert.equal(row.connection_online,false);
+  await assert.rejects(store.enqueue('owner-a','create',args),/device_offline/);
+ }
 });
 
 test('回执正文只交付一次，领取后不保留输入、动作或执行历史',async()=>{

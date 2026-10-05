@@ -52,6 +52,8 @@ class AutocloseTests(unittest.TestCase):
         self.clock.start()
         self.addCleanup(self.clock.stop)
         self.daemon = BridgeDaemon(self.home)
+        # 中文注释：旧宽限用例显式设置 600 秒；默认立即关闭另行验收。
+        self.daemon.idle_close_seconds = 600
         self.daemon._prepare_data_dir()
         self.addCleanup(self.daemon._flush_tasks)
         self.daemon._notify_tasks_changed = lambda _: None
@@ -114,6 +116,21 @@ class AutocloseTests(unittest.TestCase):
         self.assertEqual(self.task['state'], 'closed')
         self.assertEqual(self.task['cleanupState'], 'succeeded')
         self.assertTrue(self.releases[-1]['closeAgentTabs'])
+
+    def test_default_completed_closes_immediately_and_isolates_owners(self):
+        # 中文注释：不设置宽限时，真实完成钩子关闭工作页；重复完成不重放释放。
+        with patch.dict('os.environ', {}, clear=True):
+            defaults = BridgeDaemon(self.home)
+        self.assertEqual(defaults.idle_close_seconds, 0)
+        self.daemon.idle_close_seconds = defaults.idle_close_seconds
+        other = self.new_task('other-owner')
+        self.completed()
+        self.ctx.hooks['on_session_finalize'](session_id='session-a')
+        self.completed()
+        self.assertEqual(self.task['state'], 'closed')
+        self.assertEqual(other['state'], 'ready')
+        self.assertEqual(len(self.releases), 1)
+        self.assertTrue(self.releases[0]['closeAgentTabs'])
 
     def test_completed_closes_after_grace_and_only_this_owner(self):
         other = self.new_task('other-owner')

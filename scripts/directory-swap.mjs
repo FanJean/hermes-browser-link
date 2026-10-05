@@ -1,5 +1,5 @@
 // 中文注释：暂存与旧目录都放在扫描目录之外，避免被 Hermes 识别为重复插件。
-import {cp,lstat,mkdir,realpath,rename,rm} from 'node:fs/promises';
+import {cp,lstat,mkdir,readdir,realpath,rename,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 
@@ -26,4 +26,26 @@ export async function rollbackDirectorySwaps(swaps){
   try{await rename(old,target);}catch(error){await rename(failed,target);throw error;}
   await rm(failed,{recursive:true,force:true});
  }
+}
+
+// 中文注释：只同步已经安装的命名 profile 副本，不为未安装插件的 profile 创建目录。
+export async function installedPluginTargets(home){
+ const targets=[path.join(home,'plugins','browser-link')];
+ const profiles=path.join(home,'profiles');
+ if(!(await readdir(home)).includes('profiles'))return targets;
+ const info=await lstat(profiles);if(!info.isDirectory()||info.isSymbolicLink())throw Error('Profiles must be a regular directory');
+ for(const entry of await readdir(profiles,{withFileTypes:true})){
+  if(!entry.isDirectory()||entry.isSymbolicLink())continue;
+  const plugins=path.join(profiles,entry.name,'plugins');
+  if(!(await readdir(path.dirname(plugins))).includes('plugins'))continue;
+  const registry=await lstat(plugins);if(!registry.isDirectory()||registry.isSymbolicLink())throw Error('Plugin registry must be a regular directory');
+  if((await readdir(plugins)).includes('browser-link')){
+   const target=path.join(plugins,'browser-link'),installed=await lstat(target);
+   // 中文注释：已指向根插件的 profile 链接随根目录同步，无需替换；未知链接仍拒绝。
+   if(installed.isSymbolicLink()){
+    if(await realpath(target)!==await realpath(targets[0]))throw Error('Plugin link must point to the root installation');
+   }else targets.push(target);
+  }
+ }
+ return targets;
 }

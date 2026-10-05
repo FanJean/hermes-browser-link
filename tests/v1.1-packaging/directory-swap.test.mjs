@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,readFile,readdir,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {swapInstalledDirectory,rollbackDirectorySwaps} from '../../scripts/directory-swap.mjs';
+import {swapInstalledDirectory,rollbackDirectorySwaps,installedPluginTargets} from '../../scripts/directory-swap.mjs';
 
 // 中文注释：验证真实目录切换时扫描根始终只有一个插件，且可以恢复原文件。
 test('directory swap keeps backup outside discovery and rollback restores original',async t=>{
@@ -21,4 +21,18 @@ test('transaction directories inside the registry are rejected before replacemen
  const target=path.join(root,'plugins','bridge');await mkdir(target,{recursive:true});await writeFile(path.join(target,'plugin.js'),'old');
  await assert.rejects(swapInstalledDirectory(target,target,path.join(root,'plugins','.backup')),/outside the plugin registry/);
  assert.equal(await readFile(path.join(target,'plugin.js'),'utf8'),'old');
+});
+
+// 中文注释：枚举只返回实际安装目录，未安装和符号链接 profile 均不会被同步。
+test('同步枚举覆盖根插件和已安装 profile，拒绝链接注册目录',async t=>{
+ const home=await mkdtemp(path.join(tmpdir(),'bridge-targets-'));t.after(()=>rm(home,{recursive:true,force:true}));
+ const root=path.join(home,'plugins','browser-link'),named=path.join(home,'profiles','named','plugins','browser-link');
+ await mkdir(root,{recursive:true});assert.deepEqual(await installedPluginTargets(home),[root]);
+ await mkdir(named,{recursive:true});await mkdir(path.join(home,'profiles','empty'));
+ await mkdir(path.join(home,'profiles','alias','plugins'),{recursive:true});
+ await symlink(root,path.join(home,'profiles','alias','plugins','browser-link'));
+ await symlink(path.join(home,'profiles','named'),path.join(home,'profiles','linked'));
+ assert.deepEqual(await installedPluginTargets(home),[root,named]);
+ await mkdir(path.join(home,'profiles','bad'));await symlink(path.join(home,'plugins'),path.join(home,'profiles','bad','plugins'));
+ await assert.rejects(installedPluginTargets(home),/Plugin registry must be a regular directory/);
 });

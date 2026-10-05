@@ -1,3 +1,4 @@
+import packageInfo from '../package.json' with { type: 'json' };
 import { McpServer, createMcpHandler, fromJsonSchema } from '@modelcontextprotocol/server';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/server/validators/cf-worker';
 import schemas from './schemas.json' with { type: 'json' };
@@ -13,7 +14,7 @@ const descriptions = {
   run: '在云端任务页执行一个动作，返回 command_id。可并发提交不同 tab_id 的操作；同一页面按提交顺序执行，new_tab 和关闭是任务屏障。审批在本机确认。用 result 获取各自回执，未知结果不能重发。结束时 close，取消等待时 cancel。',
   cancel: '取消此云端任务，不影响本地任务，返回 command_id。',
   resume: '为云端任务重新取得本机授权，不重放原动作，返回 command_id。',
-  close: '结束此云端任务；keep_tabs=true 把工作页交还用户，返回 command_id。',
+  close: '完成网页任务后、回复用户前必须调用，默认关闭此任务新建的工作页；keep_tabs=true 仅用于交还用户继续操作。返回 command_id，必须用 result 核实关闭和清理状态。',
 };
 export const toolDefinitions = [
   { name: 'cloud_browser_devices', description: '列出当前用户已配对的浏览器、在线状态和允许的网站。',
@@ -42,7 +43,9 @@ async function mcp(store, request) {
   }
   // 中文注释：每次 HTTP 创建独立实例，业务状态统一保存在 D1，身份由 Sites 平台注入。
   const handler = createMcpHandler(() => {
-    const server = new McpServer({ name: 'hermes-browser-link-cloud', version: '1.0.0' });
+    // 中文注释：版本取自包元数据；云端无法获知对话结束，要求调用方结束前关闭并核实回执。
+    const server = new McpServer({ name: 'hermes-browser-link-cloud', version: packageInfo.version },
+      { instructions: '每个对话独立创建浏览器任务。完成网页任务后、回复用户之前，必须调用 cloud_browser_close，并用 cloud_browser_result 核实 state=closed 和 cleanupState。需要用户继续操作时才设置 keep_tabs=true。关闭结果未知时只查询状态，不重放动作。' });
     for (const definition of toolDefinitions) server.registerTool(definition.name, {
       description: definition.description, inputSchema: fromJsonSchema(definition.inputSchema, validator),
       annotations: { readOnlyHint: definition.readOnly, destructiveHint: !definition.readOnly,

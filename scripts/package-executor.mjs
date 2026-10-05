@@ -1,3 +1,4 @@
+import {verifyPackageVersions} from './package-version.mjs';
 import { mkdir, readdir, readFile, writeFile, copyFile, lstat, rm, rmdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -19,10 +20,8 @@ function releaseCommit(){
   return head.stdout.trim();
 }
 // 中文注释：禁止发布状态文件与实际插件/扩展版本不一致。
-const declaredVersion=JSON.parse(await readFile(path.join(source,'package.json'),'utf8')).version;
-const pluginVersion=(await readFile(path.join(source,'executor-plugin/plugin.yaml'),'utf8')).match(/^version:\s*(\S+)/m)?.[1];
-const extensionVersion=JSON.parse(await readFile(path.join(source,'native-extension/manifest.json'),'utf8')).version;
-if(declaredVersion!==pluginVersion||declaredVersion!==extensionVersion||(releaseVersion&&releaseVersion!==declaredVersion))throw Error('Package versions must match');
+const declaredVersion=await verifyPackageVersions(source);
+if(releaseVersion&&releaseVersion!==declaredVersion)throw Error('Package versions must match');
 const commit=releaseVersion?releaseCommit():null;
 // 中文注释：正式包的每个输入都必须来自 Git 跟踪内容，忽略文件也不能混入提交声明。
 const tracked=commit?new Set(spawnSync('git',['-C',source,'ls-files','-z'],{encoding:'utf8'}).stdout.split('\0').filter(Boolean)):null;
@@ -58,7 +57,7 @@ async function record(dir) {
 const nativeModules = ['browser-workspaces/index.mjs', 'browser-diagnostics/js/diagnostics.mjs'];
 const diagnosticsPackage = 'browser-diagnostics/python/browser_diagnostics';
 const diagnosticsFiles = ['__init__.py', 'schema.py', 'runtime.py', 'sink.py'];
-const inputs = ['executor-plugin','native-bridge','native-extension', 'cloud-link', 'browser-workspaces', 'browser-diagnostics', ...modules,
+const inputs = ['package.json','package-lock.json','cloud-link/site/package.json','cloud-link/site/package-lock.json','executor-plugin','native-bridge','native-extension', 'cloud-link', 'browser-workspaces', 'browser-diagnostics', ...modules,
   'CHANGELOG.md','docs'];
 async function sourceSnapshot() {
   const entries = {};

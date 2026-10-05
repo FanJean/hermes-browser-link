@@ -38,6 +38,14 @@ try{
  await run('ref_select_option',{...await ref('地区',['combobox']),by:'value',values:['cn']});
  await run('ref_fill',{...await ref('受控输入',['textbox']),text:'受控内容'});
  await run('ref_fill',{...await ref('正文',['textbox']),text:'富文本内容'});
+ // 中文注释：合法编辑属性和动态上下文通过实际工具、daemon 和浏览器执行，回读只用于断言。
+ await tab.read(`document.body.insertAdjacentHTML('beforeend','<section id="editable-cases"><div contenteditable aria-label="空属性编辑区"></div><div contenteditable="plaintext-only" aria-label="纯文本编辑区"></div></section><article id="dynamic-cases"><p>进度 0</p><button>保存动态记录</button><button>保存动态记录</button></article>');document.querySelectorAll('#editable-cases div').forEach(n=>n.style.cssText='min-height:30px;width:200px;border:1px solid black');document.querySelectorAll('#dynamic-cases button').forEach((n,i)=>n.onclick=()=>n.setAttribute('data-clicked',String(i)))`);
+ for(const name of ['空属性编辑区','纯文本编辑区'])await run('ref_fill',{...await ref(name,['textbox']),text:'编辑区验收'});
+ assert.deepEqual(await tab.read(`Array.from(document.querySelectorAll('#editable-cases div'),n=>n.textContent)`),['编辑区验收','编辑区验收']);
+ const dynamic=await run('semantic_snapshot',{options:{root:'#dynamic-cases'}});
+ await tab.read(`document.querySelector('#dynamic-cases p').textContent='进度 1'`);
+ await run('ref_click',{binding:dynamic.binding,snapshot_id:dynamic.snapshotId,ref:dynamic.items[1].ref});
+ assert.equal(await tab.read(`document.querySelectorAll('#dynamic-cases button')[1].getAttribute('data-clicked')`),'1');
  const table=await run('semantic_snapshot',{options:{mode:'table',budget:5000}});assert.ok(table.items.some(item=>item.cells?.includes('示例')));
  // 中文注释：实际 Hermes 插件与 daemon 转发 accessibility 参数，AX 名称仍绑定同一个 DOM 控件。
  await tab.read(`document.body.insertAdjacentHTML('beforeend','<section id="native-ax"><button id="native-ax-button"></button></section><style>#native-ax-button::before{content:"完整链路按钮"}</style>')`);

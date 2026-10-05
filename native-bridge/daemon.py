@@ -221,7 +221,7 @@ class BridgeDaemon:
         # 中文注释：凭据填写只经独立套接字进入 daemon，不开放普通客户端 RPC。
         self.vault_private = VaultPrivateService(self)
         # 中文注释：计时归常驻 daemon 管理；非负秒数可为小数，便于临时 profile 验收。
-        self.idle_close_seconds = self._idle_seconds('HERMES_BROWSER_IDLE_CLOSE_SECONDS', 600)
+        self.idle_close_seconds = self._idle_seconds('HERMES_BROWSER_IDLE_CLOSE_SECONDS', 0)
         self.task_idle_timeout_seconds = self._idle_seconds('HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS', 1200)
 
         # 中文注释：配置从可信 daemon 环境下发，模型参数不能选择工作窗口。

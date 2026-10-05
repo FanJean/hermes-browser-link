@@ -91,7 +91,8 @@ export default [
       '**/node_modules/',
       'artifacts/',
       'release/',
-      'dist/',
+      // 中文注释：所有子项目的构建输出均不属于源码 lint，包括云端 Worker 打包结果。
+      '**/dist/',
       'out/',
       'tmp/',
       '.tmp/',

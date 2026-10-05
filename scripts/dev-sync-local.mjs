@@ -1,4 +1,4 @@
-import {swapInstalledDirectory,rollbackDirectorySwaps} from './directory-swap.mjs';
+import {swapInstalledDirectory,rollbackDirectorySwaps,installedPluginTargets} from './directory-swap.mjs';
 import {stopOldDaemon} from './dev-sync-daemon.mjs';
 import {spawnSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
@@ -10,6 +10,7 @@ const repo=path.resolve(import.meta.dirname,'..');
 const home=path.resolve(process.env.HERMES_HOME||path.join(homedir(),'.hermes'));
 const configFile=path.join(repo,'.dev-sync.local.json');
 const pluginTarget=path.join(home,'plugins','browser-link');
+const pluginTargets=await installedPluginTargets(home);
 const desktopTarget=path.join(home,'desktop-plugins','browser-link');
 const tasksFile=path.join(home,'plugin-data','browser-link-native','tasks.json');
 const daemonPidFile=path.join(home,'plugin-data','browser-link-native','daemon.pid');
@@ -47,7 +48,7 @@ if(!extensionTarget||!path.isAbsolute(config.extensionDir)||
  throw Error('本机配置的扩展目录必须是 ~/.hermes/browser-link-releases 下的绝对路径');
 }
 await Promise.all([
- regularDirectory(pluginTarget,'Hermes 插件'),
+ ...pluginTargets.map(target=>regularDirectory(target,'Hermes 插件')),
  regularDirectory(desktopTarget,'桌面插件副本'),
  regularDirectory(extensionTarget,'浏览器扩展'),
  taskGuard(),
@@ -75,12 +76,13 @@ let gatewayReloaded=false;
 try{
  await mkdir(backup,{recursive:true});
  // 中文注释：先完整备份三个已安装目录，任何校验失败都保留原始副本。
- await cp(pluginTarget,path.join(backup,'plugin'),{recursive:true});
+ for(const [index,target] of pluginTargets.entries())await cp(target,path.join(backup,`plugin-${index}`),{recursive:true});
  await cp(extensionTarget,path.join(backup,'extension'),{recursive:true});
  await cp(desktopTarget,path.join(backup,'desktop'),{recursive:true});
- swaps.push(await swapInstalledDirectory(pluginTarget,path.join(output,'browser-link'),path.join(backup,'swaps')));
+ // 中文注释：根插件和已安装 profile 副本使用同一个校验过的包，并共同参与回滚。
+ for(const target of pluginTargets)swaps.push(await swapInstalledDirectory(target,path.join(output,'browser-link'),path.join(backup,'swaps')));
  swaps.push(await swapInstalledDirectory(extensionTarget,path.join(output,'native-extension'),path.join(backup,'swaps')));
- await verifyTree(pluginTarget,packageHashes,'browser-link/');
+ for(const target of pluginTargets)await verifyTree(target,packageHashes,'browser-link/');
  await verifyTree(extensionTarget,packageHashes,'native-extension/');
  // 中文注释：Hermes 桌面只监视 materialized 副本，更新入口文件会触发热重载。
  const desktopSource=path.join(pluginTarget,'desktop','plugin.js');
@@ -112,6 +114,6 @@ try{
 for(const {old} of swaps)await rm(old,{recursive:true,force:true});
 // 中文注释：本机预览只需要事务期间的备份；成功后清除，失败时保留供恢复。
 await rm(backup,{recursive:true,force:true});
-console.log(JSON.stringify({status:'synced',temporaryBackupRemoved:true,daemonStopped,gatewayReloaded,desktopHotReload:true,
+console.log(JSON.stringify({status:'synced',version:sourceManifest.version,pluginCopies:pluginTargets.length,temporaryBackupRemoved:true,daemonStopped,gatewayReloaded,desktopHotReload:true,
  browserAction:'在 Chrome 与 Edge 的扩展管理页分别点击 Hermes Browser Link的重新加载',
  backendNote:'dashboard/plugin_api.py 改动需要重启 Hermes 桌面应用'},null,2));

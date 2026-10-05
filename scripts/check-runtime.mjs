@@ -1,3 +1,4 @@
+import {verifyPackageVersions} from './package-version.mjs';
 import {readdir, readFile, stat} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import path from 'node:path';
@@ -18,6 +19,7 @@ async function check(directory) {
     }
   }
 }
+await verifyPackageVersions(root);
 const manifest = JSON.parse(await readFile(path.join(root, 'native-extension/manifest.json'), 'utf8'));
 // 中文注释：公钥固定扩展身份，防止路径变更或构建过程意外改变宿主允许来源。
 const extensionId = createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex').slice(0,32).replace(/[0-9a-f]/g, c => String.fromCharCode(97 + parseInt(c,16)));

@@ -39,3 +39,26 @@ test('云端端口断开后按原实例重连，不触碰本地桥',async()=>{
  link.connect=async(...args)=>calls.push(args);
  await link.refresh();assert.deepEqual(calls,[['browser','Chrome']]);
 });
+
+test('云端 Native 断开后快速重连，失败时退避且只保留一个重连计时器',async t=>{
+ // 中文注释：使用虚拟时间和真实握手流程，检查恢复速度与连续断开的连接次数。
+ t.mock.timers.enable({apis:['setTimeout']});
+ const ports=[];
+ const chrome={runtime:{connectNative:()=>{
+  const port={onMessage:{addListener:fn=>{port.receive=fn;}},onDisconnect:{addListener:fn=>{port.drop=fn;}},
+   postMessage:message=>{if(message.method==='hello')queueMicrotask(()=>port.receive({id:message.id,result:{state:'active',online:true}}));},disconnect:()=>port.drop()};
+  ports.push(port);return port;
+ }}};
+ const link=new CloudLink(chrome,{localBridge:()=>assert.fail('云端重连不能改本地桥'),executor:{},consent:{},changed:()=>{}});
+ await link.connect('browser','Chrome');ports[0].drop();
+ t.mock.timers.tick(1499);assert.equal(ports.length,1);
+ t.mock.timers.tick(1);await link.connecting;assert.equal(ports.length,2);assert.equal(link.view().online,true);
+ // 中文注释：连接未握手就再次断开时递增等待，旧端口重复事件不能增加计时器。
+ chrome.runtime.connectNative=()=>{
+  const port={onMessage:{addListener:()=>{}},onDisconnect:{addListener:fn=>{port.drop=fn;}},postMessage:()=>queueMicrotask(()=>port.drop()),disconnect:()=>port.drop()};
+  ports.push(port);return port;
+ };
+ ports[1].drop();t.mock.timers.tick(1500);await link.connecting;assert.equal(ports.length,3);
+ ports[1].drop();t.mock.timers.tick(2999);assert.equal(ports.length,3);
+ t.mock.timers.tick(1);await link.connecting;assert.equal(ports.length,4);
+});

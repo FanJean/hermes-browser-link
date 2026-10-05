@@ -136,22 +136,22 @@ class CloudExecutor:
                 self._forget_owner(owner)
         return value
 
-    def handoff_session(self, session):
+    def handoff_session(self, session, *, keep_tabs=True):
         # 中文注释：只交还当前云端会话的任务；不同会话使用不同 owner，不能串收资源。
         trusted = hashlib.sha256((self.device_id + '\0' + session).encode()).hexdigest()
         owner = self.runtime.authority.owner_for_session(trusted)
-        return self._handoff_owner(owner)
+        return self._handoff_owner(owner, keep_tabs=keep_tabs)
 
-    def _handoff_owner(self, owner):
+    def _handoff_owner(self, owner, *, keep_tabs=True):
         complete = True
         for task in self.cleanup_client.call('shared.list', {'owner': owner}):
             if task.get('instanceId') != self.instance_id:
                 complete = False
                 continue
             if task.get('state') not in ('closed', 'cancelled', 'failed'):
-                task = self.cleanup_client.call('shared.handoff', {'owner': owner, 'taskId': task['id'], 'keepTabs': True})
+                task = self.cleanup_client.call('shared.handoff', {'owner': owner, 'taskId': task['id'], 'keepTabs': keep_tabs})
             if task.get('state') in ('closed','cancelled') and task.get('cleanupState') != 'succeeded':
-                # 中文注释：先读取原清理证明；自动回收只核实移交，不删除已交还用户的页面。
+                # 中文注释：先读取原清理证明；自动回收只核实原清理证明，不重新派发删页。
                 task = self.cleanup_client.call('shared.cleanup_status', {'owner': owner, 'taskId': task['id']})
             complete = complete and task.get('cleanupState') == 'succeeded'
         with self._condition:

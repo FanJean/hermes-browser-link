@@ -185,7 +185,7 @@ for suffix, description in (
     ('get', '读取当前可信会话拥有的任务。'),
     ('cancel', '取消当前会话任务并释放其控制权，不影响其他任务或关闭用户标签页。'),
     ('resume', '恢复已取消或需同步的任务（新代次）；新任务使用当前浏览器的智能审批或全部访问模式。不会重放结果不确定的动作。'),
-    ('close', '关闭任务并关掉它新建的工作页；结果看 cleanupState。每轮完成默认宽限 10 分钟自动收组，同会话再次调用 browser_shared_* 取消宽限；失败或中断立即按 handoff 结束。keep_tabs=true 表示把工作页交给用户（如需用户完成验证码后提交）：撤销任务权限、移除遮罩并收组，但不关页面，cleanupReason 为 handed_to_user。cleanup_action=status 只读核实；仅当状态为 pending 且 cleanupRemainingCount 大于 0 时可用 retry。unknown 或 failed 不满足重试门禁，不能重试删页。不会关闭用户自己的页面。'),
+    ('close', '关闭任务并关掉它新建的工作页；结果看 cleanupState。每轮成功完成默认立即关闭工作页并收组；显式设置完成宽限时，同会话 browser_shared_* 调用取消计时；失败或中断立即按 handoff 结束。keep_tabs=true 表示把工作页交给用户（如需用户完成验证码后提交）：撤销任务权限、移除遮罩并收组，但不关页面，cleanupReason 为 handed_to_user。cleanup_action=status 只读核实；仅当状态为 pending 且 cleanupRemainingCount 大于 0 时可用 retry。unknown 或 failed 不满足重试门禁，不能重试删页。不会关闭用户自己的页面。'),
 ):
     properties = {'task_id': _text()}
     if suffix == 'close':

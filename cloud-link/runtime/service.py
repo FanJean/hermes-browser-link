@@ -255,7 +255,8 @@ class CloudService:
                 delay = 0.25 if response.get('commands') else (0.5 if busy else min(3, delay * 1.5))
                 if scheduler and time.monotonic() - self.last_reap >= 30:
                     for session in self.journal.idle(busy):
-                        if scheduler.executor.handoff_session(session):
+                        # 中文注释：无在途操作的闲置任务关闭自建页；人工等待仍由 daemon 的移交规则保护。
+                        if scheduler.executor.handoff_session(session, keep_tabs=False):
                             self.journal.mark_closed(session)
                     self.last_reap = time.monotonic()
             except HTTPError as error:

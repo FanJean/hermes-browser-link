@@ -221,3 +221,49 @@ test('隐藏不可读 iframe 不计语义覆盖缺口',()=>{
   f.document.querySelector('iframe').style.display='block';page=f.semantics.snapshot({composed:true});assert.equal(page.coverage.skippedFrames,1);assert.equal(page.coverage.complete,false);
  }finally{f.close();}
 });
+
+// 中文注释：同名控件在指定根外不能接替旧引用，根整体替换后必须重新读取。
+test('引用重定位始终限制在快照指定区域内',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<section id="scope"><button>保存</button></section><section id="other"><button>保存</button></section>';
+  const page=f.semantics.snapshot({root:'#scope'}),old=token(page,page.items[0]);
+  const scope=f.document.querySelector('#scope');scope.innerHTML='<button>保存</button>';
+  assert.equal(f.semantics.resolve(old),scope.querySelector('button'));
+  scope.querySelector('button').remove();
+  assert.throws(()=>f.semantics.resolve(old),/REF_TARGET_MISSING/);
+  scope.outerHTML='<section id="scope"><button>保存</button></section>';
+  assert.throws(()=>f.semantics.resolve(old),/STALE_REF/);
+ }finally{f.close();}
+});
+
+// 中文注释：正文中的进度更新不改变原控件身份，也不应让同名按钮变成歧义；虚拟行换身份仍拒绝。
+test('相邻动态正文不使仍存在的按钮引用失效',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<article><p>进度 0</p><button>保存</button><button>保存</button></article>';
+  const page=f.semantics.snapshot(),old=token(page,page.items[1]);
+  f.document.querySelector('p').textContent='进度 1';
+  assert.equal(f.semantics.resolve(old),f.document.querySelectorAll('button')[1]);
+  assert.equal(f.semantics.relocation(),false);
+  f.document.querySelector('article').setAttribute('aria-posinset','2');
+  assert.throws(()=>f.semantics.resolve(old),/REF_TARGET_MISSING/);
+ }finally{f.close();}
+});
+
+// 中文注释：HTML 的空属性和 plaintext-only 都是合法编辑区，false 不能进入可填写控件。
+test('识别空属性与纯文本编辑区以及 searchbox 角色',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<div contenteditable aria-label="空属性编辑区"></div><div contenteditable="plaintext-only" aria-label="纯文本编辑区"></div><div contenteditable="false" aria-label="只读区域"></div><input role="searchbox" aria-label="搜索">';
+  const page=f.semantics.snapshot();
+  assert.deepEqual(page.items.map(i=>[i.name,i.role]),[['空属性编辑区','textbox'],['纯文本编辑区','textbox'],['搜索','searchbox']]);
+ }finally{f.close();}
+});
+
+// 中文注释：实际组件的多层包装不能隐藏虚拟记录身份变化，旧 ref 不能接替回收节点。
+test('多层组件包装内的虚拟记录换索引仍拒绝旧引用',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<div role="row" aria-rowindex="1">'+'<div>'.repeat(6)+'<button>编辑</button>'+'</div>'.repeat(6)+'</div>';
+  const page=f.semantics.snapshot(),old=token(page,page.items[0]);
+  f.document.querySelector('[role="row"]').setAttribute('aria-rowindex','2');
+  assert.throws(()=>f.semantics.resolve(old),/REF_TARGET_MISSING/);
+ }finally{f.close();}
+});

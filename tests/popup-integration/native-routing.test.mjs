@@ -49,7 +49,7 @@ async function harness(initialStorage={}){
  }
  class TestWorkspaces{constructor(){this.manager={reconcile:async()=>{}};}async status(){return [];}}
  const event={addListener(){}};const storage=clone(initialStorage);const api={
-  runtime:{id:'test',getManifest:()=>({version:'1.8.0'}),onMessage:{addListener:f=>dispatch=f},connectNative:()=>port,sendMessage:async()=>({})},
+  runtime:{id:'test',getManifest:()=>({version:'1.8.1'}),onMessage:{addListener:f=>dispatch=f},connectNative:()=>port,sendMessage:async()=>({})},
   storage:{session:{get:async()=>({instanceId:'test-instance'}),set:async()=>{}},local:{get:async()=>clone(storage),set:async v=>Object.assign(storage,v)}},
   notifications:{onClicked:event},
   alarms:{create(){},onAlarm:event},tabs:{onCreated:event,onRemoved:event,onUpdated:event,query:async()=>[{id:7,url:'https://example.test/work',title:'工作页'}],get:async()=>({id:7,url:'https://example.test/work'})},debugger:{onDetach:event}
@@ -116,7 +116,7 @@ test('指定屏蔽区域只接受受信 popup，校验 origin 与选择器并读
 test('生产弹窗仅提供自动屏蔽，右上角展示本扩展版本',async()=>{
  const h=await harness();
  assert.equal(h.d.querySelector('#shield-settings,#cursor-toggle,#cookie-mirror'),null);
- assert.equal(h.d.querySelector('#version-label').textContent,'v1.8.0');
+ assert.equal(h.d.querySelector('#version-label').textContent,'v1.8.1');
  await h.click('#filter-toggle');assert.equal(h.storage.pageContentFilter,true);
  assert.equal(h.popupCalls.some(row=>row.type==='visual_cursor'||row.type==='cookie_mirror_pending'||row.type.startsWith('page_content_shield')),false);h.dom.window.close();
 });

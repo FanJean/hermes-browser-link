@@ -117,7 +117,7 @@ export function createPageParser(context) {
      ...(Number.isSafeInteger(declaredRows)&&declaredRows>0?{declaredRows}:{}),...(Number.isSafeInteger(declaredColumns)&&declaredColumns>0?{declaredColumns}:{})});
    }
   }
-  for(const node of selected.includes('forms')?nodes.filter(n=>matches(n,'input,select,textarea,button,[role="textbox"],[role="combobox"],[role="listbox"],[role="checkbox"],[role="radio"],[role="switch"],[contenteditable="true"]')):[]){
+  for(const node of selected.includes('forms')?nodes.filter(n=>matches(n,`input,select,textarea,button,[role="textbox"],[role="searchbox"],[role="combobox"],[role="listbox"],[role="checkbox"],[role="radio"],[role="switch"],${context.editable}`)):[]){
    const field=describe(node),form=nearest(node,n=>matches(n,'form,[role="form"]'));
    const errorIds=(node.getAttribute('aria-errormessage')||'').split(/\s+/).slice(0,10);
    const errors=errorIds.map(id=>node.getRootNode().getElementById?.(id)).filter(n=>n&&visible(n,false));
@@ -158,7 +158,7 @@ export function createPageParser(context) {
      let status=candidates.length===0?'missing':candidates.length>1?'ambiguous':'ok',value=null,raw=null;
      if(candidates.length===1){
       const node=candidates[0];sources[key]=evidence(node);
-      if(matches(node,'input,textarea,select,[contenteditable="true"]'))status='unsupported';
+      if(matches(node,`input,textarea,select,${context.editable}`))status='unsupported';
       else{
        const readValue=rule.attribute?context.attribute(node,rule.attribute):safe(node);raw=readValue.text;
        if(readValue.truncated){status='truncated';warnings.add('text_truncated');}

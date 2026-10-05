@@ -1,3 +1,4 @@
+import {verifyPackageVersions} from '../../scripts/package-version.mjs';
 /* eslint-disable security/detect-non-literal-fs-filename -- file paths are confined to owned scratch fixtures or staged output roots. */
 /* eslint-disable security/detect-object-injection -- lookup keys come from fixed closure maps and build manifests under test. */
 import test from 'node:test';
@@ -321,14 +322,14 @@ test('native build refuses to replace its source directory without changing it',
   }
 });
 
-test('1.8.0 发布入口报告同一个版本', async () => {
+test('1.8.1 发布入口报告同一个版本', async () => {
   // 中文注释：以包版本为发布基准，插件、桌面 API、扩展和 Native 握手必须一致。
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const plugin = await readFile(path.join(root, 'executor-plugin/plugin.yaml'), 'utf8');
   const version = /^version:\s*([^\s]+)$/m.exec(plugin)?.[1];
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(pkg.version, '1.8.0');
+  assert.equal(pkg.version, '1.8.1');
   assert.equal(version, pkg.version);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);
@@ -355,4 +356,20 @@ test('native build rejects a missing toolbar-only icon resource',async()=>{
   const result=runBuild(sourceRoot,path.join(work,'output'));
   assert.notEqual(result.status,0);assert.match(result.stderr,/missing referenced resource.*missing-toolbar-icon/);
  }finally{await rm(work,{recursive:true,force:true})}
+});
+
+// 中文注释：版本漂移必须在构建和打包之前被共用门禁拒绝，不能只靠发布测试发现。
+test('版本闭包拒绝桌面、锁文件及运行握手错配',async()=>{
+ const work=await mkdtemp(path.join(scratch,'version-closure-'));
+ const files=['package.json','package-lock.json','executor-plugin/plugin.yaml','executor-plugin/dashboard/manifest.json','native-extension/manifest.json','native-extension/background.mjs','cloud-link/site/package.json','cloud-link/site/package-lock.json'];
+ try{
+  for(const file of files){await mkdir(path.dirname(path.join(work,file)),{recursive:true});await cp(path.join(root,file),path.join(work,file));}
+  const expected=await verifyPackageVersions(root);assert.equal(await verifyPackageVersions(work),expected);
+  for(const file of files){
+   const original=await readFile(path.join(work,file),'utf8');
+   await writeFile(path.join(work,file),original.replaceAll(expected,'0.0.0'));
+   await assert.rejects(verifyPackageVersions(work),/Package versions must match/);
+   await writeFile(path.join(work,file),original);
+  }
+ }finally{await rm(work,{recursive:true,force:true});}
 });

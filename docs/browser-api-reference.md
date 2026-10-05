@@ -4,9 +4,9 @@
 
 ## Task lifecycle
 
-每轮 `on_session_end(completed=True)` 默认宽限 600 秒；同会话再次调用任意 `browser_shared_*` 取消宽限。失败、中断和成功映射 owner 的 `agent_loop_stopped(session_key)` 立即按 handoff 结束。
+每轮 `on_session_end(completed=True)` 默认立即关闭工作页；显式设置宽限时，同会话再次调用任意 `browser_shared_*` 取消计时。失败、中断和成功映射 owner 的 `agent_loop_stopped(session_key)` 立即按 handoff 结束。
 
-`HERMES_BROWSER_IDLE_CLOSE_SECONDS` 设置完成宽限（0 为立即关闭）；`HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS` 设置 ready 任务空闲上限（默认 3600 秒）。计时由常驻 daemon 管理并持久化，CLI 退出不丢失。
+`HERMES_BROWSER_IDLE_CLOSE_SECONDS` 设置完成宽限（0 为立即关闭）；`HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS` 设置 ready 任务空闲上限（默认 1200 秒）。计时由常驻 daemon 管理并持久化，CLI 退出不丢失。
 
 暂停或仍等待人工批准/敏感填写的任务免于空闲扫描。需要用户继续操作的页面必须 `keep_tabs=true`；任务结束撤权并收组，保留这些页面和用户页面。浏览器重启后无法验证的旧创建记录不授予清理权限。
 
@@ -1107,7 +1107,7 @@ After ApprovalRequired, wait for the user's decision on that same request.
 
 ```json
 {
-  "description": "关闭任务并关掉它新建的工作页；结果看 cleanupState。每轮完成默认宽限 10 分钟自动收组，同会话再次调用 browser_shared_* 取消宽限；失败或中断立即按 handoff 结束。keep_tabs=true 表示把工作页交给用户（如需用户完成验证码后提交）：撤销任务权限、移除遮罩并收组，但不关页面，cleanupReason 为 handed_to_user。cleanup_action=status 只读核实；仅当状态为 pending 且 cleanupRemainingCount 大于 0 时可用 retry。unknown 或 failed 不满足重试门禁，不能重试删页。不会关闭用户自己的页面。",
+  "description": "关闭任务并关掉它新建的工作页；结果看 cleanupState。每轮成功完成默认立即关闭工作页并收组；显式设置完成宽限时，同会话 browser_shared_* 调用取消计时；失败或中断立即按 handoff 结束。keep_tabs=true 表示把工作页交给用户（如需用户完成验证码后提交）：撤销任务权限、移除遮罩并收组，但不关页面，cleanupReason 为 handed_to_user。cleanup_action=status 只读核实；仅当状态为 pending 且 cleanupRemainingCount 大于 0 时可用 retry。unknown 或 failed 不满足重试门禁，不能重试删页。不会关闭用户自己的页面。",
   "parameters": {
     "type": "object",
     "properties": {

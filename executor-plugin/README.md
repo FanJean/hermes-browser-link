@@ -21,7 +21,7 @@ The Hermes plugin `browser-link`. It is installed as `$HERMES_HOME/plugins/brows
 
 When the operator grants the plugin `tools.override`, the plugin re-registers Hermes' official browser tools with `override=True`. A session bound to a ready task is served by the bridge; every other session calls the original handler unchanged. A call without trusted session and tool-call identity gets no lease and falls back to the built-in handler; a bound session without a lease is refused rather than routed elsewhere. No Hermes source is patched.
 
-## 1.8.0 user-facing controls
+## 1.8.1 user-facing controls
 
 The browser popup shows the extension version, browser access mode, task controls and automatic content shielding. The task cursor is always enabled and stays visible between steps. Content protection is enforced in the extension output boundary and preserved by the plugin's allowlisted result projection; unsupported or stale protected outputs are not retried through raw channels.
 
