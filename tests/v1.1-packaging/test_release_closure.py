@@ -263,6 +263,28 @@ class PublicSourceExport(unittest.TestCase):
             self.exporter.export_source(self.source, 'HEAD', self.output)
         self.assertEqual((self.output / 'keep.txt').read_text(), 'existing')
 
+    def test_reviewed_branding_exports_exact_bytes(self):
+        # 中文注释：所有已审阅品牌图片按原字节导出，不能依赖后缀或宽泛目录放行。
+        for name in self.exporter.REVIEWED_BRANDING:
+            target = self.source / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / name).read_bytes())
+        self.commit()
+        result = self.exporter.export_source(self.source, 'HEAD', self.output)
+        self.assertEqual(result['files'], len(self.exporter.REVIEWED_BRANDING))
+        for name in self.exporter.REVIEWED_BRANDING:
+            self.assertEqual((self.output / name).read_bytes(), (ROOT / name).read_bytes())
+
+    def test_changed_branding_is_rejected_without_partial_export(self):
+        # 中文注释：相同路径下替换成未知二进制也必须拒绝，并清理本次未完成的导出。
+        target = self.source / 'docs/assets/readme-banner.png'
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b'\0unreviewed-image')
+        self.commit()
+        with self.assertRaisesRegex(ValueError, 'branding digest changed'):
+            self.exporter.export_source(self.source, 'HEAD', self.output)
+        self.assertFalse(self.output.exists())
+
 
 if __name__ == '__main__':
     unittest.main()

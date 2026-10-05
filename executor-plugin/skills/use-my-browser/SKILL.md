@@ -7,13 +7,13 @@ description: Standard workflow and safety rules for working in the user's own lo
 
 This plugin drives the browser the user is actually using and shares its logins. Every page action is limited by what the user authorized in the browser extension.
 
-## Protected outputs and visible task state
+## Protected outputs and task state
 
-Automatic shielding is a user-controlled extension setting. It can remove matching text blocks, names and references, and mask screenshot pixels while leaving the user's webpage intact. Do not infer hidden content or claim a snapshot is complete when the returned coverage or protection state says otherwise. `contentFilter.siteAutomationRestricted=true` remains a website automation restriction, even if its original notice was redacted.
+Automatic shielding can remove notices, names and refs from text and mask screenshots without changing the user's page. Honor `contentFilter.siteAutomationRestricted=true`; redaction is not site permission. Preserve incomplete coverage.
 
-`content_shield_stale` requires a fresh read request. Other content-protection failures withhold unconfirmed output. Do not bypass them through raw CDP, console/network inspection, re-encoding or another screenshot channel, and do not replay a script or write operation whose result is unknown. Settings cannot be changed through Agent tools.
+Use a fresh read for `content_shield_stale`. Never bypass protection refusals with raw channels, re-encoding or another screenshot tool, replay unknown writes/scripts, or change shielding settings through Agent tools.
 
-The task cursor stays visible during work and between steps; it is visual feedback, not an additional input channel. User takeover pauses the task. Cookie mirror selection and status are on Hermes Desktop, and each transfer still requires confirmation in the source extension's separate panel. Only stable releases enter automatic updates; developer previews use a downloaded package upgrade.
+The always-on task cursor is visual feedback; takeover pauses the task. Cookie mirror controls are on Hermes Desktop, and every transfer needs source-extension confirmation. Automatic updates accept stable releases, not previews.
 
 ## Standard flow
 

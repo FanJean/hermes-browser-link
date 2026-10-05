@@ -8,6 +8,14 @@ import re
 import shutil
 import subprocess
 
+# 中文注释：品牌图片已核对并与公开 v1.6.1 字节一致；仅允许这些路径的固定摘要，不能替换成任意图片。
+REVIEWED_BRANDING = {
+    'docs/assets/readme-banner.png': 'da846881754337cfa977515c69beccce5b01c115184382e9eadb6e2e32ce8316',
+    'native-extension/icon-128.png': 'd5abeb3fc32b6a7068824758c004b8c1edd549e791c96fc9fda79ddb090a886f',
+    'native-extension/icon-16.png': 'd5e915490af560d3ad07739c4c99c57d1d707d2812d4b5f1c58a3fe21fb62095',
+    'native-extension/icon-32.png': 'f6015f7e5d7a49e400aeb0909b32b86e7b3af95975b313a10c1d061e26e58301',
+    'native-extension/icon-48.png': '87f83f93a71da6a7cdd2de9581c21a2a0c7d08de7a668fdd0f1ea729ef7d55da',
+}
 
 def export_source(source, revision, output):
     source = Path(source).resolve()
@@ -42,11 +50,14 @@ def export_source(source, revision, output):
                 raise ValueError('Cannot read tracked blob: ' + name)
             data = process.stdout.read(int(found[2]))
             process.stdout.read(1)
-            # 中文注释：仅保留基准站已审阅的两张合成 PNG；其他二进制仍须人工审阅。
+            # 中文注释：品牌路径的内容必须匹配固定摘要，未知或被替换的二进制继续拒绝。
             fixture_image = name in {'bench/site/assets/logo.png', 'bench/site/assets/screenshot.png'}
-            if b'\0' in data and not fixture_image:
+            branding_image = name in REVIEWED_BRANDING
+            if branding_image and hashlib.sha256(data).hexdigest() != REVIEWED_BRANDING[name]:
+                raise ValueError('Reviewed branding digest changed: ' + name)
+            if b'\0' in data and not (fixture_image or branding_image):
                 raise ValueError('Binary content requires review: ' + name)
-            if not fixture_image:
+            if not (fixture_image or branding_image):
                 data.decode('utf-8')
             target = output / name
             target.parent.mkdir(parents=True, exist_ok=True)

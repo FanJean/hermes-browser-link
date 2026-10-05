@@ -16,7 +16,7 @@ A clean working directory and `.gitignore` do not remove old Git objects. Do not
 python3 scripts/prepare-public-source.py --ref HEAD --output artifacts/public-source-1.7.0
 ```
 
-The exporter refuses tracked runtime data, symlinks, archives and unreviewed binary blobs. The two synthetic benchmark PNG assets are explicitly allowed. It prints a content hash and does not publish anything. Scan the exported directory with the pinned Gitleaks version from `secrets.yml`; inspect findings instead of applying broad allowlists. The configuration permits only named, fixed synthetic test values. Real-looking negative controls must still be detected.
+The exporter refuses tracked runtime data, symlinks, archives and unreviewed binary blobs. The two synthetic benchmark PNG assets and the exact reviewed branding-image hashes are explicitly allowed; other binary content is refused. It prints a content hash and does not publish anything. Scan the exported directory with the pinned Gitleaks version from `secrets.yml`; inspect findings instead of applying broad allowlists. The configuration permits only named, fixed synthetic test values. Real-looking negative controls must still be detected.
 
 Initialize a new repository in the reviewed export, use an appropriate public author identity, commit it, and verify that its history contains only the intended public commits. A private staging branch can run CI before public publication. Never force-push or delete the development history without a separately reviewed migration plan.
 
