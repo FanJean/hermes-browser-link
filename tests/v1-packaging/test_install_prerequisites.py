@@ -37,6 +37,10 @@ class InstallPrerequisitesTests(unittest.TestCase):
             'browser-link/__init__.py': '# 插件入口\n',
             'browser-link/runtime.py': '# 租约与结果投影\n',
             'browser-link/native_tools.py': '# 原生工具\n',
+            # 中文注释：夹具保留新增维护组件的完整运行闭包。
+            'browser-link/maintenance/update.py': '# 更新入口\n',
+            'browser-link/maintenance/install-cli.py': '# 安装入口\n',
+            'browser-link/maintenance/install-executor.py': '# 安装校验器\n',
             'browser-link/open_tool.py': '# 打开工具\n',
             'browser-link/skills/use-my-browser/SKILL.md': '# Browser\n',
             'browser-link/script_lane/host_bridge.py': '# 桥接\n',

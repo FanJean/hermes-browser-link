@@ -69,18 +69,19 @@ test('复用确认面板显示源、目标、完整站点和数量；native 消�
 });
 test('源确认路由与隐私模块在注入声明之外；key 和新增权限用途受打包契约保护',async()=>{
  const [bg,manifest,build]=await Promise.all(['background.mjs','manifest.json','build.mjs'].map(f=>readFile(new URL('../../native-extension/'+f,import.meta.url),'utf8')));
- assert.match(bg,/if\(r.kind==='cookie_mirror'\)/);assert.match(bg,/cookieMirror.approve\(r.id\)/);assert.match(bg,/isUiSender/);const m=JSON.parse(manifest);const extensionId=[...createHash('sha256').update(Buffer.from(m.key,'base64')).digest('hex').slice(0,32)].map(n=>String.fromCharCode(97+parseInt(n,16))).join('');assert.equal(extensionId,'dhioigkigkkhceflkkkmoljhdaefjohb');assert.equal(m.version,'1.6.1');assert.ok(m.permissions.includes('cookies'));assert.deepEqual(m.host_permissions,['<all_urls>']);assert.match(build,/'cookie-mirror.mjs': path.join\(source, 'cookie-mirror.mjs'\)/);
+ assert.match(bg,/if\(r.kind==='cookie_mirror'\)/);assert.match(bg,/cookieMirror.approve\(r.id\)/);assert.match(bg,/isUiSender/);const m=JSON.parse(manifest);const extensionId=[...createHash('sha256').update(Buffer.from(m.key,'base64')).digest('hex').slice(0,32)].map(n=>String.fromCharCode(97+parseInt(n,16))).join('');assert.equal(extensionId,'dhioigkigkkhceflkkkmoljhdaefjohb');assert.equal(m.version,'1.7.0');assert.ok(m.permissions.includes('cookies'));assert.deepEqual(m.host_permissions,['<all_urls>']);assert.match(build,/'cookie-mirror.mjs': path.join\(source, 'cookie-mirror.mjs'\)/);
 });
 
 // 中文注释：删除弹窗专用通路后，原生 Cookie API 和源扩展确认仍保留。
-test('弹窗不保留站点选择与复制代码，后台仅保留待确认入口',async()=>{
+test('Cookie 镜像只在 Hermes 插件页显示，后台保留原生复制与确认通路',async()=>{
  const [html,script,css,bg,desktop]=await Promise.all([
   'native-extension/popup.html','native-extension/popup.mjs','native-extension/popup.css',
   'native-extension/background.mjs','executor-plugin/desktop/plugin.js',
  ].map(file=>readFile(new URL('../../'+file,import.meta.url),'utf8')));
- assert.match(html,/href="hermes:\/\/open\/browser-link"/);
+ assert.doesNotMatch(html,/id="cookie-(?:mirror|desktop|pending)"|href="hermes:\/\/open\/browser-link"/);
  assert.match(desktop,/const ROOT = '\/browser-link'/);
- assert.match(script,/cookie_mirror_pending/);assert.match(bg,/cookie_mirror_pending/);
+ assert.match(desktop,/Cookie 镜像/);
+ assert.doesNotMatch(script,/cookie_mirror_pending/);assert.match(bg,/cookie_mirror_pending/);
  for(const source of [html,script,css])assert.doesNotMatch(source,/cookie-(?:load|search|all|none|sites|target|clear|persist|days|copy|status|results)\b/);
  for(const source of [script,bg])assert.doesNotMatch(source,/cookie_mirror_(?:sites|request|status)|cookieMirrorLast|cookieMirrorTransfer|pollCookieMirror|renderCookieTargets/);
  assert.doesNotMatch(bg,/extension\.browser_list/);

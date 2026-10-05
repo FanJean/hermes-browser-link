@@ -25,6 +25,8 @@ The fixture uses a temporary profile and local server. Its completed hook runs i
 
 ## Self-contained tests
 
+自动更新离线回归：`tests/auto-update/test_update.py` 验证正式版本筛选、摘要和 ZIP 安全、应用运行时延后、调度切换恢复、安装锁和状态隐私；`tests/v1.5.2/test_install_flow.py` 使用真实包与临时 HOME 验证完整升级、下载时应用重新启动、包损坏拒绝、启用失败回滚及后台不改写浏览器/剪贴板。网络及 launchctl 使用替身，这些测试不代表个人安装或真实后台调度验收。
+
 Node.js 22.12+ and Python 3.11+ are sufficient. No Hermes install, browser, account or API key is required:
 
 ```sh
@@ -164,8 +166,12 @@ Run `node tests/v1.6.0/real-work-window.mjs --headed` and repeat with `--edge`. 
 
 To keep gate scratch files outside the user's Hermes directory, set `HERMES_BROWSER_VERIFY_SCRATCH=/private/tmp/b16` together with `TMPDIR=/private/tmp` when running `npm run verify`. The existing gate still isolates HOME inside its scratch snapshot. No live browser profile or plugin installation is modified.
 
-### Current gate declaration (1.6.1)
+### Current gate declaration (1.7.0)
 
-当前 runner 声明为 43 baseline + 2 supplemental + 49 reviewed = 94 个步骤，known runner inventory 仍为 89 个文件。此处记录门禁组成，不声明 1.6.1 全量测试已通过；完整结果须在冻结候选后统一运行 `npm test` 和 `npm run verify` 并记录。
+当前 runner 声明为 44 baseline + 2 supplemental + 49 reviewed = 95 个步骤，known runner inventory 仍为 90 个文件。此处记录门禁组成，不声明 1.7.0 全量测试已通过；完整结果须在冻结候选后统一运行 `npm test` 和 `npm run verify` 并记录。
 
 版本闭包定向测试只验证受影响的离线 suite；安装流程 suite 使用合成临时 HOME/HERMES_HOME。真实 Chrome/Edge、Hermes Desktop、安装升级和重启行为仍需单独人工验收，历史浏览器结果不能作为当前版本验收证据。
+
+### 页面内容屏蔽候选
+
+受影响的离线回归复用既有 `tests/popup-integration/content-filter.test.mjs`、`native-routing.test.mjs` 和 `popup.test.mjs`；此前未登记的 `native-routing.test.mjs` 已加入显式 Node 清单和 coverage matrix。内容、截图和回放用例通过真实 Executor→Bridge；配置用例通过实际 background 消息处理器。CDP、DOM、Canvas 是合成后端，不代表个人浏览器验收。完整配置、拒绝矩阵和个人验收要求见 [页面内容屏蔽](content-shield.md)。

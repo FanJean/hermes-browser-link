@@ -1,4 +1,4 @@
-// 中文注释：弹窗显示连接、浏览器访问、当前页任务和 Cookie 镜像入口。
+// 中文注释：弹窗只显示版本、连接、浏览器访问、当前页任务和自动屏蔽。
 const $ = selector => document.querySelector(selector)
 let connected = false
 let known = false
@@ -12,7 +12,8 @@ let revision = 0
 // 中文注释：过滤偏好可在本地桥断线时设置，与浏览器访问授权分开。
 let filterEnabled = false
 let filterKnown = false
-let cursorEnabled = true
+// 中文注释：版本以当前加载的扩展为准，不使用后台硬编码版本。
+$('#version-label').textContent = `v${chrome.runtime.getManifest().version}`
 
 async function call(message) {
   const response = await chrome.runtime.sendMessage(message)
@@ -36,11 +37,9 @@ function render() {
   $('#confirm-cancel').disabled = busy
   $('#filter-toggle').setAttribute('aria-checked', String(filterEnabled))
   $('#filter-toggle').disabled = busy || !filterKnown
-  $('#filter-detail').textContent = !filterKnown ? '设置状态待确认' : filterEnabled ? '已开启 · 对后续文本返回生效' : '已关闭 · 返回原始文本'
-  $('#cursor-toggle').setAttribute('aria-checked', String(cursorEnabled))
-  $('#cursor-toggle').disabled = busy || !known
+  // 中文注释：主流程明确显示自动匹配，额外选择器不是使用前提。
+  $('#filter-detail').textContent = !filterKnown ? '设置状态待确认' : filterEnabled ? '已开启 · 自动识别并屏蔽文本块及截图' : '已关闭 · 返回原始页面内容'
   renderWork()
-  $('#cookie-pending').disabled = !known || !connected
 }
 
 async function refresh() {
@@ -55,7 +54,6 @@ async function refresh() {
     connected = result.connected === true
     filterEnabled = result.pageContentFilter === true
     filterKnown = true
-    cursorEnabled = result.visualCursorEnabled !== false
     consentStatus = result.browserFullConsentStatus || 'unknown'
     if(uncertainControl){
       const task=statusData.tasks?.find(t=>t.id===uncertainControl.taskId)
@@ -95,13 +93,6 @@ async function setContentFilter() {
   }
 }
 $('#filter-toggle').addEventListener('click', () => void setContentFilter())
-$('#cursor-toggle').addEventListener('click', async () => {
-  if (busy || !known) return
-  busy = true; render()
-  try { cursorEnabled = (await call({type:'visual_cursor',enabled:!cursorEnabled})).enabled }
-  catch { $('#error').textContent='模拟鼠标设置未确认'; $('#error').hidden=false }
-  finally { busy = false; render() }
-})
 async function setConsent(enabled) {
   if (busy || !connected) return
   busy = true
@@ -174,16 +165,3 @@ $('#connect').addEventListener('click', async () => {
 chrome.runtime.onMessage.addListener(message => { if (message?.type === 'changed') void refresh() })
 void refresh()
 setInterval(refresh, 1500)
-
-// 中文注释：待确认按钮只打开现有请求；无请求或打开失败时复用弹窗提示区。
-$('#cookie-pending').addEventListener('click', async () => {
-  if (!known || !connected) return
-  try {
-    const result = await call({type: 'cookie_mirror_pending'})
-    $('#error').hidden = result.opened === true
-    if (!result.opened) $('#error').textContent = '没有待确认的 Cookie 镜像。'
-  } catch {
-    $('#error').textContent = '无法打开确认面板，请检查源浏览器连接。'
-    $('#error').hidden = false
-  }
-})

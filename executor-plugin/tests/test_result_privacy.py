@@ -140,6 +140,24 @@ class ResultPrivacyTests(unittest.TestCase):
                         {'task_id': 't', 'tab_id': 1, 'action': 'navigate', 'url': 'https://other.example/'}, session_id='test'))
                     self.assertIs(result['outcome_unknown'], expected)
 
+    def test_content_shield_rejection_keeps_code_and_dispatch_fact(self):
+        # 中文注释：保护拒绝是明确失败，不能丢失错误码或把未派发的原始截图误报成未知写入。
+        module = load('native_tools')
+        for code in ('content_shield_unsupported', 'content_shield_unavailable'):
+            for unknown in (False, True):
+                with self.subTest(code=code, unknown=unknown):
+                    error = RuntimeError(CANARY)
+                    error.code = code
+                    error.data = {'outcomeUnknown': unknown, 'retryable': False}
+                    profile = SimpleNamespace(authority=SimpleNamespace(
+                        consume=lambda *a, **kw: SimpleNamespace(owner='tool:synthetic', tool_call_id='c')),
+                        call=lambda *a, **kw: (_ for _ in ()).throw(error))
+                    result = json.loads(module.make_tool_handler('browser_shared_run', profile)(
+                        {'task_id': 't', 'tab_id': 1, 'action': 'cdp.send', 'method': 'Page.captureScreenshot'}, session_id='test'))
+                    self.assertEqual(result['code'], code)
+                    self.assertIs(result['outcome_unknown'], unknown)
+                    self.assertNotIn(CANARY, json.dumps(result))
+
     def test_navigation_state_survives_public_tool_projection(self):
         # 中文注释：导航未就绪与离开授权范围必须保留，未声明的字段仍不能穿过公共工具边界。
         for action in ('navigate', 'new_tab'):
@@ -170,13 +188,16 @@ class ResultPrivacyTests(unittest.TestCase):
     def test_content_filter_metadata_survives_closed_result_projection(self):
         # 中文注释：过滤标记必须传到 agent，同时仍然丢弃未声明的元数据字段。
         runtime = load('runtime')
-        for action in ('snapshot', 'semantic_snapshot', 'page.parse'):
-            with self.subTest(action=action):
-                result = runtime._project_tool_result('browser_shared_run', {'action': action}, {
-                    'contentFilter': {'enabled': True, 'removedSegments': 2, 'private': CANARY},
-                })
-                self.assertEqual(result['contentFilter'], {'enabled': True, 'removedSegments': 2})
-                self.assertNotIn(CANARY, json.dumps(result))
+        # 中文注释：站点禁止声明 true 与普通提示注入 false 都必须原样保留。
+        for restricted in (True, False):
+            for action in ('snapshot', 'semantic_snapshot', 'page.parse', 'screenshot', 'interaction.capture'):
+                with self.subTest(action=action, restricted=restricted):
+                    metadata = {'enabled': True, 'removedSegments': 2, 'siteAutomationRestricted': restricted}
+                    result = runtime._project_tool_result('browser_shared_run', {'action': action}, {
+                        'contentFilter': {**metadata, 'private': CANARY},
+                    })
+                    self.assertEqual(result['contentFilter'], metadata)
+                    self.assertNotIn(CANARY, json.dumps(result))
 
     def invoke(self, shared, suffix, args, result):
         module = load('native_tools')

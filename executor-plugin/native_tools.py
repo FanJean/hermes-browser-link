@@ -200,6 +200,15 @@ TOOL_SCHEMAS['browser_shared_get']['parameters']['properties'].update({
 TOOL_SCHEMAS['browser_shared_get']['description'] += ' 接管暂停时设置 until=resumed 等待，默认最多 600 秒；恢复后先重新读页面。排查时设置 include_log=true、log_limit=N 获取最近步骤。'
 
 
+# 中文注释：只承认扩展的固定保护错误，未知页面异常不能借前缀进入公开文案。
+_CONTENT_SHIELD_CODES = frozenset('''
+content_filter_unavailable content_shield_unavailable content_shield_invalid_rules
+content_shield_unsupported content_shield_stale content_shield_changed
+content_shield_uninspectable content_shield_unsupported_viewport
+content_shield_blocker_overlap content_shield_render_unsupported
+'''.split())
+
+
 _CLEANUP_REASONS = frozenset({
     'legacy_unverified', 'release_in_progress', 'browser_offline', 'extension_unreported',
     'extension_timeout', 'extension_disconnected', 'workspace_unknown', 'too_many_pending',
@@ -627,6 +636,8 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 'dialog_open': '页面有 JS 对话框阻塞，请先用 dialog 动作接受或关闭它。未派发。',
                 'reconcile_required': '仅当最近一次 close cleanup_action=status 返回 pending 且 cleanupRemainingCount 大于 0，才可显式 retry；unknown 或 failed 时禁止重试删页。',
             }
+            # 中文注释：保护错误用固定说明，不建议工具关闭过滤，也不泄露规则/原文。
+            messages.update({reason: '页面内容保护无法确认，本次输出已拒绝；请核对保护状态或使用受支持入口。' for reason in _CONTENT_SHIELD_CODES})
             # 只展示扩展定义的高亮阶段错误码，不展示网页异常内容。
             if code.startswith('interaction_highlight_') or code in {
                     'overlay_injection_failed', 'overlay_scope_stale', 'overlay_frame_changed'}:
@@ -647,7 +658,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 'target_disabled', 'target_hidden', 'target_zero_size', 'target_out_of_viewport',
                 'reference_target_missing', 'reference_target_ambiguous', 'closed_shadow_unavailable', 'cross_origin_frame_unavailable',
                 'select_option_missing', 'select_option_ambiguous', 'select_option_disabled'} or (
-                data.get('outcomeUnknown') is False and code.startswith('interaction_highlight_'))
+                data.get('outcomeUnknown') is False and (code.startswith('interaction_highlight_') or code in _CONTENT_SHIELD_CODES))
             known_safe = code in {'forbidden', 'request_id_conflict', 'reconcile_required', 'user_input_declined', 'task_paused',
                                   'tab_out_of_scope', 'redirected_out_of_scope', 'origin_denied', 'invalid_url', 'download_not_found', 'download_not_owned', 'browser_access_required',
                                   'frame_not_supported', 'credential_mode_conflict',
@@ -663,7 +674,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                       'outcome_unknown': unknown}
             # 中文注释：协议层固定码必须始终传给模型，未知码仍有稳定的分类入口。
             result['bridgeCode'] = code or 'bridge_error'
-            if code == 'click_no_effect':
+            if code == 'click_no_effect' or code in _CONTENT_SHIELD_CODES:
                 result['code'] = code
             # 中文注释：只转发 client 已校验的固定诊断字段。
             for key in ('currentOrigin', 'scopeHint', 'stage', 'reasonCode', 'effect', 'suggestion'):

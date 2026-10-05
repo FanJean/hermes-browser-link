@@ -1,7 +1,7 @@
-/* 中文注释：沿用绿色状态与系统字体，授权、模拟鼠标和文字过滤直接展示。 */
+/* 中文注释：沿用绿色状态与系统字体，版本、授权和自动屏蔽直接展示。 */
 :root{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:#17241d;background:#fff;font-size:14px;--line:#e0e8e1;--muted:#617169;--panel:#f6f9f6;--danger:#b8473d;--accent:#1f754b;--accent-ink:#fff}
 @media(prefers-color-scheme:dark){:root{color:#e8eee9;background:#1a211c;--line:#354039;--muted:#a1aea5;--panel:#222b25;--danger:#f2a19b;--accent:#75c99b;--accent-ink:#14281d}}
-*{box-sizing:border-box}[hidden]{display:none!important}body{width:360px;min-width:360px;margin:0}button,.cookie-actions a{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:inherit;padding:7px 12px;border-radius:7px}button:focus-visible,.cookie-actions a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}button:disabled{cursor:not-allowed;opacity:.55}
+*{box-sizing:border-box}[hidden]{display:none!important}body{width:360px;min-width:360px;margin:0}button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:inherit;padding:7px 12px;border-radius:7px}button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}button:disabled{cursor:not-allowed;opacity:.55}
 .popup{padding:20px}.header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--line)}.brand{font-weight:700;font-size:16px}.brand span{font-weight:400;color:var(--muted)}#connection-label{font-size:12px;color:var(--muted)}#connection-label[data-state="connected"]{color:var(--accent)}
 .connection-card{padding:14px 0;border-bottom:1px solid var(--line)}#connect{margin-top:12px}.detail{color:var(--muted);font-size:12px;line-height:1.55;margin:6px 0 0}.detail:empty{display:none}.access-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0}.access-row h2{font-size:14px;line-height:1.4;margin:0;font-weight:600}
 .switch{flex:0 0 44px;width:44px;height:26px;border:0;border-radius:999px;background:#a7b2aa;padding:3px;transition:background .15s ease}.switch span{display:block;width:20px;height:20px;border-radius:50%;background:white;box-shadow:0 1px 3px #0003;transition:transform .15s ease}.switch[aria-checked="true"]{background:var(--accent)}.switch[aria-checked="true"] span{transform:translateX(18px)}
@@ -11,8 +11,7 @@
 
 /* 中文注释：当前任务的接管和停止并列，仍只占一行操作区。 */
 .page-controls{display:flex;gap:8px;flex-shrink:0}
-/* 中文注释：Cookie 入口复用设置行，两个按钮并列且不挤压按钮文字。 */
-#cookie-mirror{border-top:1px solid var(--line)}
-#cookie-mirror>div:first-child{min-width:0}
-.cookie-actions{display:flex;gap:6px;flex-shrink:0}
-.cookie-actions button,.cookie-actions a{font-size:12px;padding:6px 8px;white-space:nowrap;text-decoration:none}
+
+/* 中文注释：版本在右上角，连接状态紧随其下，不增加横向占位。 */
+.header-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+#version-label{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}

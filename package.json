@@ -1,8 +1,8 @@
 {
   "name": "hermes-browser-link",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "private": true,
-  "description": "Hermes Agent plugin for authorized automation in existing Chrome and Edge browsers over local Native Messaging.",
+  "description": "Hermes browser automation for Chrome and Edge with smart approval, Python workflows, automatic content shielding, a persistent task cursor and Cookie mirroring.",
   "type": "module",
   "author": "FanJean",
   "repository": {
@@ -21,7 +21,10 @@
     "ai-agent",
     "edge-extension",
     "hermes-plugin",
-    "local-browser"
+    "local-browser",
+    "content-shielding",
+    "cookie-mirror",
+    "python-workflows"
   ],
   "license": "MIT",
   "scripts": {

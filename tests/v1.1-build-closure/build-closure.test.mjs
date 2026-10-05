@@ -32,7 +32,7 @@ const sourceCopies = [
   'interaction-highlight.mjs',
   'official-actions.mjs',
   'downloads.mjs',
-  'page-runtime.mjs', 'network-evidence.mjs', 'content-filter.mjs',
+  'page-runtime.mjs', 'network-evidence.mjs', 'content-filter.mjs', 'content-shield.mjs',
   'cdp-policy.mjs',
   'page-observers.mjs',
   // 中文注释：有界页面观察是 1.4.4 起的运行依赖，必须逐字复制并校验哈希。
@@ -319,14 +319,14 @@ test('native build refuses to replace its source directory without changing it',
   }
 });
 
-test('1.6.1 发布入口报告同一个版本', async () => {
+test('1.7.0 发布入口报告同一个版本', async () => {
   // 中文注释：以包版本为发布基准，插件、桌面 API、扩展和 Native 握手必须一致。
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const plugin = await readFile(path.join(root, 'executor-plugin/plugin.yaml'), 'utf8');
   const version = /^version:\s*([^\s]+)$/m.exec(plugin)?.[1];
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(pkg.version, '1.6.1');
+  assert.equal(pkg.version, '1.7.0');
   assert.equal(version, pkg.version);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);

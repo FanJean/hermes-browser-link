@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextlib import contextmanager
+import fcntl
 from datetime import datetime
 import hashlib
 import importlib.util
@@ -285,7 +287,8 @@ def next_steps(home, user_home, browsers, env, seconds, upgrade, verbose):
     print('打开 chrome://extensions 或 edge://extensions → 开发者模式 / Developer mode → 加载已解压的扩展程序 / Load unpacked → 粘贴路径 / Paste path。')
     if seconds:
         wait_for_extension(home, user_home, seconds)
-    print('在扩展弹窗开启智能审批 / Enable smart approval in the extension popup；重启 Hermes / Restart Hermes Desktop。')
+    # 中文注释：智能审批是默认模式，首次使用不需要点击开关切到全部访问。
+    print('保留默认智能审批 / Keep the default smart-approval mode；重启 Hermes / Restart Hermes Desktop。')
     running = shutil.which('pgrep', path=env.get('PATH'))
     if running and command([running, '-if', r'hermes[^/]*\.app/Contents/'], env).returncode == 0:
         print('检测到 Hermes 桌面端运行中，请退出后重新打开 / Hermes Desktop is running; quit and reopen it.')
@@ -346,6 +349,38 @@ def print_plan(home, profiles, upgrade, verbose):
 
 
 def run(args):
+    # 中文注释：手动升级/卸载与自动更新使用同一锁；后台调用已持锁，预览不写锁文件。
+    if args.dry_run or getattr(args, 'background_update', False) or not (args.upgrade or args.uninstall):
+        return _run(args)
+    home = args.hermes_home.expanduser()
+    if home.is_symlink():
+        raise InstallError('安装根目录不能是链接。', '使用实际目录路径后重试。')
+    home = home.resolve()
+    if home.parent.name == 'profiles':
+        home = home.parent.parent
+    data = home / 'plugin-data/browser-link-native'
+    EXECUTOR.reject_target_symlinks([data])
+    if not data.is_dir():
+        return _run(args)
+    with install_lock(data):
+        return _run(args)
+
+
+@contextmanager
+def install_lock(data):
+    # 中文注释：锁定稳定私有目录，不创建锁文件，拒绝升级和取消卸载时保持零文件变更。
+    descriptor = os.open(data, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise InstallError('已有安装或更新操作运行中。', '等待该操作结束后重试。') from error
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _run(args):
     # 中文注释：解析 macOS 系统临时目录别名，所有计划和写入使用同一绝对根目录；根本身不能是链接。
     roots = [args.user_home.expanduser(), args.hermes_home.expanduser()]
     if any(path.is_symlink() for path in roots):
@@ -410,6 +445,11 @@ def run(args):
         if installed:
             activate(hermes, home, profiles, 'disable', env)
             stop_daemon(home, env)
+        # 中文注释：插件和桥接停用成功后清理调度；停用失败不删除既有自动更新设置。
+        updater_path = home / 'plugins/browser-link/maintenance/update.py'
+        if updater_path.is_file():
+            updater = load_module('browser_link_uninstall_updater', updater_path)
+            updater.configure_schedule('off', home, user_home, argparse.Namespace(EXECUTOR=EXECUTOR))
         for path in deletions:
             remove(path)
         print('✅ 已卸载 / Uninstalled. 请在浏览器扩展管理页移除扩展，重启 Hermes。')
@@ -458,7 +498,9 @@ def run(args):
             print_plan(home, profiles, args.upgrade, True)
         apply_package(staged, home, user_home, profiles, programs, files, manifest, env, hermes, args.upgrade, args.verbose)
     print('✅ 程序安装并启用完成 / Program installed and enabled.')
-    next_steps(home, user_home, browsers, env, args.wait_seconds, args.upgrade, args.verbose)
+    # 中文注释：后台更新不打开浏览器、不写剪贴板，也不等待扩展；用户下次启动后重载。
+    if not getattr(args, 'background_update', False):
+        next_steps(home, user_home, browsers, env, args.wait_seconds, args.upgrade, args.verbose)
 
 
 def main():
@@ -466,6 +508,9 @@ def main():
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--upgrade', action='store_true')
     action.add_argument('--uninstall', action='store_true')
+    action.add_argument('--update', action='store_true', help='从 GitHub 正式 Release 更新')
+    action.add_argument('--check-update', action='store_true', help='检查正式 Release 新版本')
+    action.add_argument('--auto-update', choices=('off', 'check', 'install'), help='关闭、每小时检查或空闲安装')
     parser.add_argument('--purge', action='store_true')
     parser.add_argument('--yes', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
@@ -475,6 +520,14 @@ def main():
     parser.add_argument('--hermes-home', type=Path, default=Path(os.environ.get('HERMES_HOME', str(Path.home() / '.hermes'))))
     parser.add_argument('--wait-seconds', type=int, default=180, help='连接等待秒数；0 跳过 / connection wait, 0 skips')
     args = parser.parse_args()
+    if args.update or args.check_update or args.auto_update:
+        # 中文注释：更新入口复用维护模块，源码与发行包不另建下载实现。
+        if args.dry_run or args.profile or args.purge or args.yes:
+            parser.error('update actions do not accept --dry-run, --profile, --purge or --yes')
+        updater_path = ROOT / ('executor-plugin/maintenance/update.py' if (ROOT / 'scripts').is_dir()
+                               else 'browser-link/maintenance/update.py')
+        updater = load_module('browser_link_cli_updater', updater_path)
+        return updater.main_with_args(args)
     if args.purge and not args.uninstall:
         parser.error('--purge requires --uninstall')
     if not 0 <= args.wait_seconds <= 180:

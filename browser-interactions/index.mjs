@@ -154,6 +154,8 @@ export class Interactions {
     try {return await fn();} finally {this.#busy=false;}
   }
   capture(r) {return this.#exclusive(()=>this.#capture(r));}
+  // 中文注释：输出保护失败时撤销本次截图身份，不能继续使用未交付图片的坐标引用。
+  discardCapture() {this.#shots.clear();this.#refs.clear();}
   bounds(r) {return this.#exclusive(()=>this.#bounds(r));}
   clickCoordinates(r) {return this.#exclusive(()=>this.#clickCoordinates(r));}
   clickBoundTarget(r,{readTarget,guard=()=>{}}={}) {return this.#exclusive(()=>this.#clickBoundTarget(r,readTarget,guard));}
@@ -173,7 +175,8 @@ export class Interactions {
     const view=new DataView(bytes.buffer),width=view.getUint32(16),height=view.getUint32(20);
     if(Math.abs(width-before.viewport.width*before.dpr)>1||Math.abs(height-before.viewport.height*before.dpr)>1) fail('IMAGE_GEOMETRY_MISMATCH');
     const shot={id:crypto.getRandomValues(new Uint32Array(4)).join('-'),...this.#binding,...before,image:{width,height,data,mimeType:'image/png'},createdAt:this.#now(),expiresInMs:this.#ttl};
-    this.#shots.clear();this.#refs.clear();this.#shots.set(shot.id,shot);return copy(shot);
+    // 中文注释：坐标验证只需要图片尺寸；缓存不保留原始图像字节。
+    this.#shots.clear();this.#refs.clear();this.#shots.set(shot.id,{...shot,image:{width,height}});return copy(shot);
   }
   async #validate(r) {
     this.#scope(r);const shot=this.#shots.get(r.screenshotId);if(!shot) fail('UNKNOWN_SCREENSHOT');

@@ -18,7 +18,7 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  Object.assign(target.style,{position:'fixed',display:'none',border:'2px solid #e59b17',background:'rgba(229,155,23,.12)',boxSizing:'border-box',pointerEvents:'none'});
  // 中文注释：交互高亮加粗、外发光并脉冲闪烁，标签贴在目标旁边，便于实时看清正在操作的模块。
  const pulse=doc.createElement('style');
- pulse.textContent='@keyframes hermes-pulse{0%{box-shadow:0 0 0 0 rgba(255,138,0,.65),0 0 14px rgba(255,138,0,.55)}100%{box-shadow:0 0 0 12px rgba(255,138,0,0),0 0 14px rgba(255,138,0,.55)}}';
+ pulse.textContent='@keyframes hermes-pulse{0%{box-shadow:0 0 0 0 rgba(255,138,0,.65),0 0 14px rgba(255,138,0,.55)}100%{box-shadow:0 0 0 12px rgba(255,138,0,0),0 0 14px rgba(255,138,0,.55)}}@media(prefers-reduced-motion:reduce){[data-role="virtual-cursor"],[data-role="cursor-hint"]{transition:none!important}[data-role="cursor-ripple"]{transition:opacity 180ms cubic-bezier(.23,1,.32,1)!important;transform:none!important}[data-role="target"],[data-role="drag-start"],[data-role="drag-end"]{animation:none!important}}';
  const highlightStyle=color=>({position:'fixed',display:'none',border:`3px solid ${color}`,borderRadius:'4px',background:color==='#ff8a00'?'rgba(255,138,0,.16)':'rgba(56,136,232,.16)',boxSizing:'border-box',pointerEvents:'none',animation:'hermes-pulse 0.9s ease-out infinite'});
  const interactionTarget=doc.createElement('div');interactionTarget.dataset.role='target';interactionTarget.setAttribute('aria-hidden','true');
  Object.assign(interactionTarget.style,highlightStyle('#ff8a00'));
@@ -29,11 +29,13 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  const interactionStatus=doc.createElement('div');interactionStatus.dataset.role='interaction-status';interactionStatus.setAttribute('aria-hidden','true');
  Object.assign(interactionStatus.style,{position:'fixed',top:'48px',left:'8px',maxWidth:'min(240px,90vw)',padding:'4px 9px',borderRadius:'6px',background:'#ff8a00',color:'#1d1300',font:'600 12px/1.35 system-ui,sans-serif',boxShadow:'0 2px 8px #0004',pointerEvents:'none',display:'none',whiteSpace:'nowrap'});
  const cursor=doc.createElement('div');cursor.dataset.role='virtual-cursor';cursor.setAttribute('aria-hidden','true');
- Object.assign(cursor.style,{position:'fixed',left:'0',top:'0',display:'none',width:'12px',height:'18px',background:'#fff',border:'2px solid #143b29',clipPath:'polygon(0 0,0 100%,35% 75%,60% 100%,75% 90%,48% 65%,100% 65%)',filter:'drop-shadow(0 1px 2px #0008)',pointerEvents:'none',transition:'transform 180ms ease-out',zIndex:'3'});
- const cursorHint=doc.createElement('div');cursorHint.setAttribute('aria-hidden','true');
- Object.assign(cursorHint.style,{position:'fixed',display:'none',padding:'2px 5px',borderRadius:'4px',background:'#163a2a',color:'#fff',font:'11px system-ui',pointerEvents:'none',zIndex:'3'});
- const ripple=doc.createElement('div');ripple.setAttribute('aria-hidden','true');
- Object.assign(ripple.style,{position:'fixed',display:'none',width:'26px',height:'26px',border:'2px solid #ff8a00',borderRadius:'50%',pointerEvents:'none',zIndex:'2',opacity:'0',transition:'opacity 180ms ease-out,transform 180ms ease-out'});
+ // 中文注释：任务鼠标只动画 transform，240ms 加减速位移可从当前屏幕位置连续衔接新目标。
+ const cursorMotion='transform 240ms cubic-bezier(0.77,0,0.175,1)';
+ Object.assign(cursor.style,{position:'fixed',left:'0',top:'0',display:'none',width:'12px',height:'18px',background:'#fff',border:'2px solid #143b29',clipPath:'polygon(0 0,0 100%,35% 75%,60% 100%,75% 90%,48% 65%,100% 65%)',filter:'drop-shadow(0 1px 2px #0008)',pointerEvents:'none',transition:cursorMotion,zIndex:'3'});
+ const cursorHint=doc.createElement('div');cursorHint.dataset.role='cursor-hint';cursorHint.setAttribute('aria-hidden','true');
+ Object.assign(cursorHint.style,{position:'fixed',left:'0',top:'0',display:'none',padding:'2px 5px',borderRadius:'4px',background:'#163a2a',color:'#fff',font:'11px system-ui',pointerEvents:'none',transition:cursorMotion,zIndex:'3'});
+ const ripple=doc.createElement('div');ripple.dataset.role='cursor-ripple';ripple.setAttribute('aria-hidden','true');
+ Object.assign(ripple.style,{position:'fixed',display:'none',width:'26px',height:'26px',border:'2px solid #ff8a00',borderRadius:'50%',pointerEvents:'none',zIndex:'2',opacity:'0',transition:'opacity 180ms cubic-bezier(.23,1,.32,1),transform 180ms cubic-bezier(.23,1,.32,1)'});
  const bar=doc.createElement('div');bar.dataset.role='status';
  Object.assign(bar.style,{position:'fixed',top:'16px',right:'16px',width:'min(342px,calc(100vw - 32px))',padding:'14px 16px',border:'1px solid rgba(255,255,255,.16)',borderRadius:'14px',background:'#172a20',color:'#fff',font:'13px/1.45 system-ui,sans-serif',boxShadow:'0 12px 35px rgba(0,0,0,.22)',pointerEvents:'auto'});
  const eyebrow=doc.createElement('div');eyebrow.textContent='HERMES · 浏览器任务';Object.assign(eyebrow.style,{fontSize:'10px',letterSpacing:'.09em',color:'#a9c9b6',marginBottom:'6px'});bar.append(eyebrow);
@@ -44,7 +46,8 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  const recentTitle=doc.createElement('summary');recentTitle.textContent='最近步骤';recent.append(recentTitle);
  const recentList=doc.createElement('ol');Object.assign(recentList.style,{paddingLeft:'18px',margin:'6px 0 0'});recent.append(recentList);bar.append(recent);
  host.tabIndex=-1;
- let removed=false,busy=false,hideDepth=0,hiddenHosts=null,activeHighlightToken=null,inputWindowTimer=null,inputWindowOpen=false,currentState='waiting',cursorEnabled=true,cursorTimer=null,commandTimer=null,commandAbort=null,lastCommand=null;
+ let removed=false,busy=false,hideDepth=0,hiddenHosts=null,activeHighlightToken=null,inputWindowTimer=null,inputWindowOpen=false,currentState='waiting',cursorTimer=null,dragTimer=null,cursorOperationToken=null,dragAtEnd=false,dragEndPoint=null,commandTimer=null,commandAbort=null,lastCommand=null;
+ let cursorPoint={x:24,y:24};
  const controls=[];
  // 中文注释：控制回执有独立期限；取消等待只清理本地请求，不取消任务、不授予接管。
  const invoke=async(action,el,callback)=>{
@@ -90,6 +93,25 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  };
  const keyEvents=['keydown','keypress','keyup','beforeinput','pointerdown','pointerup','mousedown','mouseup','click','dblclick','auxclick','contextmenu','wheel','touchstart','touchmove'];
  for(const type of keyEvents)doc.defaultView?.addEventListener?.(type,blockKeys,{capture:true,passive:false});
+ // 中文注释：等待模型下一步也属于任务执行；接管或连接未知时不显示模型指针。
+ const cursorVisible=()=>!removed&&['waiting','running','pausing','resuming'].includes(currentState)&&doc.visibilityState!=='hidden';
+ function cancelCursorMotion(){
+  clearTimeout(cursorTimer);clearTimeout(dragTimer);cursorTimer=null;dragTimer=null;cursorOperationToken=null;dragAtEnd=false;
+  cursorHint.style.display='none';ripple.style.display='none';
+ }
+ function moveCursor(point){
+  const view=doc.defaultView;
+  cursorPoint={x:Math.min(Math.max(0,point.x),Math.max(0,view.innerWidth-12)),y:Math.min(Math.max(0,point.y),Math.max(0,view.innerHeight-18))};
+  cursor.style.transform=`translate(${cursorPoint.x}px,${cursorPoint.y}px)`;
+  cursorHint.style.transform=`translate(${cursorPoint.x+14}px,${cursorPoint.y+12}px)`;
+ }
+ function syncCursor(){
+  cursor.style.display=cursorVisible()?'block':'none';
+  if(!cursorVisible())cancelCursorMotion();
+ }
+ function resizeCursor(){moveCursor(cursorPoint);syncCursor();}
+ doc.addEventListener?.('visibilitychange',syncCursor);
+ doc.defaultView?.addEventListener?.('resize',resizeCursor);
  const matchesScope=request=>request&&request.taskId===taskId&&request.generation===generation&&
   (documentId===null||request.documentId===documentId)&&typeof request.operationToken==='string'&&request.operationToken.length>0;
  const interactionSurface=Object.freeze({
@@ -110,19 +132,26 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
    }else{
     setRect(interactionTarget,request.rects[0]);dragStart.style.display='none';dragEnd.style.display='none';
    }
-   if(cursorEnabled&&doc.visibilityState!=='hidden'){
+   syncCursor();
+   if(cursorVisible()){
     const point=request.point&&Number.isFinite(request.point.x)&&Number.isFinite(request.point.y)?request.point:
      {x:anchor.left+anchor.width/2,y:anchor.top+anchor.height/2};
-    clearTimeout(cursorTimer);cursor.style.display='block';cursor.style.transform=`translate(${point.x}px,${point.y}px)`;
+    const newOperation=cursorOperationToken!==request.operationToken;
+    if(newOperation){cancelCursorMotion();cursorOperationToken=request.operationToken;}
     cursorHint.style.display=request.kind==='input'?'block':'none';cursorHint.textContent=request.kind==='input'?'⌨ 输入中':'';
-    Object.assign(cursorHint.style,{left:`${point.x+14}px`,top:`${point.y+12}px`});
-    if(request.kind==='click')cursorTimer=setTimeout(()=>{if(activeHighlightToken!==request.operationToken)return;
-     Object.assign(ripple.style,{display:'block',left:`${point.x-13}px`,top:`${point.y-13}px`,opacity:'1',transform:'scale(.4)'});
-     doc.defaultView?.requestAnimationFrame?.(()=>Object.assign(ripple.style,{opacity:'0',transform:'scale(1.5)'}));
-    },180);
+    if(request.kind!=='drag')moveCursor(point);
+    // 中文注释：高亮每帧校准不重复启动点击反馈，旧操作的延迟回调不能作用于新目标。
+    if(request.kind==='click'&&newOperation)cursorTimer=setTimeout(()=>{cursorTimer=null;if(activeHighlightToken!==request.operationToken||!cursorVisible())return;
+     Object.assign(ripple.style,{display:'block',left:`${cursorPoint.x-13}px`,top:`${cursorPoint.y-13}px`,opacity:'1',transform:'scale(.4)'});
+     doc.defaultView?.requestAnimationFrame?.(()=>{if(activeHighlightToken===request.operationToken&&cursorVisible())Object.assign(ripple.style,{opacity:'0',transform:'scale(1.5)'});});
+    },240);
     if(request.kind==='drag'&&request.rects.length===2){const start=request.rects[0],end=request.rects[1];
-     cursor.style.transform=`translate(${start.left+start.width/2}px,${start.top+start.height/2}px)`;
-     doc.defaultView?.requestAnimationFrame?.(()=>{if(activeHighlightToken===request.operationToken)cursor.style.transform=`translate(${end.left+end.width/2}px,${end.top+end.height/2}px)`;});}
+     dragEndPoint={x:end.left+end.width/2,y:end.top+end.height/2};
+     if(newOperation){moveCursor({x:start.left+start.width/2,y:start.top+start.height/2});
+      // 中文注释：先移到拖动起点再移向终点，重复绘制不会把鼠标拉回起点。
+      dragTimer=setTimeout(()=>{dragTimer=null;if(activeHighlightToken!==request.operationToken||!cursorVisible())return;dragAtEnd=true;moveCursor(dragEndPoint);},240);
+     }else if(dragAtEnd)moveCursor(dragEndPoint);
+    }
    }
    return {ok:true};
   },
@@ -134,9 +163,9 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
   clear(request){
    if(!matchesScope(request))return {ok:false,code:'INVALID_SCOPE'};
    if(!activeHighlightToken||activeHighlightToken!==request.operationToken)return {ok:false,code:'STALE_OPERATION'};
-   activeHighlightToken=null;host.removeAttribute('data-hermes-interaction-highlight');clearTimeout(cursorTimer);cursorTimer=null;
+   activeHighlightToken=null;host.removeAttribute('data-hermes-interaction-highlight');cancelCursorMotion();
    interactionTarget.style.display='none';dragStart.style.display='none';dragEnd.style.display='none';interactionStatus.style.display='none';interactionStatus.textContent='';
-   cursor.style.display='none';cursorHint.style.display='none';ripple.style.display='none';
+   syncCursor();
    return {ok:true};
   },
   isVisible(operationToken){
@@ -188,14 +217,13 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  function remove(){
   if(removed)return;
   if(activeHighlightToken)interactionSurface.clear({taskId,generation,...(documentId===null?{}:{documentId}),operationToken:activeHighlightToken});
-  removed=true;clearTimeout(commandTimer);commandTimer=null;commandAbort?.abort();commandAbort=null;observer?.disconnect();doc.defaultView?.removeEventListener?.('pageshow',recover);doc.defaultView?.removeEventListener?.('blur',checkFrameFocus,true);doc.removeEventListener?.('focusin',checkFrameFocus,true);hiddenHosts=null;hideDepth=0;clearTimeout(inputWindowTimer);clearTimeout(cursorTimer);inputWindowTimer=null;host.remove();
+  removed=true;cancelCursorMotion();cursor.style.display='none';clearTimeout(commandTimer);commandTimer=null;commandAbort?.abort();commandAbort=null;observer?.disconnect();doc.defaultView?.removeEventListener?.('pageshow',recover);doc.defaultView?.removeEventListener?.('blur',checkFrameFocus,true);doc.removeEventListener?.('focusin',checkFrameFocus,true);doc.removeEventListener?.('visibilitychange',syncCursor);doc.defaultView?.removeEventListener?.('resize',resizeCursor);hiddenHosts=null;hideDepth=0;clearTimeout(inputWindowTimer);inputWindowTimer=null;host.remove();
   for(const type of keyEvents)doc.defaultView?.removeEventListener?.(type,blockKeys,true);
  }
  // 中文注释：清理事件只能本地卸载浮层；即使网页主动触发，也不能授予任务权限或伪造暂停。
  host.addEventListener('hermes-overlay-release',remove);
  const overlay=Object.freeze({
   host,interactionSurface,hide,restore,
-  setCursorEnabled(enabled){cursorEnabled=enabled===true;if(!cursorEnabled){clearTimeout(cursorTimer);cursor.style.display='none';cursorHint.style.display='none';ripple.style.display='none';}},
   setRecentSteps(steps){
    // 中文注释：只接收守护进程的脱敏步骤字段，错误码映射为固定说明。
    if(removed||!Array.isArray(steps))return;
@@ -236,8 +264,9 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
    takeover.style.display=state==='paused'||recovery?'none':'inline-block';resume.style.display=state==='paused'?'inline-block':'none';
    if(rectOk(targetRect)){Object.assign(target.style,{display:'block',left:`${targetRect.x}px`,top:`${targetRect.y}px`,width:`${targetRect.width}px`,height:`${targetRect.height}px`});}
    else target.style.display='none';
-   if(cursorEnabled&&state==='running'&&step==='scroll'&&doc.visibilityState!=='hidden'){
-    cursorHint.textContent=scrollDirection==='up'?'↑ 向上滚动':'↓ 向下滚动';cursorHint.style.display='block';cursorHint.style.left='50%';cursorHint.style.top='50%';
+   syncCursor();
+   if(cursorVisible()&&state==='running'&&step==='scroll'){
+    cursorHint.textContent=scrollDirection==='up'?'↑ 向上滚动':'↓ 向下滚动';cursorHint.style.display='block';
    }else if(!activeHighlightToken)cursorHint.style.display='none';
   },
   async withHidden(fn){
@@ -280,6 +309,7 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  }
  const Observer=doc.defaultView?.MutationObserver,observer=Observer?new Observer(()=>{if(!host.isConnected)recover();}):null;
  observer?.observe(doc,{childList:true,subtree:true});
+ moveCursor(cursorPoint);syncCursor();
  recover();
  return overlay;
 }

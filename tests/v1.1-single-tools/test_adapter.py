@@ -767,3 +767,52 @@ class MultiTabTests(unittest.TestCase):
         self.assertTrue(first.outcome_unknown)
         adapter.unbind('session-a', task_id='second')
         self.assertIs(adapter._bindings['session-a'], first)
+
+
+
+    # 中文注释：真实官方 adapter 的最终工具投影必须保留扩展约束，测试不启动个人视觉服务。
+    def test_content_shield_metadata_reaches_official_outputs(self):
+        class ShieldRuntime(FakeRuntime):
+            def call(self, method, params):
+                if method == 'shared.run' and params['action'] == 'js.evaluate':
+                    result = {'ok': True, 'value': '[已屏蔽区域]'}
+                else:
+                    result = super().call(method, params)
+                if method == 'shared.run' and isinstance(result, dict):
+                    result = {**result, 'contentFilter': {'enabled': True, 'removedSegments': 1,
+                        'siteAutomationRestricted': True, 'private': 'CONFIG_CANARY'},
+                        'masked': [{'kind': 'content_shield', 'role': 'region', 'name': '已屏蔽区域', 'private': 'CONFIG_CANARY'}],
+                        'omittedMoving': 0, 'omittedMasked': 1}
+                return result
+        runtime = ShieldRuntime()
+        adapter = SingleToolAdapter(runtime)
+        adapter.bind('session-a', 'task-native')
+        for action, args in [('browser_snapshot', {}), ('browser_navigate', {'url': 'https://example.test/'}),
+                             ('browser_console', {'expression': 'document.body.textContent'}),
+                             ('browser_vision', {'question': 'test', 'annotate': True})]:
+            with self.subTest(action=action), patch.object(adapter, '_vision', return_value={'success': True}):
+                result = json.loads(adapter.dispatch(action, args, session_id='session-a', tool_call_id='shield-' + action))
+                self.assertTrue(result['contentFilter']['siteAutomationRestricted'])
+                self.assertTrue(result['contentFilter']['enabled'])
+                self.assertEqual(result['omittedMasked'], 1)
+                self.assertEqual(result['masked'][0]['kind'], 'content_shield')
+                self.assertNotIn('CONFIG_CANARY', json.dumps(result))
+
+    def test_annotated_vision_omits_hidden_refs_from_snapshot_and_binding(self):
+        # 中文注释：图片未画出的隐藏引用也不能残留在官方快照文字或后续点击绑定。
+        class HiddenRuntime(FakeRuntime):
+            def call(self, method, params):
+                result = super().call(method, params)
+                if method == 'shared.run' and params['action'] == 'screenshot':
+                    result['annotations'] = result['annotations'][:1]
+                return result
+        runtime = HiddenRuntime()
+        runtime.snapshot['items'].append({'ref': 'hidden-ref', 'role': 'textbox', 'name': ''})
+        adapter = SingleToolAdapter(runtime)
+        adapter.bind('session-a', 'task-native')
+        with patch.object(adapter, '_vision', side_effect=lambda receipt, question, **extra: {'success': True, **extra}):
+            result = json.loads(adapter.dispatch('browser_vision', {'question': 'test', 'annotate': True},
+                session_id='session-a', tool_call_id='hidden-vision'))
+        self.assertNotIn('[@e2]', result['snapshot'])
+        self.assertNotIn('@e2', adapter._bindings['session-a'].refs)
+        self.assertIn('[@e1]', result['snapshot'])

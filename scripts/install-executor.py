@@ -57,6 +57,10 @@ def verify_package_layout(package, files):
         'browser-link/__init__.py',
         'browser-link/runtime.py',
         'browser-link/native_tools.py',
+        # 中文注释：维护入口及其当前安装器属于运行闭包，不能发布缺少校验器的自动更新组件。
+        'browser-link/maintenance/update.py',
+        'browser-link/maintenance/install-cli.py',
+        'browser-link/maintenance/install-executor.py',
         'browser-link/open_tool.py',
         'browser-link/skills/use-my-browser/SKILL.md',
         'browser-link/script_lane/host_bridge.py',

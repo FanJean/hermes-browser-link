@@ -37,7 +37,8 @@
 - `tests/native-v2/native_core.test.mjs`
 - `tests/native-extension/redirect-ready.test.mjs`：普通工作页 readyState、DOM 可交互返回、www 与跨站跳转
 - `tests/popup-integration/popup.test.mjs`
-- `tests/popup-integration/content-filter.test.mjs`
+- `tests/popup-integration/content-filter.test.mjs`：文本、元素规则、截图、回放和失效拒绝的 Executor→Bridge 集成
+- `tests/popup-integration/native-routing.test.mjs`：后台受信配置、保存读回、配置 UI 和持续 CDP 事件出口
 - `page-semantics/long-text.test.mjs`
 - `page-semantics/controls.test.mjs`
 - `tests/complex-ui/semantics.test.mjs`：重定位的原文档/Shadow 树身份及边界重挂拒绝、Shadow/iframe、推断点击、组合框、富文本、虚拟列表、表格和 canvas
@@ -57,6 +58,8 @@
 - `tests/v1.1-redaction-fix/redaction.test.mjs`
 
 ## 审阅后的跨模块验证
+
+- `tests/auto-update/test_update.py`：正式 Release、附件摘要与 ZIP 路径校验、版本判断、应用运行时延后、LaunchAgent 调度恢复、安装锁及状态隐私；只使用合成网络和调度响应。
 
 - `tests/v1.1-approval-notify/test_site_read.py`
 - `tests/site-tools/test_sites.py`
@@ -177,7 +180,7 @@
 ## 1.6.0 工作窗口和效果回执
 
 - `tests/v1.6.0/work-window.test.mjs`：baseline Node 门禁，覆盖创建/恢复/重建窗口、串行输入、读操作不切标签、current 与用户拖页、observed 与 click_no_effect。
-- `tests/v1.6.0/test_lifecycle.py`：baseline Python 固定文件门禁，覆盖 1200/600 秒默认配置、每小时 needs_sync 清理、人工等待保护、会话 open_tabs、错误/结果白名单。诊断三份固定 Python runner 登记后 baseline 43 步，核心 Node runner 53 个。
+- `tests/v1.6.0/test_lifecycle.py`：baseline Python 固定文件门禁，覆盖 1200/600 秒默认配置、每小时 needs_sync 清理、人工等待保护、会话 open_tabs、错误/结果白名单。自动更新固定 Python runner 登记后 baseline 44 步，核心 Node runner 53 个。
 - `browser-diagnostics/tests/test_schema.py`、`test_runtime.py`、`test_sink.py`：只运行固定诊断源码契约、运行时及临时日志回归。
 - `tests/v1.1-verification/test_gate.py`：核心入口直接传递指定 TMPDIR，避免 Unix socket 路径被额外嵌套。
 - `tests/v1.6.0/real-background-input.mjs`、`tests/v1.6.0/real-work-window.mjs`：手动 Chrome/Edge 临时 profile 门禁，支持 --edge、--headed，不进入离线清单。

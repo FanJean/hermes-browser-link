@@ -14,11 +14,17 @@ Set runtime variables before starting Hermes or the Native Messaging host. Brows
 | `HERMES_BROWSER_PAUSE_TIMEOUT_S` | `600` | Script action session's takeover/resume wait; integer `1..3600`. |
 | `HERMES_BENCH_PROFILE` | `default` | Agent benchmark runner/scorer profile. Default database is `$HERMES_HOME/state.db`; named profile database is `$HERMES_HOME/profiles/<name>/state.db`. Use the same value for running and scoring. |
 
-Plugin options are separate from environment variables. `vault_tools.enabled` defaults to `false`; enabling it also needs a `tools.override` capability grant. The optional official `browser_*` overrides require that grant and a bound task; installation alone grants neither. Keep smart approval enabled for the first trial.
+Plugin options are separate from environment variables. `vault_tools.enabled` defaults to `false`; enabling it also needs a `tools.override` capability grant. The optional official `browser_*` overrides require that grant and a bound task; installation alone grants neither. Keep the default smart-approval mode for the first trial.
+
+## Browser popup and task cursor
+
+The top-right version comes from the loaded extension manifest. The popup contains browser access mode, current-task controls and **自动屏蔽网页干扰**. Automatic shielding defaults off and preserves saved preference; enabling it requires no per-site selector setup. It changes Agent outputs and processed screenshots, not the user-visible page. See [content shielding](content-shield.md) for refusal boundaries.
+
+The visual task cursor is always enabled and has no popup switch. It stays visible during work and between actions, uses 240 ms target travel, and hides when paused, disconnected, stopped or in a hidden tab. System reduced-motion preferences remove cursor travel. Cookie mirror settings are on the Hermes Desktop page.
 
 ## Cookie mirror options
 
-No environment variable enables automatic Cookie mirror approval. Both profiles must be connected with the updated extension and its `cookies` / `<all_urls>` permissions. Choose the target instance and sites in the source popup, then confirm in the source extension panel. Full access does not skip this confirmation.
+No environment variable enables automatic Cookie mirror approval. Both profiles must be connected with the updated extension and its `cookies` / `<all_urls>` permissions. Choose the target instance and sites in Hermes Desktop → Browser connections, then confirm in the source extension panel. Full access does not skip this confirmation.
 
 | Option | Default | Meaning |
 |---|---|---|

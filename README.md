@@ -1,6 +1,6 @@
 # Hermes Browser Link
 
-Task pages now use a separate Hermes work window by default. Input activates tabs inside that window without focusing it; clicks without an observed effect return an error.
+**1.7.0 — macOS developer preview.** Authorized browser tasks, automatic text and screenshot shielding, a persistent task cursor, Desktop Cookie mirroring and stable-release updates.
 
 ![Hermes Browser Link](docs/assets/readme-banner.png)
 
@@ -8,7 +8,21 @@ Task pages now use a separate Hermes work window by default. Input activates tab
 
 Let [Hermes Agent](https://github.com/NousResearch/hermes-agent) read and operate task tabs in your existing, logged-in Chrome or Edge.
 
-Read pages and tables, click, fill forms, upload files, track downloads and run Python workflows. Enable **smart approval** in the extension popup; first site reads and later writes show confirmation prompts. See [security](SECURITY.md).
+Read pages and tables, click, fill forms, upload files, track downloads and run Python workflows. Smart approval is the default: first site reads and later writes show confirmation prompts. Full access is a separate explicit choice. See [security](SECURITY.md).
+
+## Features
+
+| Capability | Behavior |
+|---|---|
+| Existing browsers | Reuse logged-in Chrome/Edge; task tabs use a separate work window without taking focus from your window. |
+| Page reading and input | Read text, tables, forms and records; use semantic references, clicks, typing, selection, scrolling and file transfers. |
+| Python workflows | Run multi-step scripts and validated reusable site tools through the same task authorization. |
+| Automatic content shielding | One switch detects matching Chinese/English notices and webpage instructions, hides the text block from Agent output and masks its screenshot region. No site or CSS-selector setup. |
+| Continuous task cursor | Always enabled during task work and between steps, with smooth target-to-target travel, takeover controls and reduced-motion support. |
+| Desktop Cookie mirror | Select source sites and target browsers in Hermes Desktop; every transfer requires confirmation in the source extension. |
+| Installation and updates | Verified packages, backup/rollback, manual upgrade, hourly stable-release checks and idle installation. |
+
+Shielding protects Browser Link outputs, leaves your visible webpage intact, and preserves real verification/error signals. Unsupported raw channels or uninspectable page structures are refused. See [shielding boundaries](docs/content-shield.md), [complete features](docs/features.md), and the [module catalog](docs/product-modules.zh-CN.md).
 
 ## Requirements
 
@@ -24,13 +38,15 @@ Read pages and tables, click, fill forms, upload files, track downloads and run 
 1. Download a [Release package](https://github.com/FanJean/hermes-browser-link/releases) and install (no Node.js needed); **Program installed and enabled** confirms success:
 
    ```sh
-   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.6.1/hermes-browser-link-1.6.1.zip -o hermes-browser-link-1.6.1.zip && unzip hermes-browser-link-1.6.1.zip && cd hermes-browser-link-1.6.1 && ./install.sh
+   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.7.0/hermes-browser-link-1.7.0.zip -o hermes-browser-link-1.7.0.zip && unzip hermes-browser-link-1.7.0.zip && cd hermes-browser-link-1.7.0 && ./install.sh
    ```
 
 2. Open `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** → paste the absolute path printed and copied by the installer. It waits up to 3 minutes and shows ✅ when connected; Ctrl+C skips the wait.
-3. Enable **smart approval** (智能审批) in the extension popup, then restart Hermes Desktop. Confirm **Connected** (已连接) in the popup and an online browser in Desktop → **Browser connections** (浏览器连接).
+3. Keep the default **smart approval** (智能审批) mode for the first trial, then restart Hermes Desktop. Confirm **Connected** (已连接) in the popup and an online browser in Desktop → **Browser connections** (浏览器连接).
 
 Upgrade: run `./install.sh --upgrade` from the new package (automatic backup and rollback), then reload the extension and restart Desktop. Uninstall: `./install.sh --uninstall` keeps task-private data; add `--purge` to delete it.
+
+Automatic updates accept stable releases and skip previews such as this 1.7.0 pre-release. After installing the update component, run `./install.sh --auto-update install`. It checks stable releases hourly and installs after browsers and Hermes exit. Reload the extension before starting Hermes again. Use `--auto-update check` for checks only, `--auto-update off` to disable, or `--update` to update now. See [automatic updates](docs/installation.md#automatic-updates--自动更新).
 
 [Source/manual installation, profiles and troubleshooting](docs/installation.md) · [Agent installation prompt](docs/agent-install-prompt.md).
 

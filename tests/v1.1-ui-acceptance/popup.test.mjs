@@ -18,7 +18,9 @@ test('弹窗入口保留中文状态语义与键盘可聚焦的授权开关', ()
   assert.equal(document.querySelector('#access-toggle').closest('details'),null)
   // 中文注释：设置直接展示，主要链接仅在桌面页操作。
   assert.equal(document.querySelector('#filter-toggle').closest('details'),null)
-  assert.equal(document.querySelector('#cursor-toggle').closest('details'),null)
+  // 中文注释：常用鼠标固定启用，镜像入口只放桌面，额外区域不在浏览器弹窗显示。
+  assert.equal(document.querySelector('#cursor-toggle,#cookie-mirror,#shield-settings'),null)
+  assert.ok(document.querySelector('.header-meta #version-label'))
   assert.equal(document.querySelector('#browser-links,#set-primary,details.settings'),null)
   assert.equal(document.querySelector('#diagnostics'), null)
   assert.match(css, /:focus-visible/)

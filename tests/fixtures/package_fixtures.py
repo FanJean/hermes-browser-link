@@ -21,6 +21,10 @@ def write_installer_package(root: Path, *, include_api_client: bool = True) -> P
         "browser-link/__init__.py": b"\"\"\"Fixture plugin.\"\"\"\n",
         "browser-link/runtime.py": b"# runtime fixture\n",
         "browser-link/native_tools.py": b"# tools fixture\n",
+        # 中文注释：合成包必须包含自动更新的维护闭包。
+        "browser-link/maintenance/update.py": b"# updater fixture\n",
+        "browser-link/maintenance/install-cli.py": b"# install fixture\n",
+        "browser-link/maintenance/install-executor.py": b"# verifier fixture\n",
         "browser-link/open_tool.py": b"# open tool fixture\n",
         "browser-link/skills/use-my-browser/SKILL.md": b"# browser skill fixture\n",
         "browser-link/task_diagnostics.py": b"# diagnostics projection fixture\n",

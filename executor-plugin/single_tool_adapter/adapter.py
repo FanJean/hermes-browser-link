@@ -169,6 +169,8 @@ class _SessionBinding:
     refs: dict[str, str] = field(default_factory=dict)
     call_ids: dict[str, tuple[str, str]] = field(default_factory=dict)
     revoked: bool = False
+    # 中文注释：仅保存本次工具调用的封闭保护元数据，不能保存规则或网页原文。
+    shield_metadata: dict = field(default_factory=dict)
 
 
 class SingleToolAdapter:
@@ -374,9 +376,12 @@ class SingleToolAdapter:
                 return self._error(failure.code, outcome_unknown=failure.outcome_unknown, **failure.details)
             except Exception:
                 return self._error("bridge_error", outcome_unknown=False)
+            binding.shield_metadata = {}
             try:
                 raw = self._dispatch_supported(binding, current_task, tab_id, action, args, tool_call_id)
                 result = raw if isinstance(raw, dict) else json.loads(raw)
+                # 中文注释：官方 snapshot、JS 和视觉路径不能丢失扩展的站点约束及遮罩审计。
+                result.update(binding.shield_metadata)
                 if result.get("success") is True:
                     # 中文注释：读取实际工作页地址；失败不把已完成的写入误报成可重试失败。
                     try:
@@ -508,7 +513,12 @@ class SingleToolAdapter:
             annotations = [{"label": f"[{row['label']}]", "ref": f"@e{row['label']}",
                             "box": {key: round(float(row[key]), 1) for key in ("x", "y", "width", "height")}}
                            for row in receipt.get("annotations", []) if isinstance(row, dict) and row.get("label") in known]
-            return self._vision(receipt, args["question"], annotations=annotations, snapshot=formatted["snapshot"])
+            # 中文注释：未绘制的隐藏/移动目标不保留文字引用或后续可操作绑定。
+            visible_refs = {row['ref'] for row in annotations}
+            binding.refs = {alias: native for alias, native in binding.refs.items() if alias in visible_refs}
+            snapshot = '\n'.join(line for line in formatted['snapshot'].splitlines()
+                if any(line.endswith(f'[{alias}]') for alias in visible_refs))
+            return self._vision(receipt, args["question"], annotations=annotations, snapshot=snapshot)
 
         if action == "browser_press":
             # The official tool presses a key on the focused element; the native
@@ -693,7 +703,31 @@ class SingleToolAdapter:
                 binding.outcome_unknown = True
                 self._clear_snapshot(binding)
                 raise _AdapterFailure("invalid_response", outcome_unknown=True)
+        metadata = self._shield_metadata(receipt)
+        if binding.shield_metadata.get('contentFilter', {}).get('siteAutomationRestricted') is True:
+            metadata.setdefault('contentFilter', {})['siteAutomationRestricted'] = True
+        binding.shield_metadata.update(metadata)
         return receipt
+
+    @staticmethod
+    def _shield_metadata(receipt):
+        # 中文注释：按类型和固定字段转发，拒绝配置、原文和未知审计字段；遮罩名称使用固定显示文字。
+        result = {}
+        flags = receipt.get('contentFilter')
+        if isinstance(flags, dict):
+            safe = {key: flags[key] for key in ('enabled', 'siteAutomationRestricted') if type(flags.get(key)) is bool}
+            if type(flags.get('removedSegments')) is int and 0 <= flags['removedSegments'] <= 1_000_000:
+                safe['removedSegments'] = flags['removedSegments']
+            result['contentFilter'] = safe
+        if isinstance(receipt.get('masked'), list):
+            result['masked'] = [{'kind': row['kind'], 'role': row['role'], 'name': '已屏蔽区域'}
+                for row in receipt['masked'][:512] if isinstance(row, dict)
+                and row.get('kind') in {'content_shield', 'sensitive_field', 'uninspectable_frame'}
+                and row.get('role') in {'region', 'iframe', 'textbox', 'input', 'textarea', 'combobox', 'select', 'div', 'span'}]
+        for key in ('omittedMoving', 'omittedMasked'):
+            if type(receipt.get(key)) is int and 0 <= receipt[key] <= 10000:
+                result[key] = receipt[key]
+        return result
 
     @staticmethod
     def _vision(receipt, question, annotations=None, snapshot=None):

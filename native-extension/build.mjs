@@ -10,7 +10,7 @@ if (dest === source) throw Error('output must not replace source');
 await mkdir(dest, {recursive: true});
 // 中文注释：内容过滤模块随扩展打包，保持源码和加载版本一致。
 // 中文注释：扩展和系统通知共用的品牌图标也在清单内；清单内不放注释，集成检查器按字面量解析它。
-for (const file of ['manifest.json', 'work-window.mjs', 'work-window.html', 'action-effects.mjs', 'request-ledger.mjs', 'content-filter.mjs', 'bridge.mjs', 'background.mjs', 'automation-overlay.mjs', 'interaction-highlight.mjs', 'official-actions.mjs', 'downloads.mjs', 'page-runtime.mjs', 'network-evidence.mjs', 'cdp-policy.mjs', 'page-observers.mjs', 'page-observation.mjs', 'vault.mjs',
+for (const file of ['manifest.json', 'work-window.mjs', 'work-window.html', 'action-effects.mjs', 'request-ledger.mjs', 'content-filter.mjs', 'content-shield.mjs', 'bridge.mjs', 'background.mjs', 'automation-overlay.mjs', 'interaction-highlight.mjs', 'official-actions.mjs', 'downloads.mjs', 'page-runtime.mjs', 'network-evidence.mjs', 'cdp-policy.mjs', 'page-observers.mjs', 'page-observation.mjs', 'vault.mjs',
   'approval-notifier.mjs', 'approval-panel.html', 'approval-panel.css', 'approval-panel.mjs',
   'icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png',
   'popup.html', 'popup.css', 'popup.mjs']) {

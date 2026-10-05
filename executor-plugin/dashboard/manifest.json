@@ -1,9 +1,9 @@
 {
   "name": "browser-link",
   "label": "浏览器连接",
-  "description": "浏览器连接与授权状态；原生界面由 Desktop 插件提供。",
+  "description": "浏览器连接、访问模式与 Cookie 镜像；桌面界面由 Hermes 插件提供。",
   "icon": "Globe",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "tab": {
     "path": "/browser-link",
     "position": "after:sessions",

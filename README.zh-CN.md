@@ -1,6 +1,6 @@
 # Hermes Browser Link
 
-任务工作页默认放在单独的 Hermes 工作窗口。输入只切换工作窗口内的活动标签，不抢用户窗口焦点；点击无效果时会返回错误。
+**1.7.0 — macOS 开发预览。** 支持受授权网页任务、自动文本与截图屏蔽、持续任务鼠标、桌面 Cookie 镜像和正式版自动更新。
 
 ![Hermes Browser Link](docs/assets/readme-banner.png)
 
@@ -8,7 +8,21 @@
 
 让 [Hermes Agent](https://github.com/NousResearch/hermes-agent) 在你已登录的 Chrome / Edge 中读取网页并操作任务工作页。
 
-支持读正文和表格、点击、填写表单、上传文件、跟踪下载和 Python 多步操作。在扩展弹窗开启“智能审批”；网站首次读取及后续写入会出现确认提示。详见 [安全说明](SECURITY.md)。
+支持读正文和表格、点击、填写表单、上传文件、跟踪下载和 Python 多步操作。默认使用智能审批，网站首次读取及后续写入会出现确认提示；全部访问需要另行明确开启。详见 [安全说明](SECURITY.md)。
+
+## 功能列表
+
+| 功能 | 行为 |
+|---|---|
+| 现有浏览器 | 复用已登录的 Chrome/Edge；任务页放在独立工作窗口，输入切标签不抢用户窗口焦点。 |
+| 页面读取与操作 | 提取正文、表格、表单和记录；支持语义引用、点击、输入、选择、滚动及文件上传下载。 |
+| Python 工作流 | 多步脚本和经过验证的可复用网站工具，沿用同一任务授权链路。 |
+| 自动内容屏蔽 | 开关开启后，内置中英文正则自动识别公告和网页指令，屏蔽 Agent 文本及对应截图区域，无需填写网站或选择器。 |
+| 持续任务鼠标 | 固定启用，任务执行与等待下一步时持续显示，目标间平滑移动，支持接管和系统减少动态效果。 |
+| 桌面 Cookie 镜像 | 在 Hermes 插件页选择站点和目标浏览器，每次复制都需在源扩展确认。 |
+| 安装与更新 | 完整性校验、升级备份与失败回滚、手动升级、每小时检查正式版及空闲安装。 |
+
+内容屏蔽只处理 Browser Link 发给 Agent 的输出，用户看到的网页保持原样；真实验证和错误信号保留。未支持的原始通道或不可检查页面结构会拒绝输出。详见 [屏蔽边界](docs/content-shield.md)、[完整功能](docs/features.md) 和 [模块索引](docs/product-modules.zh-CN.md)。
 
 ## 前置条件
 
@@ -24,13 +38,15 @@
 1. 下载 [Release 安装包](https://github.com/FanJean/hermes-browser-link/releases) 并安装（无需 Node.js）；出现“程序安装并启用完成”即成功：
 
    ```sh
-   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.6.1/hermes-browser-link-1.6.1.zip -o hermes-browser-link-1.6.1.zip && unzip hermes-browser-link-1.6.1.zip && cd hermes-browser-link-1.6.1 && ./install.sh
+   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.7.0/hermes-browser-link-1.7.0.zip -o hermes-browser-link-1.7.0.zip && unzip hermes-browser-link-1.7.0.zip && cd hermes-browser-link-1.7.0 && ./install.sh
    ```
 
 2. 在浏览器打开 `chrome://extensions` 或 `edge://extensions` → 开发者模式 → 加载已解压的扩展程序 → 粘贴脚本打印并复制的绝对路径；脚本最多等待 3 分钟，检测成功显示 ✅，可用 Ctrl+C 跳过等待。
-3. 在扩展弹窗开启“智能审批”，重启 Hermes 桌面端；弹窗显示“已连接”、桌面“浏览器连接”页显示在线浏览器即完成。
+3. 首次使用保留默认的智能审批模式，重启 Hermes 桌面端；弹窗显示“已连接”、桌面“浏览器连接”页显示在线浏览器即完成。
 
 升级：在新包目录运行 `./install.sh --upgrade`（自动备份，失败回滚），再重载扩展和重启桌面端。卸载：`./install.sh --uninstall`（默认保留任务私有数据；加 `--purge` 才删除）。
+
+自动更新只接收正式版，会跳过包括本次 1.7.0 在内的开发预览版。安装本次更新组件后运行 `./install.sh --auto-update install`，每小时检查正式 Release，在浏览器和 Hermes 退出后安装。更新后重载扩展再启动 Hermes。仅检查用 `--auto-update check`，关闭用 `--auto-update off`；立即更新用 `--update`。详见 [自动更新](docs/installation.md#automatic-updates--自动更新)。
 
 [源码、手动安装、多 profile 与故障排查](docs/installation.md) · [代理安装提示词](docs/agent-install-prompt.md)。
 

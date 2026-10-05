@@ -23,7 +23,7 @@ class Element{
  remove(){this.removed=true;this.isConnected=false;if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(child=>child!==this);}
  async fire(type,event){return this.listeners[type]?.(event);}
 }
-function fixture(){const body=new Element('body'),documentElement=new Element('html');documentElement.isConnected=true;const doc={location:{origin:'https://example.test'},documentElement,defaultView:{getComputedStyle:element=>({display:element.style.display||'block',opacity:element.style.opacity||'1'})},createElement:t=>new Element(t)};documentElement.append(body);return {doc,body};}
+function fixture(){const body=new Element('body'),documentElement=new Element('html');documentElement.isConnected=true;const doc={location:{origin:'https://example.test'},documentElement,defaultView:{innerWidth:800,innerHeight:600,getComputedStyle:element=>({display:element.style.display||'block',opacity:element.style.opacity||'1'})},createElement:t=>new Element(t)};documentElement.append(body);return {doc,body};}
 const scope={taskId:'task-1',generation:2,tabId:7,origin:'https://example.test'};
 test('overlay is scoped, decorative surfaces ignore pointers and screenshot hide restores',async()=>{
  const {doc}=fixture();const overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
@@ -136,21 +136,35 @@ test('交互高亮带醒目边框并把标签贴在目标旁边',()=>{
  overlay.remove();
 });
 
-test('模拟鼠标使用派发坐标，关闭和后台页不启动动画',()=>{
+// 中文注释：任务思考、读取和动作之间鼠标保持显示，接管、断连和后台页不误报正在操作。
+test('任务鼠标固定启用，动作结束及下一步等待仍保留位置',()=>{
  const {doc}=fixture();
  const overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
  const cursor=overlay.host.shadow.children.find(x=>x.dataset.role==='virtual-cursor');
+ assert.equal(cursor.style.display,'block');assert.equal(overlay.setCursorEnabled,undefined);
  const binding={taskId:scope.taskId,generation:scope.generation,operationToken:'cursor-1'};
  overlay.interactionSurface.update({...binding,kind:'click',point:{x:31,y:47},rects:[{left:10,top:20,width:80,height:40}]});
  assert.equal(cursor.style.transform,'translate(31px,47px)');
- overlay.setCursorEnabled(false);assert.equal(cursor.style.display,'none');
+ overlay.interactionSurface.clear(binding);assert.equal(cursor.style.display,'block');
+ overlay.update({state:'running',step:'snapshot'});assert.equal(cursor.style.display,'block');
+ overlay.update({state:'waiting'});assert.equal(cursor.style.display,'block');assert.equal(cursor.style.transform,'translate(31px,47px)');
+ overlay.update({state:'paused'});assert.equal(cursor.style.display,'none');
+ overlay.update({state:'waiting'});assert.equal(cursor.style.display,'block');
+ doc.visibilityState='hidden';overlay.update({state:'running'});assert.equal(cursor.style.display,'none');
+ doc.visibilityState='visible';overlay.update({state:'waiting'});assert.equal(cursor.style.display,'block');
+ overlay.update({state:'disconnected'});assert.equal(cursor.style.display,'none');overlay.remove();
+});
+// 中文注释：同一绘制回调不会从旧起点重启；后续目标直接衔接当前光标位置，减少动作间闪烁。
+test('鼠标连续衔接目标，移动只使用 transform 且支持减少动态效果',()=>{
+ const {doc}=fixture();const overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ const cursor=overlay.host.shadow.children.find(x=>x.dataset.role==='virtual-cursor');
+ const binding={taskId:scope.taskId,generation:scope.generation,operationToken:'move-1'};
+ overlay.interactionSurface.update({...binding,kind:'input',point:{x:100,y:80},rects:[{left:80,top:70,width:80,height:20}]});
  overlay.interactionSurface.clear(binding);
- overlay.interactionSurface.update({...binding,operationToken:'cursor-2',kind:'click',point:{x:41,y:57},rects:[{left:10,top:20,width:80,height:40}]});
- assert.equal(cursor.style.display,'none');
- overlay.setCursorEnabled(true);
- doc.visibilityState='hidden';overlay.interactionSurface.clear({...binding,operationToken:'cursor-2'});
- overlay.interactionSurface.update({...binding,operationToken:'cursor-3',kind:'click',rects:[{left:10,top:20,width:80,height:40}]});
- assert.equal(cursor.style.display,'none');overlay.remove();
+ overlay.interactionSurface.update({...binding,operationToken:'move-2',kind:'input',point:{x:350,y:180},rects:[{left:330,top:170,width:80,height:20}]});
+ assert.equal(cursor.style.display,'block');assert.equal(cursor.style.transform,'translate(350px,180px)');
+ assert.match(cursor.style.transition,/^transform 240ms cubic-bezier/);
+ assert.ok(overlay.host.shadow.children.some(node=>node.tagName==='style'&&node.textContent.includes('prefers-reduced-motion')));overlay.remove();
 });
 
 test('步骤标签只显示控件名称，最近五步的错误码有固定说明',()=>{
@@ -192,4 +206,18 @@ test('模态层指针与滚动在窗口捕获阶段阻断，控制按钮仍可�
  overlay.update({state:'paused'});assert.equal(fire('click'),false);
  overlay.update({state:'running',step:'click'});assert.equal(fire('click'),false);
  overlay.reblock();assert.equal(fire('click'),true);overlay.remove();assert.equal(listeners.size,0);
+});
+
+// 中文注释：持续几何校准不能重启拖动起点定时器，旧操作清理也不能影响新操作。
+test('拖动先到起点再到终点，同一操作反复绘制不回跳',context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
+ const {doc}=fixture();const overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ const cursor=overlay.host.shadow.children.find(x=>x.dataset.role==='virtual-cursor');
+ const request={taskId:scope.taskId,generation:scope.generation,operationToken:'drag-smooth',kind:'drag',rects:[{left:20,top:40,width:20,height:20},{left:300,top:200,width:20,height:20}]};
+ overlay.interactionSurface.update(request);assert.equal(cursor.style.transform,'translate(30px,50px)');
+ context.mock.timers.tick(120);overlay.interactionSurface.update(request);
+ context.mock.timers.tick(120);assert.equal(cursor.style.transform,'translate(310px,210px)');
+ overlay.interactionSurface.update(request);assert.equal(cursor.style.transform,'translate(310px,210px)');
+ overlay.interactionSurface.clear(request);assert.equal(cursor.style.display,'block');
+ context.mock.timers.tick(500);assert.equal(cursor.style.transform,'translate(310px,210px)');overlay.remove();
 });

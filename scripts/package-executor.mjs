@@ -167,6 +167,8 @@ async function verifyLayout(root) {
   const missing=[...expectedDirs].filter(name=>!actualDirs.has(name)).sort();
   if (emptyOrExtra.length||missing.length) throw new Error(`Incomplete package directory layout: extra=${JSON.stringify(emptyOrExtra)} missing=${JSON.stringify(missing)}`);
   for (const required of ['browser-link/plugin.yaml','browser-link/script_lane/host_bridge.py',
+    // 中文注释：自动更新必须携带完整维护入口与事务安装器。
+    'browser-link/maintenance/update.py','browser-link/maintenance/install-cli.py','browser-link/maintenance/install-executor.py',
     'browser-link/script_lane/action_session.py','browser-link/script_lane/child.py',
     'browser-link/script_lane/tool.py','browser-link/open_tool.py',
     'browser-link/skills/use-my-browser/SKILL.md','native-extension/manifest.json',
@@ -210,6 +212,8 @@ try {
     'executor-plugin/vault_adapter/__init__.py','executor-plugin/vault_adapter/adapter.py',
     'executor-plugin/vault_adapter/integration.py','executor-plugin/vault_adapter/official_source.py',
     'CHANGELOG.md','docs/python-scripting.md','docs/installation.md','scripts/install-cli.py','install.sh',
+    // 中文注释：先核对更新入口，再创建输出目录，避免缺模块时留下不完整产物。
+    'executor-plugin/maintenance/update.py',
     ...nativeModules, ...diagnosticsFiles.map(name => `${diagnosticsPackage}/${name}`)]) {
     const info=await lstat(path.join(source,required)).catch(error=>{if(error?.code==='ENOENT')return null;throw error;});
     if(!info?.isFile()) throw new Error(`Missing input ${required}`);
@@ -219,6 +223,10 @@ try {
   await mkdir(output); // existing target is always refused
   outputCreated = true;
   await copyTree(path.join(source,'executor-plugin'),path.join(output,'browser-link'));
+  // 中文注释：自动更新组件携带相同安装器，下载新包后仍用当前可信代码校验及事务升级。
+  for (const name of ['install-cli.py','install-executor.py']) {
+    await copyFile(path.join(source,'scripts',name),path.join(output,'browser-link/maintenance',name));
+  }
   for (const module of modules) await copyTree(path.join(source,module),path.join(output,'browser-link',module));
   // Only the native runtime JS entries, not module tests, scripts or evidence.
   for (const relative of nativeModules) {
@@ -254,8 +262,10 @@ try {
   await writeFile(path.join(output,'INSTALL.txt'),`Browser Link ${releaseVersion || declaredVersion}
 Run ./install.sh. Python 3.11+ and Hermes are needed; source installation also needs Node.js 22.12+.
 Currently supported: macOS + Chrome/Edge. Tested with Hermes 0.21.4.
-Load the printed extension directory, enable smart approval in its popup and restart Hermes Desktop.
+Load the printed extension directory, keep the default smart-approval mode and restart Hermes Desktop.
 Upgrade: ./install.sh --upgrade, then reload the extension and restart Hermes Desktop.
+Automatic updates: ./install.sh --auto-update install (hourly, waits until browsers and Hermes exit).
+Check only: ./install.sh --check-update. Update now: ./install.sh --update. Disable: ./install.sh --auto-update off.
 Uninstall: ./install.sh --uninstall (keeps task data); add --purge to delete it.
 Preview: ./install.sh --dry-run. Directory details: ./install.sh --verbose.
 Read README.md for profiles, the connection check command and troubleshooting.

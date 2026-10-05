@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hermes Browser Link",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "permissions": [
     "nativeMessaging",
     "debugger",
@@ -41,5 +41,6 @@
     "32": "icon-32.png",
     "48": "icon-48.png",
     "128": "icon-128.png"
-  }
+  },
+  "description": "Hermes browser automation with smart approval, automatic text and screenshot shielding, and a persistent task cursor."
 }

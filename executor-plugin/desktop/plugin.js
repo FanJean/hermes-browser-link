@@ -91,6 +91,9 @@ function cookieStatusText(value) {
 }
 
 const COOKIE_FIELD_CLASS = 'rounded-md border border-(--ui-stroke-secondary) bg-(--ui-bg-primary) px-3 py-2 text-sm text-(--ui-text-primary) focus-visible:outline-2 focus-visible:outline-(--ui-accent)'
+// 中文注释：主背景是半透明控件填充色；原生弹窗改用不透明 elevated 表面，并显式覆盖宿主的 margin 重置。
+const COOKIE_DIALOG_STYLE = { position: 'fixed', inset: 0, margin: 'auto', width: 'min(32rem, calc(100vw - 2rem))', height: 'fit-content', maxHeight: 'calc(100dvh - 2rem)', overflowY: 'auto', boxSizing: 'border-box', padding: '1.5rem', border: '1px solid var(--ui-stroke-secondary)', borderRadius: '0.75rem', backgroundColor: 'var(--ui-bg-elevated)', color: 'var(--ui-text-primary)', boxShadow: 'var(--shadow-md)' }
+const COOKIE_DIALOG_CONTENT_STYLE = { ...BROWSER_WORK_SECTION_STYLE, gap: '1rem' }
 
 function CookieMirrorPanel({ browser, rows, fresh }) {
   const [sites, setSites] = useState(null), [search, setSearch] = useState(''), [loading, setLoading] = useState(false)
@@ -137,6 +140,8 @@ function CookieMirrorPanel({ browser, rows, fresh }) {
   }
   const filtered = (sites || []).filter(row => row.site.includes(search.trim().toLowerCase()))
   return jsxs('section', { 'aria-label': 'Cookie 镜像', style: { gridColumn: '1 / -1', minWidth: 0 }, children: [
+    // 中文注释：遮罩只作用于本镜像弹窗，原生 top layer 继续负责背景输入隔离、焦点和 Esc。
+    jsx('style', { children: '.hermes-cookie-dialog::backdrop{background:rgb(0 0 0 / .45)}' }),
     button(loading ? '正在读取…' : '读取 Cookie 站点', loadSites, { disabled: !available || loading || busy }),
     error ? jsx('p', { role: 'alert', className: 'mt-2 text-sm text-(--ui-text-danger)', children: error }) : null,
     sites ? jsxs('div', { className: 'mt-3 flex flex-col gap-3', children: [
@@ -151,20 +156,21 @@ function CookieMirrorPanel({ browser, rows, fresh }) {
         button('镜像', () => choose([row.site]), { disabled: !available || busy }) ] }, row.site)) }) ] }) : null,
     current ? jsxs('div', { className: 'mt-3 text-sm text-(--ui-text-secondary)', role: 'status', 'aria-live': 'polite', children: [
       jsx('p', { children: cookieStatusText(current) }),
-      ['preparing', 'approval_required'].includes(current.status) ? jsx('p', { children: '必须在源浏览器扩展里批准。浏览器在后台时可点击系统通知打开面板；也可切到源浏览器，点扩展弹窗里的「打开待确认面板」。' }) : null,
+      ['preparing', 'approval_required'].includes(current.status) ? jsx('p', { children: '必须在源浏览器扩展里批准。浏览器在后台时可点击系统通知打开面板；也可切到源浏览器，将已有确认窗口切到前台。' }) : null,
       ...(current.sites || []).filter(row => row.reasons.length).map(row => jsx('p', { children: `${row.site}：${row.reasons.join(' / ')}` }, row.site)) ] }) : null,
-    jsxs('dialog', { ref: dialog, onCancel: () => setDialogSites(null), 'aria-label': '镜像 Cookie 到其他浏览器', className: 'max-h-[85vh] w-full max-w-lg overflow-auto rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-primary) p-6 text-(--ui-text-primary)', children: [
+    jsx('dialog', { ref: dialog, onCancel: () => setDialogSites(null), 'aria-label': '镜像 Cookie 到其他浏览器', className: 'hermes-cookie-dialog', style: COOKIE_DIALOG_STYLE, children: jsxs('div', { style: COOKIE_DIALOG_CONTENT_STYLE, children: [
       jsx('h2', { className: 'm-0 text-lg font-semibold', children: '镜像 Cookie' }),
       jsx('p', { className: 'text-sm', children: '批准后会把该站点登录态复制到目标浏览器。必须在源浏览器扩展里批准，全部访问也不能跳过确认。' }),
       jsx('p', { className: 'break-all text-sm', children: (dialogSites || []).join('、') }),
-      jsxs('label', { className: 'flex flex-col gap-2 text-sm', children: ['目标浏览器 / 配置', jsx('select', { value: target, onChange: e => setTarget(e.target.value), className: COOKIE_FIELD_CLASS, children: [
+      jsxs('label', { className: 'flex flex-col gap-2 text-sm', children: ['目标浏览器 / 配置', jsx('select', { value: target, onChange: e => setTarget(e.target.value), className: COOKIE_FIELD_CLASS, style: { width: '100%', minWidth: 0, boxSizing: 'border-box' }, children: [
         jsx('option', { value: '', children: '请选择目标浏览器' }, 'empty'),
         ...targets.map(row => jsx('option', { value: row.instanceId, children: `${browserLabel(row.browser)} · ${row.instanceId}` }, row.instanceId)) ] })] }),
       !targets.length ? jsx('p', { children: '没有其他已连接且支持 Cookie 镜像的浏览器，请连接目标扩展。' }) : null,
       jsxs('label', { className: 'mt-4 flex items-center gap-2 text-sm', children: [jsx('input', { type: 'checkbox', checked: clearTarget, onChange: e => setClearTarget(e.target.checked) }), '导入前清除目标这些站点的旧 Cookie'] }),
       jsxs('label', { className: 'mt-3 flex items-center gap-2 text-sm', children: [jsx('input', { type: 'checkbox', checked: persist, onChange: e => setPersist(e.target.checked) }), '会话 Cookie 持久保存'] }),
-      persist ? jsxs('label', { className: 'mt-2 flex items-center gap-2 text-sm', children: [jsx('input', { type: 'number', min: 1, max: 365, value: days, 'aria-label': '持久保存天数', onChange: e => setDays(e.target.value), className: COOKIE_FIELD_CLASS }), '天（1–365）'] }) : null,
-      jsxs('div', { className: 'mt-6 flex justify-end gap-2', children: [button('取消', () => setDialogSites(null), { disabled: sending }), button(sending ? '请求中…' : '镜像', send, { disabled: !available || busy || !targets.some(row => row.instanceId === target) || persist && (!Number.isInteger(Number(days)) || Number(days) < 1 || Number(days) > 365) })] }) ] })
+      // 中文注释：天数只有三位，限制输入宽度，避免窄窗口里被原生输入的默认宽度撑开。
+      persist ? jsxs('label', { className: 'mt-2 flex items-center gap-2 text-sm', children: [jsx('input', { type: 'number', min: 1, max: 365, value: days, 'aria-label': '持久保存天数', onChange: e => setDays(e.target.value), className: COOKIE_FIELD_CLASS, style: { width: '6rem', minWidth: 0, boxSizing: 'border-box' } }), '天（1–365）'] }) : null,
+      jsxs('div', { className: 'mt-6 flex justify-end gap-2', children: [button('取消', () => setDialogSites(null), { disabled: sending }), button(sending ? '请求中…' : '镜像', send, { disabled: !available || busy || !targets.some(row => row.instanceId === target) || persist && (!Number.isInteger(Number(days)) || Number(days) < 1 || Number(days) > 365) })] }) ] }) })
   ] })
 }
 

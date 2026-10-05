@@ -3,7 +3,8 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hermes 浏览器连接</title><link rel="stylesheet" href="popup.css"></head>
 <body>
 <main class="popup">
-  <header class="header"><div class="brand">Hermes <span>浏览器</span></div><span id="connection-label" aria-label="连接状态" aria-live="polite">检查中</span></header>
+  <!-- 中文注释：版本从当前扩展 manifest 读取，右上角同时保留连接状态。 -->
+  <header class="header"><div class="brand">Hermes <span>浏览器</span></div><div class="header-meta"><span id="version-label" aria-label="扩展版本"></span><span id="connection-label" aria-label="连接状态" aria-live="polite">检查中</span></div></header>
   <section class="connection-card" id="connection-card"><p id="connection-detail" class="detail"></p><button id="connect" type="button" hidden>连接 Hermes</button></section>
   <!-- 中文注释：浏览器只有智能审批和全部访问两档，开关控制当前浏览器的默认模式。 -->
   <section class="access-row" aria-labelledby="access-label">
@@ -16,15 +17,9 @@
   </section>
   <!-- 中文注释：只显示当前标签页的任务；接管和停止都保留，页面遮罩共享同一任务状态。 -->
   <section id="page-task" class="page-task" aria-label="当前页面任务" hidden><span id="operation" role="status"></span><div class="page-controls"><button id="takeover" type="button">接管</button><button id="stop-task" class="danger" type="button">停止</button></div></section>
-  <!-- 中文注释：复用开关行布局，只保留桌面深链入口和源扩展待确认请求入口。 -->
-  <section id="cookie-mirror" class="access-row" aria-labelledby="cookie-title">
-    <div><h2 id="cookie-title">Cookie 镜像</h2><p class="detail">在桌面页操作。</p></div>
-    <div class="cookie-actions"><a id="cookie-desktop" href="hermes://open/browser-link">在桌面页打开</a><button id="cookie-pending" type="button" disabled>打开待确认请求</button></div>
-  </section>
-  <!-- 中文注释：模拟鼠标与文字过滤直接展示，复用浏览器权限的开关行。 -->
-    <section class="access-row" aria-labelledby="cursor-label"><div><h2 id="cursor-label">模拟鼠标</h2><p class="detail">显示自动操作位置</p></div><button id="cursor-toggle" class="switch" type="button" role="switch" aria-checked="true" aria-labelledby="cursor-label"><span></span></button></section>
+  <!-- 中文注释：模拟鼠标固定启用，Cookie 镜像只在 Hermes 插件页提供；弹窗只保留自动屏蔽开关。 -->
     <section class="access-row" aria-labelledby="filter-label">
-      <div><h2 id="filter-label">过滤网页干扰文字</h2><p id="filter-help" class="detail">仅过滤返回文本，保留验证和错误提示。</p><p id="filter-detail" class="detail" aria-live="polite"></p></div>
+      <div><h2 id="filter-label">自动屏蔽网页干扰</h2><p id="filter-help" class="detail">用内置正则自动识别公告和网页指令，屏蔽对应文本块及截图区域，无须配置网站或选择器。保留验证和错误提示。</p><p id="filter-detail" class="detail" aria-live="polite"></p></div>
       <button id="filter-toggle" class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="filter-label" aria-describedby="filter-help" disabled><span></span></button>
     </section>
   <p id="error" role="alert" hidden></p>

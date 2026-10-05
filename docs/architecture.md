@@ -61,7 +61,7 @@ The daemon listens on `$HERMES_HOME/plugin-data/browser-link-native/bridge.sock`
 
 ## User interfaces
 
-- **扩展弹窗** — 连接状态、浏览器访问、当前页任务状态、接管/继续与停止按钮；**独立确认面板** — 敏感字段人工输入与未开启完全访问时的确认。完全访问不逐项审批；Cookie 镜像仍每次确认。
+- **扩展弹窗** — 当前 manifest 版本、连接状态、浏览器访问、当前页任务状态、接管/继续与停止按钮及自动屏蔽开关；**独立确认面板** — 敏感字段人工输入与未开启完全访问时的确认。完全访问不逐项审批；Cookie 镜像仍每次确认。
 - **Page overlay** — status, take over, stop.
 - **Hermes 桌面面板**（`executor-plugin/desktop/`）— 本地桥接状态、在线/离线浏览器及浏览器访问入口。任务日志、文件和结果不在此展示；诊断工具仍可读取受限诊断接口。
 

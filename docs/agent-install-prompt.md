@@ -14,7 +14,7 @@
 
 > 从 https://github.com/FanJean/hermes-browser-link/releases 下载并解压 Release ZIP，或克隆 https://github.com/FanJean/hermes-browser-link 并进入目录。
 > 运行 `./install.sh --wait-seconds 0`；指定多个 Hermes profile 时重复加 `--profile <名>`，升级时加 `--upgrade`。
-> 停下来给我打印的扩展路径，等我在 chrome://extensions 或 edge://extensions 加载扩展、在弹窗开启“智能审批”并重启 Hermes 桌面端。
+> 停下来给我打印的扩展路径，等我在 chrome://extensions 或 edge://extensions 加载扩展、保留默认的智能审批模式并重启 Hermes 桌面端。
 > 不替我点击浏览器的安全或权限确认。
 > 不选择“全部访问”。
 > 等我完成后，运行 `python3 "${HERMES_HOME:-$HOME/.hermes}/plugins/browser-link/native_bridge/doctor.py"`。

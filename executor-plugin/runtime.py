@@ -281,7 +281,7 @@ def _scalar_fields(names):
 
 _RESULT_POINT = _scalar_fields('x y')
 # 中文注释：保留过滤标记，让 agent 能区分原始内容与经过规则过滤的文本。
-_RESULT_CONTENT_FILTER = _scalar_fields('enabled removedSegments')
+_RESULT_CONTENT_FILTER = _scalar_fields('enabled removedSegments siteAutomationRestricted')
 # 中文注释：导航就绪与离开任务来源是执行器的明确状态，公共工具不能在投影时丢弃。
 _RESULT_TAB = _scalar_fields('id tabId url title active selected index windowId groupId status pinned ready outOfScope')
 _RESULT_ARTIFACT = _scalar_fields('id taskId sha256 mimeType size')
@@ -332,7 +332,8 @@ _RESULT_ACTIONS = {
     'snapshot': {**_RESULT_TAB, **_scalar_fields('text truncated'),
                  'contentFilter': _RESULT_CONTENT_FILTER,
                  'elements': [_scalar_fields('tag text sensitive')]},
-    'screenshot': {**_scalar_fields('data path tabId'), 'artifact': _RESULT_ARTIFACT,
+    'screenshot': {**_scalar_fields('data path tabId omittedMoving omittedMasked'), 'artifact': _RESULT_ARTIFACT,
+                   'annotations': [_scalar_fields('label x y width height')],
                    'masked': [_scalar_fields('kind role name')]},
     # 中文注释：已完成点击可引发跨来源导航，保留结果状态但不扩大网页字段白名单。
     # 中文注释：可信输入的派发后状态随公共结果透出，调用方据此决定只读核实且不得自动重试。
@@ -363,6 +364,11 @@ _RESULT_ACTIONS = {
     'interaction.drag_coordinates': {**_scalar_fields('ok kind delivery outcomeUnknown steps'), 'from': _RESULT_POINT, 'to': _RESULT_POINT},
     'interaction.drag_elements': {**_scalar_fields('ok kind delivery outcomeUnknown trusted steps'), 'from': _RESULT_POINT, 'to': _RESULT_POINT},
 }
+
+
+# 中文注释：每个公开页面动作保留固定内容保护状态，不开放规则或任意 metadata。
+for _result_schema in _RESULT_ACTIONS.values():
+    _result_schema['contentFilter'] = _RESULT_CONTENT_FILTER
 
 
 def _project_schema(value, schema):

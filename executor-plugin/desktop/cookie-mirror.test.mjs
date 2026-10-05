@@ -93,7 +93,7 @@ test('多选、持久天数和清除选项通过请求发送；状态只查询�
 
 test('等待确认、拒绝、过期、断连和查询失败均使用固定提示且不重发', async () => {
   for (const [result, expected, error] of [
-    [state('approval_required'), /等待扩展确认.*打开待确认面板/s],
+    [state('approval_required'), /等待扩展确认.*确认窗口/s],
     [state('denied'), /用户拒绝/],
     [state('failed', { reason: 'expired' }), /已过期/],
     [state('failed', { reason: 'disconnected' }), /浏览器已断开/],

@@ -89,6 +89,8 @@ NODE_TESTS = (
     'tests/popup-integration/popup.test.mjs',
     # 中文注释：内容过滤必须覆盖缓存重放和真实阻塞信息保留。
     'tests/popup-integration/content-filter.test.mjs',
+    # 中文注释：受信 UI 配置和持续事件出口复用真实后台消息路由。
+    'tests/popup-integration/native-routing.test.mjs',
     'page-semantics/long-text.test.mjs',
     'page-semantics/controls.test.mjs',
     'tests/complex-ui/semantics.test.mjs',
@@ -106,6 +108,8 @@ NODE_TESTS = (
     'tests/v1.4.4/round1f.test.mjs',
 )
 PYTHON_SUITES = (
+    # 中文注释：自动更新的网络与调度调用均由测试替换，不触碰真实安装。
+    'tests/auto-update',
     'browser-diagnostics/tests',
     # 中文注释：基准对比和评分测试含生命周期三类重复打开、tasks.json 快照与新增任务正确性。
     'bench', 'bench/agent',
@@ -119,6 +123,7 @@ PYTHON_SUITES = (
 )
 # Some directories contain explicitly unsafe runners: select files by fixed name.
 PYTHON_FILES = {
+    'tests/auto-update': ('test_update.py',),
     # 中文注释：诊断用例只使用合成事件和临时日志目录，按名称限定运行范围。
     'browser-diagnostics/tests': ('test_schema.py', 'test_runtime.py', 'test_sink.py'),
     # 中文注释：1.6.0 生命周期 runner 按名称登记，真实浏览器脚本不进入离线门禁。
@@ -759,7 +764,8 @@ def known_v11_runner_paths() -> set[str]:
     for folder, names in PYTHON_GROUPED_FILES.items():
         known.update((Path(folder) / name).as_posix() for name in names)
     for folder, names in PYTHON_FILES.items():
-        if folder.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5', 'tests/v1.6', 'tests/site-tools', 'tests/network-evidence')):
+        # 中文注释：自动更新按固定文件登记，也纳入新增/遗漏 runner 的发现检查。
+        if folder.startswith(('tests/v1.1', 'tests/v1.3', 'tests/v1.5', 'tests/v1.6', 'tests/site-tools', 'tests/network-evidence', 'tests/auto-update')):
             known.update((Path(folder) / name).as_posix() for name in names)
     known.update(SUPPLEMENTAL_RUNNER_PATHS)
     known.update(REVIEWED_RUNNER_PATHS)
@@ -772,7 +778,7 @@ def v11_coverage(root: Path, selected: set[str]) -> dict:
     rows = []
     runner_suffixes = {'.py', '.mjs', '.js'}
     for folder in sorted(path for path in tests.iterdir()
-                         if path.is_dir() and path.name.startswith(('v1.1', 'v1.3', 'v1.5', 'v1.6', 'site-tools', 'network-evidence'))):
+                         if path.is_dir() and path.name.startswith(('v1.1', 'v1.3', 'v1.5', 'v1.6', 'site-tools', 'network-evidence', 'auto-update'))):
         candidates = sorted(
             path.relative_to(root).as_posix()
             for path in folder.rglob('*')
@@ -797,7 +803,7 @@ def v11_coverage(root: Path, selected: set[str]) -> dict:
         'missing_expected': missing_expected,
     }
     return {
-        'discovery_rule': 'tests/{v1.1*,v1.3*,v1.5*,v1.6*,site-tools,network-evidence}/**/{test_*.py,test_*.js,test_*.mjs,*.test.js,*.test.mjs}',
+        'discovery_rule': 'tests/{v1.1*,v1.3*,v1.5*,v1.6*,site-tools,network-evidence,auto-update}/**/{test_*.py,test_*.js,test_*.mjs,*.test.js,*.test.mjs}',
         'runner_file_count': sum(len(row['runner_files']) for row in rows),
         'included_runner_file_count': sum(len(row['included']) for row in rows),
         'not_run_runner_file_count': sum(len(row['not_run']) for row in rows),

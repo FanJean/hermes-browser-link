@@ -1,3 +1,4 @@
+import {validateShieldRules} from './content-shield.mjs';
 import {NativeWorkspaces,registerWorkspaceStartup} from './workspace-adapter.mjs';
 // 中文注释：顶层同步注册浏览器启动撤权，不能等 connect 或 ready 完成后注册。
 registerWorkspaceStartup(chrome);
@@ -8,8 +9,14 @@ import {createApprovalNotifier,showPanelNotification,clearPanelNotification} fro
 let bridge=null,connected=false,connecting=false,lastError='尚未连接本地桥';
 let notifier=null,approvalInstance=null,approvalRefresh=Promise.resolve();
 let connectedInstanceId=null,connectedGeneration=null;
-// 中文注释：过滤偏好独立于浏览器授权，未设置时默认关闭；读取失败交由调用方明确报告。
-async function readContentFilter(){return (await chrome.storage.local.get('pageContentFilter')).pageContentFilter===true;}
+// 中文注释：发送边界也校验完整设置，不能把损坏的开关或规则当成过滤关闭。
+async function readContentFilter(){return (await readContentShield()).enabled;}
+// 中文注释：一次读取开关和规则，校验失败不按关闭处理。
+async function readContentShield(){
+ const value=await chrome.storage.local.get(['pageContentFilter','pageContentShieldRules']);
+ if(value.pageContentFilter!==undefined&&typeof value.pageContentFilter!=='boolean')throw Error('CONTENT_SHIELD_UNAVAILABLE');
+ return {enabled:value.pageContentFilter===true,rules:validateShieldRules(value.pageContentShieldRules===undefined?{}:value.pageContentShieldRules)};
+}
 // Hermes asks us to show the authorization management UI. A toolbar popup
 // cannot be opened reliably from a background request, so open the same page
 // as a centered, focused extension window instead.
@@ -135,9 +142,9 @@ async function performOverlayCommand({taskId,generation,tabId,origin:site,kind})
 }
 // 中文注释：下载事件只报告已归属任务的元信息；未连接本地桥时不认领，文件留在默认暂存位置。
 const reportDownload=p=>{const current=bridge;if(!current||!connected)return Promise.resolve();return current.request('extension.download_event',p).catch(()=>{});};
-const pushCdpEvents=p=>{const current=bridge;if(!current||!connected)return Promise.resolve();return current.request('extension.cdp_events',p).catch(()=>{});};
-const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}),{onOverlayCommand:overlayCommand,onDownloadEvent:reportDownload,onCdpEvents:pushCdpEvents});
-chrome.storage.local.get('visualCursorEnabled').then(value=>{executor.visualCursorEnabled=value.visualCursorEnabled!==false;}).catch(()=>{});
+// 中文注释：已存在的订阅也必须遵循当前开关；设置读失败时不推送原始事件。
+const pushCdpEvents=async p=>{try{if((await readContentShield()).enabled)return;}catch{return;}const current=bridge;if(!current||!connected)return;return current.request('extension.cdp_events',p).catch(()=>{});};
+const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}),{onOverlayCommand:overlayCommand,onDownloadEvent:reportDownload,onCdpEvents:pushCdpEvents,onContentShield:readContentShield});
 // 中文注释：镜像状态变化只刷新源扩展确认面板，弹窗不保留复制结果。
 const cookieMirror=new CookieMirror(chrome,{onChanged:()=>{void refreshApprovals();}});
 const consent=new BrowserConsent(chrome.storage.local,executor);
@@ -279,8 +286,8 @@ async function connect(){if(bridge||connecting)return;connecting=true;try{
   // 中文注释：本地桥意外断开（如 daemon 重启）后很快重连一次；在途动作不重放，其余仍靠 30 秒定时重连兜底。
   setTimeout(()=>{connect();},1500);});
  // 中文注释：握手版本与扩展清单保持一致，避免安装后仍报告旧版本。
- // 中文注释：握手版本与 1.6.1 发布清单一致。
- const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.6.1',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}// 中文注释：握手后按 daemon 本实例终态与本地工作区日志清理重载遗留浮层，先于恢复授权派发。
+ // 中文注释：握手版本与 1.7.0 发布清单一致。
+ const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.7.0',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}// 中文注释：握手后按 daemon 本实例终态与本地工作区日志清理重载遗留浮层，先于恢复授权派发。
  await executor.cleanupOrphanOverlays(await current.request('extension.tasks',{includeClosed:true}),instanceId);await consent.synchronize(current);await refreshApprovals(current);}
  }catch(e){
   lastError=e.message;
@@ -341,12 +348,15 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
   chrome.runtime.sendMessage({type:'changed'}).catch(()=>{});
   return {enabled};
  }
- if(m.type==='visual_cursor'){
-  if(typeof m.enabled!=='boolean')throw Error('无效的光标设置');
-  await chrome.storage.local.set({visualCursorEnabled:m.enabled});
-  executor.visualCursorEnabled=m.enabled;
-  for(const task of executor.tasks.values())for(const [tabId,entry] of task.overlays||[])void executor.overlayCall(tabId,entry,'cursor',{enabled:m.enabled}).catch(()=>{});
-  return {enabled:m.enabled};
+ // 中文注释：屏蔽规则入口位于受信 sender 校验之后，保存后逐项读回核实。
+ if(m.type==='page_content_shield_read')return {rules:(await readContentShield()).rules};
+ if(m.type==='page_content_shield_save'){
+  const rules=validateShieldRules(m.rules);
+  await chrome.storage.local.set({pageContentShieldRules:rules});
+  const saved=(await readContentShield()).rules;
+  if(JSON.stringify(saved)!==JSON.stringify(rules))throw Error('屏蔽区域保存未确认');
+  chrome.runtime.sendMessage({type:'changed'}).catch(()=>{});
+  return {rules:saved};
  }
  // 中文注释：弹窗仅能打开已有镜像确认请求，不能列站点、发起或轮询复制。
  if(m.type==='cookie_mirror_pending'){await refreshApprovals();const pending=notifier?.pending().find(r=>r.kind==='cookie_mirror');if(pending)await notifier.openPending(pending.id);return {opened:!!pending};}
@@ -360,8 +370,8 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
  if(m.type==='diagnostics_export')return executor.diagnostics.exportBundle();
  // 中文注释：弹窗只读取当前浏览器的任务摘要和实际归属页，不返回输入或日志正文。
  if(m.type==='popup_status'){
-  // 中文注释：弹窗状态报告与 Native 握手相同的 1.6.1 版本。
-  const base={connected,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),visualCursorEnabled:(await chrome.storage.local.get('visualCursorEnabled')).visualCursorEnabled!==false,browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,observedAt:Date.now(),version:'1.6.1'};
+  // 中文注释：弹窗状态报告与 Native 握手相同的 1.7.0 版本。
+  const base={connected,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,observedAt:Date.now(),version:'1.7.0'};
   if(!connected||!bridge)return {...base,tasks:[],page:null};
   const tasks=await bridge.request('extension.tasks');
   const active=(await chrome.tabs.query({active:true,currentWindow:true}))[0];

@@ -1,5 +1,7 @@
 """中文注释：只操作临时 HOME 和打包快照，命令替身不访问真实 Hermes 或浏览器。"""
 import hashlib
+import argparse
+import io
 import importlib.util
 import json
 import os
@@ -10,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +29,72 @@ def rehash(package):
 
 
 class InstallFlowTests(unittest.TestCase):
+    def auto_update(self, *, busy=None, corrupt=False, fail=False):
+        # 中文注释：以真实打包产物走完整下载校验及事务升级，网络和进程查询用替身。
+        self.invoke()
+        # 中文注释：写入标记，后台再调用 open/pbcopy 会覆盖它们，测试可以直接发现。
+        (self.root / 'opened.json').write_text('browser-handoff-preserved')
+        (self.root / 'clipboard').write_text('clipboard-preserved')
+        module_spec = importlib.util.spec_from_file_location('flow_updater', ROOT / 'executor-plugin/maintenance/update.py')
+        updater = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(updater)
+        version = '9.0.0'
+        plugin = self.package / 'browser-link/plugin.yaml'
+        import re
+        plugin.write_text(re.sub(r'^version:.*$', 'version: ' + version, plugin.read_text(), flags=re.M))
+        extension = self.package / 'native-extension/manifest.json'
+        manifest = json.loads(extension.read_text())
+        manifest['version'] = version
+        extension.write_text(json.dumps(manifest))
+        (self.package / 'RELEASE-STATUS.txt').write_text(f'RELEASE V{version}: formal release built from commit ' + 'a' * 40 + '. Verified fixture.\n')
+        rehash(self.package)
+        if corrupt:
+            (self.package / 'browser-link/runtime.py').write_text('# 中文注释：模拟摘要校验后的内容损坏\n')
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as archive:
+            for path in self.package.rglob('*'):
+                if path.is_file():
+                    archive.write(path, f'hermes-browser-link-{version}/' + path.relative_to(self.package).as_posix())
+        payload = buffer.getvalue()
+        release = {'version': version, 'url': 'fixed-test-url', 'size': len(payload),
+                   'digest': hashlib.sha256(payload).hexdigest()}
+        args = argparse.Namespace(hermes_home=self.hermes, user_home=self.home, check=False, automatic=True, schedule=None)
+        with mock.patch.dict(os.environ, {**self.env, 'TEST_ACTIVATE_FAIL': '1' if fail else '0'}), \
+                mock.patch.object(updater, 'latest_release', return_value=release), \
+                mock.patch.object(updater, 'fetch', return_value=payload), \
+                mock.patch.object(updater, 'applications_running', side_effect=busy or [False, False]):
+            return updater.run(args)
+
+    def test_auto_update_installs_verified_release_without_opening_browser(self):
+        self.auto_update()
+        self.assertIn('version: 9.0.0', (self.plugin / 'plugin.yaml').read_text())
+        status = json.loads((self.data / 'update-status.json').read_text())
+        self.assertEqual(status['status'], 'updated')
+        self.assertTrue(status['reloadRequired'])
+        # 中文注释：后台升级不得覆盖首次安装之后的浏览器和剪贴板标记。
+        self.assertEqual((self.root / 'opened.json').read_text(), 'browser-handoff-preserved')
+        self.assertEqual((self.root / 'clipboard').read_text(), 'clipboard-preserved')
+        self.assertTrue(list((self.hermes / 'plugin-backups').iterdir()))
+
+    def test_auto_update_defers_if_browser_reopens_during_download(self):
+        self.auto_update(busy=[False, True])
+        self.assertNotIn('version: 9.0.0', (self.plugin / 'plugin.yaml').read_text())
+        self.assertEqual(json.loads((self.data / 'update-status.json').read_text())['status'], 'deferred')
+        self.assertFalse((self.hermes / 'plugin-backups').exists())
+
+    def test_auto_update_rejects_corrupt_inner_manifest_before_installing(self):
+        with self.assertRaisesRegex(ValueError, '哈希不匹配'):
+            self.auto_update(corrupt=True)
+        self.assertNotIn('version: 9.0.0', (self.plugin / 'plugin.yaml').read_text())
+        self.assertFalse((self.hermes / 'plugin-backups').exists())
+
+    def test_auto_update_activation_failure_restores_previous_installation(self):
+        with self.assertRaises(Exception):
+            self.auto_update(fail=True)
+        self.assertNotIn('version: 9.0.0', (self.plugin / 'plugin.yaml').read_text())
+        self.assertNotEqual(json.loads((self.extension / 'manifest.json').read_text())['version'], '9.0.0')
+        self.assertEqual(json.loads((self.data / 'update-status.json').read_text())['status'], 'failed')
+
     @classmethod
     def setUpClass(cls):
         cls.scratch = tempfile.TemporaryDirectory(prefix='bl-install-suite-')
@@ -132,7 +201,7 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
     def old_install(self):
         # 中文注释：模拟旧安装的版本面，扩展公钥与来源不变。
         for path in (self.package / 'browser-link/plugin.yaml', self.package / 'native-extension/manifest.json'):
-            path.write_text(path.read_text().replace('1.6.1', '1.5.1'))
+            path.write_text(path.read_text().replace('1.7.0', '1.5.1'))
         rehash(self.package)
         self.invoke()
         config = self.data / 'host-config.json'
@@ -176,10 +245,10 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         old_extension = json.loads((self.extension / 'manifest.json').read_text())
         config = (self.data / 'host-config.json').read_bytes()
         self.invoke('--upgrade')
-        self.assertIn('version: 1.6.1', (self.plugin / 'plugin.yaml').read_text())
+        self.assertIn('version: 1.7.0', (self.plugin / 'plugin.yaml').read_text())
         extension = json.loads((self.extension / 'manifest.json').read_text())
         self.assertEqual(extension['key'], old_extension['key'])
-        self.assertEqual(extension['version'], '1.6.1')
+        self.assertEqual(extension['version'], '1.7.0')
         self.assertEqual((self.data / 'host-config.json').read_bytes(), config)
         self.assert_private_kept(private)
         backups = list((self.hermes / 'plugin-backups').glob('browser-link-1.5.1-*'))
@@ -357,7 +426,8 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         installer_spec = importlib.util.spec_from_file_location('test_install_executor', ROOT / 'scripts/install-executor.py')
         module.EXECUTOR = importlib.util.module_from_spec(installer_spec)
         installer_spec.loader.exec_module(module.EXECUTOR)
-        args = type('Args', (), {'user_home': self.home, 'hermes_home': self.hermes, 'uninstall': False, 'dry_run': False})()
+        # 中文注释：直接调用安装入口的夹具明确声明动作，遵守命令行解析后的完整契约。
+        args = type('Args', (), {'user_home': self.home, 'hermes_home': self.hermes, 'upgrade': False, 'uninstall': False, 'dry_run': False})()
         with mock.patch.dict(os.environ, self.env), mock.patch.object(module, 'browsers_at', return_value=[]):
             with self.assertRaisesRegex(module.InstallError, 'Browser missing') as caught:
                 module.run(args)
@@ -459,7 +529,8 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         remaining, error = process.communicate(timeout=15)
         self.assertEqual(process.returncode, 0, output + remaining + error)
         self.assertIn('Wait skipped', remaining)
-        self.assertIn('Enable smart approval', remaining)
+        # 中文注释：跳过等待后仍说明默认智能审批，无需操作开关切换为全部访问。
+        self.assertIn('Keep the default smart-approval mode', remaining)
         self.assertTrue((self.plugin / 'plugin.yaml').is_file())
 
     def test_first_activation_failure_restores_existing_profile_and_private_data(self):

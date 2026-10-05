@@ -1,5 +1,5 @@
 import {RequestLedger} from './request-ledger.mjs';
-import {FILTER_ACTIONS,filterPageResult} from './content-filter.mjs';
+import {filterPageResult} from './content-filter.mjs';
 export const isUiSender=(sender,id)=>sender?.id===id&&sender?.url===`chrome-extension://${id}/popup.html`;
 const sameValues=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&JSON.stringify([...a].sort())===JSON.stringify([...b].sort());
 function executionError(error,message){
@@ -17,6 +17,7 @@ function executionError(error,message){
  else if(reason==='CLICK_NO_EFFECT'){code='click_no_effect';text='输入已派发，但在观察期限内没有效果；请先读取页面核对。';}
  else if(reason==='TASK_PAUSED'||reason==='task paused'){code='task_paused';text='用户已接管，任务已暂停；请等待用户继续，不会自动重试。';}
  else if(error?.code==='workspace_unknown'){code='workspace_unknown';text='Workspace ownership or operation outcome is uncertain.';}
+ else if(/^CONTENT_SHIELD_/.test(reason)){code=reason.toLowerCase();text='页面内容保护未能确认，本次输出已拒绝。';}
  else if(reason==='SCREENSHOT_TIMEOUT'){code='screenshot_timeout';text='截图超时，未返回截图；请核对页面状态。';}
  else if(reason==='SCREENSHOT_TARGET_MISSING'){code='element_timeout';text='截图目标未唯一找到；请重新读取页面并缩小名称或选择器范围。';}
  else if(reason==='CAPTURE_SENSITIVE_BLOCKED'){code='capture_sensitive_blocked';text='敏感字段遮罩无法确认；请隐藏该字段或让用户手动截图后重试。';}
@@ -223,11 +224,14 @@ export class Bridge {
  }
  send(message) {if(!this.closed)this.port.postMessage(message);}
  async sendResult(request,response) {
-  if(response.error||request.method!=='browser.execute'||!FILTER_ACTIONS.has(request.params?.action)){this.send(response);return;}
+  if(response.error||!['browser.execute','browser.status'].includes(request.method)){this.send(response);return;}
   try {
    const enabled=await this.onContentFilter();
+   // 中文注释：已按 DOM 文本块处理的输出不能再次全字段正则匹配，否则会把相邻正常段落误拼成公告。
+   if(this.executor.shieldResponse){const result=await this.executor.shieldResponse(request,response.result);this.send({...response,result:enabled&&result?.contentFilter?.enabled!==true?filterPageResult(request.params?.action,result):result});return;}
    this.send(enabled?{...response,result:filterPageResult(request.params.action,response.result)}:response);
-  } catch {
+  } catch(error) {
+   if(error?.message==='CONTENT_SHIELD_STALE'){this.send({id:response.id,error:{code:'content_shield_stale',message:'屏蔽设置或页面已变化，请使用新请求读取。',data:{outcomeUnknown:false,retryable:false}}});return;}
    // 中文注释：配置读取失败时不泄露未过滤正文，也不把已执行的脚本报告为未执行。
    this.send({id:response.id,error:{code:'content_filter_unavailable',message:'Content filter settings could not be read; result withheld.',data:{outcomeUnknown:request.params.action==='js.evaluate',retryable:request.params.action!=='js.evaluate'}}});
   }
@@ -305,7 +309,10 @@ export class Bridge {
    (async()=>{
     try{await this.approvalBarrier;if(this.closed)throw Error('native disconnected');return {id:m.id,result:await this.executor.gateway(m.method,m.params)};}
     catch(e){return {id:m.id,error:executionError(e,m)};}
-   })().then(r=>{this.gatewayInflight--;this.send(r);});
+   })().then(async r=>{this.gatewayInflight--;
+    // 中文注释：原始请求执行期间用户可能开启过滤；发送前再检查，读失败也不交付原图。
+    if(!r.error)try{if(await this.onContentFilter()){this.send({id:m.id,error:{code:'content_shield_unsupported',message:'过滤开启时拒绝原始 CDP 输出。'}});return;}}catch{this.send({id:m.id,error:{code:'content_filter_unavailable',message:'过滤设置无法读取，输出已拒绝。'}});return;}
+    this.send(r);});
    return;
   }
   if(m.sequence!==undefined&&m.method!=='browser.credentials'){

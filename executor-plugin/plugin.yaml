@@ -1,12 +1,12 @@
 name: browser-link
-version: 1.6.1
+version: 1.7.0
 manifest_version: 2
 api_version: 1
 # 中文注释：按宿主钩子能力注册，不用版本号阻止加载。
-description: Connect Hermes to existing Chrome and Edge browsers through an authorized Native Messaging bridge.
+description: Automate Chrome and Edge with smart approval, Python workflows, automatic content shielding, a persistent task cursor and Cookie mirroring.
 author: FanJean
 license: MIT
-tags: [browser, automation, native-messaging, desktop]
+tags: [browser, automation, native-messaging, desktop, privacy, python, cookie-mirror]
 provides_tools:
   - browser_shared_health
   - browser_shared_browsers
