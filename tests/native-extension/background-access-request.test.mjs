@@ -1,3 +1,4 @@
+import {CloudLink} from '../support/cloud-link-stub.mjs';
 // 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
 import {showPanelNotification,clearPanelNotification} from '../../native-extension/approval-notifier.mjs';
 import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
@@ -32,9 +33,9 @@ async function loadAccessRequestHandler({windows=fakeWindows(),bridgeRequest=asy
  };
  let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
  source=source.replace(/^import .*;\n/gm,'')
-  .replace('const consent=new BrowserConsent(chrome.storage.local,executor);',"const consent={load:async()=>{},readStatus:async()=>'disabled'};")
+  .replace(/^const consent=new BrowserConsent.*;$/m,"const consent={load:async()=>{},readStatus:async()=>'disabled'};")
   .replace(/connect\(\);\s*$/,"globalThis.openAccessManagementRequest=openAccessManagementRequest;bridge=injectedBridge;connected=true;connectedInstanceId='browser-a';connectedGeneration='generation-a';");
- const context={showPanelNotification,clearPanelNotification,CookieMirror,chrome,Executor:function(){return executor;},registerWorkspaceStartup:()=>{},NativeWorkspaces:class{},Bridge:class{},BrowserConsent:class{},origin(){},isUiSender:()=>false,createApprovalNotifier(){},injectedBridge:{request:bridgeRequest}};
+ const context={CloudLink,showPanelNotification,clearPanelNotification,CookieMirror,chrome,Executor:function(){return executor;},registerWorkspaceStartup:()=>{},NativeWorkspaces:class{},Bridge:class{},BrowserConsent:class{},origin(){},isUiSender:()=>false,createApprovalNotifier(){},injectedBridge:{request:bridgeRequest}};
  vm.runInNewContext(source,context);
  return {handler:context.openAccessManagementRequest,events,chrome,windows};
 }

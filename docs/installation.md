@@ -6,7 +6,7 @@ Currently supported: macOS + Chrome/Edge. Install Hermes and Python 3.11+ first;
 
 ## Install / 安装
 
-从 [Release](https://github.com/FanJean/hermes-browser-link/releases) 下载 ZIP，解压并进入目录，运行：
+从 [Release](https://github.com/fanjing188/hermes-browser-link/releases) 下载 ZIP，解压并进入目录，运行：
 Download the Release ZIP, extract it, enter its directory and run:
 
 ```sh
@@ -16,7 +16,7 @@ Download the Release ZIP, extract it, enter its directory and run:
 源码安装 / From source:
 
 ```sh
-git clone https://github.com/FanJean/hermes-browser-link.git
+git clone https://github.com/fanjing188/hermes-browser-link.git
 cd hermes-browser-link
 ./install.sh
 ```
@@ -62,9 +62,9 @@ Upgrade an existing installation from this source or package first, then enable 
 ./install.sh --auto-update install
 ```
 
-每小时检查 GitHub 最新正式 Release；开发预览版（包括 1.7.1）不属于自动更新通道。Chrome、Edge 或 Hermes 运行时延后到下一次检查；不会退出应用。更新校验 GitHub 附件 SHA256、包内完整文件清单、扩展 ID 和版本，沿用原升级备份及失败回滚，包含此前安装的 profile。后台更新不打开浏览器或修改剪贴板。更新后，下次打开浏览器时重载扩展，再启动 Hermes。
+每小时检查 GitHub 最新正式 Release；1.8.0 为正式稳定版，开发预览版不属于自动更新通道。Chrome、Edge 或 Hermes 运行时延后到下一次检查；不会退出应用。更新校验 GitHub 附件 SHA256、包内完整文件清单、扩展 ID 和版本，沿用原升级备份及失败回滚，包含此前安装的 profile。后台更新不打开浏览器或修改剪贴板。更新后，下次打开浏览器时重载扩展，再启动 Hermes。
 
-Checks the latest stable GitHub Release hourly; developer previews, including 1.7.1, are excluded. Installation waits until Chrome, Edge and Hermes exit. The updater validates the asset SHA256, package file inventory, extension identity and version, and reuses transactional backups and rollback for all installed profiles. Reload the extension after opening the browser, then start Hermes.
+Checks the latest stable GitHub Release hourly; 1.8.0 is stable; developer previews are excluded. Installation waits until Chrome, Edge and Hermes exit. The updater validates the asset SHA256, package file inventory, extension identity and version, and reuses transactional backups and rollback for all installed profiles. Reload the extension after opening the browser, then start Hermes.
 
 ```sh
 # 只自动检查 / Automatically check without installing
@@ -81,9 +81,9 @@ Checks the latest stable GitHub Release hourly; developer previews, including 1.
 
 Background updates are disabled by default and use a user LaunchAgent; uninstall removes it. Network or validation failures preserve the installation. Results are stored in `$HERMES_HOME/plugin-data/browser-link-native/update-status.json`, with `$HOME/.hermes` as the default home.
 
-更新只接受正式版本。当前发布工作流创建的 Release 默认标记为 prerelease；维护者必须完成验收并在 GitHub 取消预发布标记，才会进入自动更新。没有正式版本时返回 `no_stable_release`；缺少 GitHub 附件摘要时拒绝更新。
+更新只接受正式版本。1.8.0 的发布工作流创建正式稳定版；预发布版仍不进入自动更新。没有正式版本时返回 `no_stable_release`；缺少 GitHub 附件摘要时拒绝更新。
 
-Only stable releases are eligible. The release workflow creates prereleases; maintainers must verify the release and clear its prerelease flag in GitHub before automatic delivery. Releases without a GitHub asset digest are rejected.
+Only stable releases are eligible. The 1.8.0 release workflow publishes stable releases after validation; prereleases remain excluded. Releases without a GitHub asset digest are rejected.
 
 ## Uninstall / 卸载
 
@@ -133,4 +133,4 @@ If you installed with `--hermes-home`, use that directory in the command; the ch
 | 插件启用失败 / Plugin activation failed | 运行 `hermes --profile <name> plugins enable browser-link` 查看原因 / Run this command to see the cause |
 | 升级无法停止旧连接 / Upgrade cannot stop the old connection | 退出浏览器和 Hermes 后重试 / Quit the browser and Hermes, then retry |
 
-[代理安装提示词 / Agent prompt](agent-install-prompt.md) · [配置 / Configuration](configuration.md) · [安全说明 / Security](https://github.com/FanJean/hermes-browser-link/blob/main/SECURITY.md) · [开发与手动安装 / Development and manual installation](development.md)
+[代理安装提示词 / Agent prompt](agent-install-prompt.md) · [配置 / Configuration](configuration.md) · [安全说明 / Security](https://github.com/fanjing188/hermes-browser-link/blob/main/SECURITY.md) · [开发与手动安装 / Development and manual installation](development.md)

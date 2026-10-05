@@ -1,0 +1,21 @@
+{
+  "name": "hermes-browser-link-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "validate": "node scripts/validate-artifact.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@modelcontextprotocol/server": "2.3.0",
+    "drizzle-orm": "^0.45.3",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.0",
+    "esbuild": "^0.25.0"
+  }
+}

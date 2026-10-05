@@ -12,6 +12,9 @@
 /* 中文注释：当前任务的接管和停止并列，仍只占一行操作区。 */
 .page-controls{display:flex;gap:8px;flex-shrink:0}
 
+/* 中文注释：云端连接与权限独立成组，复用现有状态色、开关和按钮。 */
+.cloud-section{padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.cloud-heading,.cloud-access-row,.cloud-dialog-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.cloud-section h2,.cloud-dialog-heading h2{margin:0;font-size:14px}.cloud-section h3{margin:0;font-size:13px;font-weight:600}.status-badge{font-size:12px;color:var(--muted)}.status-badge[data-online="true"]{color:var(--accent)}.cloud-connect{width:100%;margin:12px 0 16px}.cloud-access-row{align-items:flex-start}.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}#cloud-confirm{margin:14px 0 0}#cloud-dialog{width:calc(100% - 24px);max-width:340px;max-height:calc(100vh - 24px);padding:20px;border:1px solid var(--line);border-radius:12px;color:inherit;background:var(--panel);overflow:auto}#cloud-dialog::backdrop{background:#0005}.icon-button{border:0;background:transparent;padding:4px 8px;font-size:22px;line-height:1}.code-label{font-size:13px;margin:22px 0 10px;color:var(--muted)}.connection-code{display:block;font:600 21px/1.5 ui-monospace,SFMono-Regular,monospace;letter-spacing:.035em;white-space:nowrap;user-select:all}#cloud-copy-code{margin:12px 0}#cloud-open-web{width:100%;margin-top:16px}.cloud-manage{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}#cloud-error{color:var(--danger)}
+
 /* 中文注释：版本在右上角，连接状态紧随其下，不增加横向占位。 */
 .header-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
 #version-label{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}

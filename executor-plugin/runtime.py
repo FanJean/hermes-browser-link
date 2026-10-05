@@ -281,7 +281,7 @@ def _scalar_fields(names):
 
 _RESULT_POINT = _scalar_fields('x y')
 # 中文注释：保留过滤标记，让 agent 能区分原始内容与经过规则过滤的文本。
-_RESULT_CONTENT_FILTER = _scalar_fields('enabled removedSegments siteAutomationRestricted')
+_RESULT_CONTENT_FILTER = _scalar_fields('enabled removedSegments siteAutomationRestricted unreadFrames')
 # 中文注释：导航就绪与离开任务来源是执行器的明确状态，公共工具不能在投影时丢弃。
 _RESULT_TAB = _scalar_fields('id tabId url title active selected index windowId groupId status pinned ready outOfScope')
 _RESULT_ARTIFACT = _scalar_fields('id taskId sha256 mimeType size')
@@ -298,10 +298,12 @@ _RESULT_SEMANTIC = {
     'contentFilter': _RESULT_CONTENT_FILTER,
     **_scalar_fields('version title snapshotId kind mode nextCursor baselineId frameToken'),
     'binding': _scalar_fields('taskId documentId leaseId'),
-    'items': [{**_scalar_fields('ref role name disabled readonly busy checked omittedCells truncated inferred'),
+    # 中文注释：语义上下文和状态必须穿过公共工具投影，容器引用仍不是动作别名；不放行 value 或原始属性。
+    'items': [{**_scalar_fields('ref role name nameSource parentRef disabled readonly busy checked expanded selected required omittedCells truncated inferred'),
+               'context': [_scalar_fields('ref role name index')],
                'targetPath': [_scalar_fields('kind mode frameRef hostRef frameToken documentId')], 'cells': [None]}],
     'removed': [None], 'order': [None], 'resync': _scalar_fields('reason'),
-    'coverage': _scalar_fields('scanned matched returned omitted filtered truncated offset complete traversalComplete scope skippedFrames unsupportedCanvas'),
+    'coverage': _scalar_fields('scanned matched returned omitted filtered truncated offset complete traversalComplete scope skippedFrames unsupportedCanvas contentShieldSkippedFrames axDiscoveryComplete axEnriched axOmitted'),
     'budget': _scalar_fields('kind method limit'),
 }
 _RESULT_CAPTURE = {
@@ -317,11 +319,11 @@ _RESULT_PARSE = {
     'contentFilter': _RESULT_CONTENT_FILTER,
     **_scalar_fields('schemaVersion parseId status nextCursor frameToken'),
     'binding': _scalar_fields('taskId documentId leaseId'),
-    'coverage': _scalar_fields('scanned skippedFrames traversalComplete scope complete totalRecords observedRecords returned matched offset'),
+    'coverage': _scalar_fields('scanned skippedFrames traversalComplete scope complete totalRecords observedRecords returned matched offset contentShieldSkippedFrames'),
     'warnings': [None],
     'regions': [{**_RESULT_SOURCE, **_scalar_fields('kind name parentRef method excludedFromContent')}],
     'blocks': [{**_RESULT_SOURCE, **_scalar_fields('kind text regionRef level href truncated')}],
-    'tables': [{**_RESULT_SOURCE, **_scalar_fields('tableRef row observedRows'), 'cells': [{**_RESULT_SOURCE, **_scalar_fields('text row column rowSpan colSpan header headerRole'), 'headerRefs': [None]}]}],
+    'tables': [{**_RESULT_SOURCE, **_scalar_fields('tableRef row domRow observedRows declaredRows declaredColumns'), 'cells': [{**_RESULT_SOURCE, **_scalar_fields('text row column rowSpan colSpan header headerRole'), 'headerRefs': [None]}]}],
     'forms': [{**_RESULT_SOURCE, **_scalar_fields('formRef groupRef groupLabel label role description validationMessage'), 'state': _scalar_fields('disabled required readonly checked selected expanded busy invalid'), 'options': [_scalar_fields('text selected')]}],
     'collections': [{**_RESULT_SOURCE, **_scalar_fields('containerRef text classification method')}],
 }

@@ -639,6 +639,9 @@ After ApprovalRequired, wait for the user's decision on that same request.
           "composed": {
             "type": "boolean"
           },
+          "accessibility": {
+            "type": "boolean"
+          },
           "budget": {
             "type": "integer",
             "minimum": 512

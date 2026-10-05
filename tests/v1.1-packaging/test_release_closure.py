@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRATCH = Path.home() / '.hermes/cache/scratch'
 ORIGIN = 'chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/'
 INPUTS = ('package.json', 'executor-plugin', 'native-bridge', 'native-extension',
-          'browser-workspaces', 'browser-diagnostics', 'page-semantics',
+          # 中文注释：云端 Native 入口与运行时也属于正式包的已提交输入。
+          'cloud-link', 'browser-workspaces', 'browser-diagnostics', 'page-semantics',
           'browser-interactions', 'approval-policy',
           'CHANGELOG.md',
           'scripts/install-executor.py', 'scripts/install-cli.py', 'install.sh', 'docs/installation.md',
@@ -45,7 +46,7 @@ class ReleaseClosure(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             if original.is_dir():
                 shutil.copytree(original, target, ignore=shutil.ignore_patterns(
-                    'node_modules', 'tests', 'test', 'evidence', '__pycache__', 'dist-native', '.git'))
+                    'node_modules', 'tests', 'test', 'evidence', '__pycache__', 'dist-native', '.git', 'site'))
             else:
                 shutil.copyfile(original, target)
 

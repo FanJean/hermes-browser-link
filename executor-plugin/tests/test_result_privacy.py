@@ -72,6 +72,23 @@ class ResultPrivacyTests(unittest.TestCase):
                                                                 {'relocated': True, 'value': CANARY})
                 self.assertEqual(projected, {'relocated': True})
 
+    # 中文注释：新字段通过公共投影，嵌套 value、属性及 AX 原始节点仍全部丢弃。
+    def test_semantic_context_states_and_ax_coverage_survive_closed_projection(self):
+        semantic = {'version': 2, 'snapshotId': 's', 'binding': {'taskId': 't', 'documentId': 'd', 'leaseId': 'l'},
+                    'items': [{'ref': 'r', 'role': 'button', 'name': '保存', 'nameSource': 'accessibility',
+                               'expanded': False, 'selected': True, 'required': True, 'parentRef': 'row',
+                               'context': [{'ref': 'row', 'role': 'row', 'name': '设备', 'index': 51, 'value': CANARY}],
+                               'value': CANARY, 'axNodes': [CANARY]}],
+                    'coverage': {'complete': False, 'axDiscoveryComplete': True, 'axEnriched': 1, 'axOmitted': 1},
+                    'contentFilter': {'enabled': True, 'unreadFrames': 1}}
+        result, _ = self.invoke(True, 'run', {'task_id': 't', 'tab_id': 1, 'action': 'semantic_snapshot'}, semantic)
+        self.assertEqual(result['items'][0]['nameSource'], 'accessibility')
+        self.assertFalse(result['items'][0]['expanded'])
+        self.assertEqual(result['items'][0]['context'][0]['index'], 51)
+        self.assertEqual(result['coverage']['axEnriched'], 1)
+        self.assertEqual(result['contentFilter']['unreadFrames'], 1)
+        self.assertNotIn(CANARY, json.dumps(result))
+
     def test_complex_ui_error_summaries_reach_public_tool(self):
         # 中文注释：模拟 daemon 异常，检查 Hermes JSON 只含固定码与脱敏摘要。
         module = load('native_tools')

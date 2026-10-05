@@ -16,9 +16,17 @@ export function validateShieldRules(rules){
  return output;
 }
 
-// 中文注释：页面探测不写 DOM，不改变布局、焦点或滚动；同源子框架整块遮罩，未知框架直接拒绝。
+// 中文注释：页面探测不写 DOM；同源子框架整块遮罩，结构读取报告未知框架，其余入口拒绝。
 export function collectShield(options){
- const {selectors=[],directiveSources=[],restrictionSources,blockerSource='',forCapture=false}=options;
+ const {selectors=[],directiveSources=[],restrictionSources,blockerSource='',forCapture=false,allowOpaqueFrames=false,allowHiddenFrames=false,readRoot=null}=options;
+ // 中文注释：保护仍扫描全页，覆盖率缺口只计选定解析根内的不可读框架。
+ const readScope=readRoot?document.querySelector(readRoot):document.body;
+ const inReadScope=element=>{
+  for(let node=element;node;node=node.parentElement||node.getRootNode().host||node.ownerDocument.defaultView?.frameElement)if(node===readScope)return true;
+  return false;
+ };
+ // 中文注释：封闭 Shadow Root 仅使用宿主通过 CDP 写入隔离世界的节点映射。
+ const shadowRootOf=element=>element.shadowRoot||globalThis.__hermesClosedShadowRoots?.get(element);
  const directives=directiveSources.map(source=>new RegExp(source,'iu'));
  const restrictions=restrictionSources.map(source=>new RegExp(source,'iu'));
  const restricted=value=>restrictions.some(rule=>rule.test(value));
@@ -34,7 +42,7 @@ export function collectShield(options){
  const semanticAttributes=new Set(['id','class','name','title','aria-label','placeholder','aria-labelledby','aria-describedby']);
  const proseAttributes=['aria-label','alt','title','placeholder'];
  const blocker=new RegExp(blockerSource||'captcha|验证码|人机验证|access denied|拒绝访问|登录|login|sign in|rate limit|限流|\\b(?:401|403|429)\\b','iu');
- const tokens=new Set(),rects=[];let siteAutomationRestricted=false,count=0;
+ const tokens=new Set(),rects=[];let siteAutomationRestricted=false,count=0,skippedFrames=0;
  const matches=value=>directives.some(rule=>rule.test(value));
  const add=(value,prose=true)=>{
   if(typeof value!=='string'||!value.trim())return;
@@ -167,12 +175,24 @@ export function collectShield(options){
    if(sensitiveField)return;
    // 中文注释：跨 inline 节点命中的默认公告也覆盖子孙盒，避免脱离父盒的文字漏出截图。
    const descendantsHidden=designated;
-   if(element.shadowRoot)walk(element.shadowRoot,descendantsHidden,frameCover);
-   if(element.tagName==='IFRAME'){
-    let doc;try{doc=element.contentDocument;}catch{throw Error('CONTENT_SHIELD_UNINSPECTABLE');}
-    if(!doc?.documentElement)throw Error('CONTENT_SHIELD_UNINSPECTABLE');
-    const r=frameCover||element.getBoundingClientRect();
-    walk(doc,descendantsHidden,r);
+   const shadow=shadowRootOf(element);
+   if(shadow)walk(shadow,descendantsHidden,frameCover);
+   if(['IFRAME','FRAME'].includes(element.tagName)){
+    // 中文注释：只有 CSS display:none 的明确渲染缺口可跳过；零尺寸或 visibility 不作为免责依据。
+    let unrendered=false;
+    for(let parent=element;parent;parent=parent.parentElement||parent.getRootNode().host||parent.ownerDocument.defaultView?.frameElement){
+     if(parent.ownerDocument.defaultView.getComputedStyle(parent).display==='none'){unrendered=true;break;}
+    }
+    let doc;try{doc=element.contentDocument;}catch{doc=null;}
+    // 中文注释：隐藏 sandbox iframe 不进入固定 DOM/截图输出；任意 JS 输出仍拒绝不可检查区域。
+    if(allowHiddenFrames&&unrendered){/* 中文注释：不计入当前可见页面的覆盖缺口。 */}
+    else if(!doc?.documentElement){
+     if(forCapture||!allowOpaqueFrames)throw Error('CONTENT_SHIELD_UNINSPECTABLE');
+     if(inReadScope(element))skippedFrames++;
+    }else{
+     const r=frameCover||element.getBoundingClientRect();
+     walk(doc,descendantsHidden,r);
+    }
    }
    for(const child of element.children)visit(child,descendantsHidden);
   };
@@ -181,13 +201,15 @@ export function collectShield(options){
  walk(document);
  const v=window.visualViewport;
  if(v&&(v.scale!==1||v.offsetLeft||v.offsetTop))throw Error('CONTENT_SHIELD_UNSUPPORTED_VIEWPORT');
- return {tokens:[...tokens].sort((a,b)=>b.length-a.length),rects,siteAutomationRestricted,
+ return {tokens:[...tokens].sort((a,b)=>b.length-a.length),rects,siteAutomationRestricted,skippedFrames,
   state:{url:location.href,width:window.innerWidth,height:window.innerHeight,scrollX:window.scrollX,scrollY:window.scrollY,dpr:window.devicePixelRatio,scale:v?.scale||1}};
 }
 
 // 中文注释：只保留协议标识；JS 用户对象中的同名键仍需过滤，不把原文装进审计 metadata。
 export function redactShieldResult(result,inventory){
  const tokens=inventory.tokens||[],protocol=new Set(['binding','snapshotId','parseId','nextCursor','screenshotId','id','url','origin','code','status','ok','outcomeUnknown','retryable']);
+ // 中文注释：固定语义角色和覆盖率是解析协议，短屏蔽词不能把 listbox 等角色破坏成不可识别值。
+ const roles=new Set(['button','link','textbox','checkbox','radio','combobox','listbox','option','menuitem','menuitemcheckbox','menuitemradio','switch','slider','spinbutton','tab','treeitem','row','listitem','heading','text']);
  const clean=text=>{
   let output=text;
   // 中文注释：先替换所有完整子片段，避免块汇总的空白差异触发截断检查，把正常邻文一并清空。
@@ -203,7 +225,7 @@ export function redactShieldResult(result,inventory){
   const out={};let changed=false;
   for(const [key,child] of Object.entries(value)){
    const binary=inventory.image&&!userValue&&key==='data'&&typeof child==='string';
-   const protectedField=!userValue&&(key==='binding'||depth===0&&protocol.has(key));
+   const protectedField=!userValue&&(key==='binding'||depth===0&&(protocol.has(key)||key==='coverage')||key==='role'&&roles.has(child)||key==='nameSource'&&['placeholder','descendant','title','accessibility'].includes(child));
    const filtered=binary||protectedField?child:visit(child,userValue||['value','fields','metadata'].includes(key),depth+1);
    const nextKey=userValue||depth>0&&!protectedField?clean(key):key;
    out[nextKey]=filtered;changed ||= nextKey!==key||JSON.stringify(filtered)!==JSON.stringify(child);

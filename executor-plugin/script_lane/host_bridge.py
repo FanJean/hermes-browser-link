@@ -380,7 +380,7 @@ class HostBridge:
                     'extension_timeout','extension_disconnected','workspace_unknown',
                     'cancelled','needs_sync','document_changed','site_changed','page_not_ready',
                     'stale_reference','target_unavailable','target_occluded','target_unstable',
-                    'target_disabled','target_hidden','target_zero_size','target_out_of_viewport',
+                    'target_disabled','target_hidden','target_zero_size','target_out_of_viewport','target_hit_unverified','accessibility_unavailable',
                     'reference_target_missing','reference_target_ambiguous',
                     'closed_shadow_unavailable','cross_origin_frame_unavailable',
                     'tab_out_of_scope','execution_denied','redirected_out_of_scope','permission_denied',

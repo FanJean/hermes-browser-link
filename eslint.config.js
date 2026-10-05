@@ -45,10 +45,14 @@ export default [
   {
     files: [
       'scripts/**', 'tests/**', 'executor-plugin/desktop/**',
+      'cloud-link/site/scripts/**', 'cloud-link/site/tests/**',
       'browser-interactions/test/**', 'browser-workspaces/**', 'page-semantics/**', 'native-extension/build.mjs',
     ],
     languageOptions: { globals: nodeGlobals },
   },
+
+  // 中文注释：云端 Worker 使用 Node 22 支持的 JSON import attributes，只放宽该目录的解析版本。
+  { files: ['cloud-link/site/worker/**'], languageOptions: { ecmaVersion: 2025 } },
 
   // Code evaluated inside web pages.
   {

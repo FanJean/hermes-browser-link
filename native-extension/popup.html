@@ -15,6 +15,27 @@
     <p>全部访问允许当前浏览器任务直接执行工具、脚本和调试命令。Cookie 镜像仍须每次亲自确认。</p>
     <div class="confirm-actions"><button id="confirm-cancel" type="button">取消</button><button id="confirm-enable" type="button">开启全部访问</button></div>
   </section>
+  <!-- 中文注释：云端权限独立于上方本地权限，只授权云端创建的任务页。 -->
+  <section class="cloud-section" aria-labelledby="cloud-label">
+    <div class="cloud-heading"><h2 id="cloud-label">云端连接</h2><span id="cloud-status" class="status-badge" role="status">检查中</span></div>
+    <p id="cloud-detail" class="detail">正在读取连接状态…</p>
+    <button id="cloud-connect" class="cloud-connect" type="button">云端连接</button>
+    <div class="cloud-access-row"><div><h3 id="cloud-access-label">云端完全访问</h3><p id="cloud-access-detail" class="detail">仅云端任务页，本地权限保持独立。</p></div>
+      <button id="cloud-access-toggle" class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="cloud-access-label" disabled><span></span></button>
+    </div>
+    <div id="cloud-confirm" class="confirm" hidden>
+      <p>允许云端在所有网站的任务页读取和操作，无须逐项确认。已有个人标签页不授权。切换后结束当前云端任务并保留页面。</p>
+      <div class="confirm-actions"><button id="cloud-confirm-cancel" type="button">取消</button><button id="cloud-confirm-enable" class="primary" type="button">开启云端完全访问</button></div>
+    </div>
+  </section>
+  <dialog id="cloud-dialog" aria-labelledby="cloud-dialog-title">
+    <div class="cloud-dialog-heading"><h2 id="cloud-dialog-title">连接到云端</h2><button id="cloud-dialog-close" class="icon-button" type="button" aria-label="关闭连接面板">×</button></div>
+    <p id="cloud-dialog-state" class="detail" role="status"></p>
+    <div id="cloud-code-panel"><p class="code-label">在网页端输入连接码</p><output id="cloud-code" class="connection-code"></output><p id="cloud-code-expiry" class="detail" role="status"></p><button id="cloud-copy-code" type="button">复制连接码</button></div>
+    <button id="cloud-open-web" class="primary" type="button">打开配对网页</button>
+    <div class="cloud-manage"><button id="cloud-regenerate" type="button">重新生成连接码</button><button id="cloud-disconnect" class="danger" type="button" hidden>断开云端</button></div>
+    <p id="cloud-error" class="detail" role="alert" hidden></p>
+  </dialog>
   <!-- 中文注释：只显示当前标签页的任务；接管和停止都保留，页面遮罩共享同一任务状态。 -->
   <section id="page-task" class="page-task" aria-label="当前页面任务" hidden><span id="operation" role="status"></span><div class="page-controls"><button id="takeover" type="button">接管</button><button id="stop-task" class="danger" type="button">停止</button></div></section>
   <!-- 中文注释：模拟鼠标固定启用，Cookie 镜像只在 Hermes 插件页提供；弹窗只保留自动屏蔽开关。 -->
@@ -24,5 +45,5 @@
     </section>
   <p id="error" role="alert" hidden></p>
 </main>
-<script type="module" src="popup.mjs"></script>
+<script type="module" src="popup.mjs"></script><script type="module" src="cloud-popup.mjs"></script>
 </body></html>

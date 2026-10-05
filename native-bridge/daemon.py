@@ -2434,7 +2434,7 @@ class BridgeDaemon:
                 raise ProtocolError("invalid_params", "JavaScript argument too large")
         if action == "semantic_snapshot" and "options" in params:
             options = params["options"]
-            allowed = {"mode", "root", "query", "roles", "viewport", "composed", "budget", "cursor", "baselineId", "frameToken"}
+            allowed = {"mode", "root", "query", "roles", "viewport", "composed", "budget", "cursor", "baselineId", "frameToken", "accessibility"}
             if not isinstance(options, dict) or set(options) - allowed:
                 raise ProtocolError("invalid_params", "invalid semantic options")
             if options.get("mode", "interactive") not in {"interactive", "content", "table"}:
@@ -2450,6 +2450,12 @@ class BridgeDaemon:
                 raise ProtocolError("invalid_params", "invalid semantic viewport")
             if "composed" in options and type(options["composed"]) is not bool:
                 raise ProtocolError("invalid_params", "invalid semantic composed flag")
+            # 中文注释：无障碍补充只允许显式根内的交互读取，不接受分页或增量基线。
+            if "accessibility" in options and type(options["accessibility"]) is not bool:
+                raise ProtocolError("invalid_params", "invalid accessibility flag")
+            if options.get("accessibility") and (not options.get("root") or options.get("mode", "interactive") != "interactive"
+                    or "cursor" in options or "baselineId" in options):
+                raise ProtocolError("invalid_params", "accessibility requires a scoped interactive read")
             if "frameToken" in options and (not isinstance(options["frameToken"], str) or not 1 <= len(options["frameToken"]) <= 128):
                 raise ProtocolError("invalid_params", "invalid frame token")
             if "budget" in options and (type(options["budget"]) is not int or options["budget"] < 512):

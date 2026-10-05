@@ -1,3 +1,4 @@
+import {CloudLink} from '../support/cloud-link-stub.mjs';
 // 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
 import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 import test from 'node:test';
@@ -44,7 +45,7 @@ test('auto-authorized empty scope creates grouped background tabs without claimi
  const {Executor}=await import('../../native-extension/core.mjs');
  const tabs=new Map([[1,{id:1,url:'https://example.test/',windowId:7,groupId:-1,active:true}]]),data={},created=[];
  let next=10;
- const api={storage:{local:{get:async k=>({[k]:data[k]}),set:async v=>Object.assign(data,v)}},windows:{getCurrent:async()=>({id:7})},
+ const api={runtime:{getURL:p=>'chrome-extension://test/'+p},storage:{local:{get:async k=>({[k]:data[k]}),set:async v=>Object.assign(data,v)}},windows:{getCurrent:async()=>({id:7}),get:async()=>({id:7}),create:async()=>({id:7,tabs:[{id:9}]})},
   tabs:{get:async id=>({...tabs.get(id)}),create:async p=>{const t={...p,id:next++,groupId:-1};created.push(t);tabs.set(t.id,t);return {...t};},group:async p=>{for(const id of p.tabIds)tabs.get(id).groupId=p.groupId??20;return p.groupId??20;},remove:async id=>tabs.delete(id)},tabGroups:{update:async()=>{},get:async id=>({id,windowId:7,title:'AI 工作'})},debugger:{detach:async()=>{}}};
  const executor=new Executor(api),consent=new module.BrowserConsent({set:async()=>{}},executor);
  const task={id:'grouped',instanceId:'browser',approvalScope:'scope',generation:1,modeGeneration:1,state:'pending_approval',tabIds:[],allowedOrigins:['https://example.test']};
@@ -114,7 +115,7 @@ test('trusted popup reports mode-storage failure without revoking tasks',async()
    alarms:{create(){},onAlarm:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
   let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
   source=source.replace(/^import .*;\n/gm,'').replace(/connect\(\);\s*$/,'bridge=injectedBridge;connected=true;');
-  vm.runInNewContext(source,{CookieMirror,chrome,Executor,BrowserConsent:module.BrowserConsent,isUiSender:module.isUiSender,
+  vm.runInNewContext(source,{CloudLink,CookieMirror,chrome,Executor,BrowserConsent:module.BrowserConsent,isUiSender:module.isUiSender,
    registerWorkspaceStartup:()=>{},injectedBridge:{closed:false,request:async method=>{calls.push(method);return method==='extension.tasks'?[]:{revoked:true};}}});
   const result=await new Promise(resolve=>listener({type:'browser_consent',enabled:false},{id:'extension',url:'chrome-extension://extension/popup.html'},resolve));
   assert.deepEqual(calls,storageFails?[]:['extension.tasks']);

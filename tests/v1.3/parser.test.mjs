@@ -175,3 +175,50 @@ test('colspan 关联多层列组，显式 headers 覆盖且行表头只在 rowSp
   assert.deepEqual(r.tables[4].cells[1].headerRefs,[group,a,b,row2]);
  }finally{f.close();}
 });
+
+// 中文注释：真实组件库的行和列允许包装层，但嵌套表格、隐藏及私密列必须隔离。
+test('包装层中的 ARIA treegrid 单元格保留表头关联及嵌套表格归属',()=>{
+ const f=fixture('<div role="treegrid"><div role="row"><div><span role="columnheader">名称</span><span role="columnheader">数量</span></div></div><div role="row"><div><span role="gridcell">设备</span><span role="gridcell">2</span><span role="gridcell" hidden>隐藏</span><span role="gridcell" data-private>私密</span></div><div role="grid"><div role="row"><span role="gridcell">子表</span></div></div></div></div>');
+ try{
+  const result=f.parser.parse({sections:['tables']});
+  assert.deepEqual(result.tables.map(row=>row.cells.map(cell=>cell.text)),[['名称','数量'],['设备','2'],['子表']]);
+  assert.deepEqual(result.tables[1].cells.map(cell=>cell.headerRefs),result.tables[0].cells.map(cell=>[cell.sourceRef]));
+  const snapshot=f.semantics.snapshot({mode:'table'});
+  assert.deepEqual(snapshot.items.map(row=>row.cells),[['名称','数量'],['设备','2'],['子表']]);
+  const limited=f.parser.parse({sections:['tables'],maxScan:3});
+  assert.equal(limited.coverage.traversalComplete,false);assert.deepEqual(limited.tables[0].cells,[]);
+ }finally{f.close();}
+});
+
+// 中文注释：下拉弹层通过 ARIA 关系归属到控件，选定根不能隐式读取外部弹层。
+test('portal 组合框读取受控选项，排除其他列表与隐藏私密选项',()=>{
+ const f=fixture('<div id="combo" role="combobox" aria-label="地区" aria-controls="choices" aria-owns="choices"></div><div id="choices" role="listbox"><div role="option" aria-selected="true">中国</div><div role="option">英国</div><div role="option" hidden>隐藏</div><div role="option" data-private>私密</div></div><div role="listbox"><div role="option">无关选项</div></div>');
+ try{
+  const r=f.parser.parse({sections:['forms']});
+  assert.deepEqual(r.forms.find(field=>field.label==='地区').options,[{text:'中国',selected:true},{text:'英国',selected:false}]);
+  const narrow=f.parser.parse({root:'#combo',sections:['forms']});
+  assert.deepEqual(narrow.forms[0].options,[]);assert(narrow.warnings.includes('options_outside_scope'));assert.equal(narrow.status,'partial');
+ }finally{f.close();}
+});
+
+// 中文注释：相对字段选择器必须以当前记录为根，同名字段不能从另一个记录借用。
+test('schema 的 :scope 子选择器按每条记录解释',()=>{
+ const f=fixture('<article><h2>第一条</h2><section><h2>嵌套标题</h2></section></article><article><h2>第二条</h2></article>');
+ try{
+  const result=f.parser.parse({sections:[],schema:{record:'article',fields:{title:{selector:':scope > h2',required:true}}}});
+  assert.deepEqual(result.records.map(record=>record.fields.title),['第一条','第二条']);
+  assert(result.records.every(record=>record.valid));
+ }finally{f.close();}
+});
+
+// 中文注释：脱敏单位必须覆盖整个 inline 段落，选项文字也必须遵守祖先隐私边界。
+test('跨节点秘密先整体脱敏，隐藏 optgroup 与私密 option 均排除',()=>{
+ const f=fixture('<main><p><span>to</span><b>ken=</b><span>INLINE_SECRET_CANARY</span></p><select aria-label="规格"><option>公开</option><option data-private>PRIVATE_OPTION_CANARY</option><optgroup hidden><option>HIDDEN_OPTION_CANARY</option></optgroup><optgroup style="display:none"><option>CSS_OPTION_CANARY</option></optgroup></select></main>');
+ try{const r=f.parser.parse();assert(r.blocks.some(b=>b.text==='token=[redacted]'));assert(!JSON.stringify(r).includes('_CANARY'));assert.deepEqual(r.forms[0].options,[{text:'公开',selected:true}]);}finally{f.close();}
+});
+
+// 中文注释：虚拟表格索引保留业务坐标，声明总量不能误当已读取的记录数。
+test('虚拟表格保留真实 ARIA 行列索引和声明总量',()=>{
+ const f=fixture('<div role="grid" aria-rowcount="1000" aria-colcount="10"><div role="row" aria-rowindex="51"><span role="gridcell" aria-colindex="4">A</span><span role="gridcell" aria-colindex="7">B</span></div></div>');
+ try{const r=f.parser.parse({sections:['tables']});assert.equal(r.tables[0].row,50);assert.equal(r.tables[0].domRow,0);assert.equal(r.tables[0].declaredRows,1000);assert.equal(r.tables[0].observedRows,1);assert.deepEqual(r.tables[0].cells.map(c=>c.column),[3,6]);assert.equal(r.status,'partial');}finally{f.close();}
+});

@@ -112,6 +112,17 @@ class NativeV2DaemonTests(unittest.TestCase):
                 'requestId': 'persisted-read', 'action': 'snapshot', 'tabId': 7})
         self.assertEqual(caught.exception.code, 'request_outcome_unavailable')
 
+    # 中文注释：AX 读取参数先在 daemon 验证，非法请求不能触发扩展或审批。
+    def test_accessibility_requires_root_and_nonpaged_interactive_mode(self):
+        validate = daemon_module.BridgeDaemon._validate_run_params
+        validate('semantic_snapshot', {'tabId': 7, 'options': {'root': '#panel', 'accessibility': True}})
+        for options in ({'accessibility': True}, {'root': '#panel', 'accessibility': 'yes'},
+                        {'root': '#panel', 'accessibility': True, 'mode': 'table'},
+                        {'root': '#panel', 'accessibility': True, 'cursor': 'old'},
+                        {'root': '#panel', 'accessibility': True, 'baselineId': 'old'}):
+            with self.subTest(options=options), self.assertRaises(daemon_module.ProtocolError):
+                validate('semantic_snapshot', {'tabId': 7, 'options': options})
+
     def test_v1_actions_are_forwarded_with_trusted_generation_origin_and_single_approval(self):
         result = self.run_action(
             "semantic-1",

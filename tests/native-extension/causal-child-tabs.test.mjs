@@ -1,3 +1,4 @@
+import {CloudLink} from '../support/cloud-link-stub.mjs';
 // 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
 import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 import test from 'node:test';
@@ -15,8 +16,8 @@ async function listeners(e) {
  const events={};// 中文注释：合成后台提供通知事件 API，不访问系统通知中心。
  const chrome={notifications:{onClicked:{addListener(){}},clear:async()=>true},runtime:{id:'ext',onMessage:{addListener:fn=>events.message=fn}},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{onCreated:{addListener:fn=>events.created=fn},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
  let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
- source=source.replace(/^import .*;\n/gm,'').replace(/^const executor=new Executor\(chrome,.*\);$/m,'const executor=injectedExecutor;').replace('const consent=new BrowserConsent(chrome.storage.local,executor);','const consent={load:async()=>{}};').replace(/connect\(\);\s*$/,'');
- vm.runInNewContext(source,{CookieMirror,registerWorkspaceStartup:()=>{},chrome,isUiSender,injectedExecutor:e});return events;
+ source=source.replace(/^import .*;\n/gm,'').replace(/^const executor=new Executor\(chrome,.*\);$/m,'const executor=injectedExecutor;').replace(/^const consent=new BrowserConsent.*;$/m,'const consent={load:async()=>{}};').replace(/connect\(\);\s*$/,'');
+ vm.runInNewContext(source,{CloudLink,CookieMirror,registerWorkspaceStartup:()=>{},chrome,isUiSender,injectedExecutor:e});return events;
 }
 function cdp(f,inspect=()=>({kind:'blank_anchor',url:'https://example.com/child'})) {
  let installDeclaration;

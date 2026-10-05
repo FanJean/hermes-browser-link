@@ -1,6 +1,6 @@
 # Features and limits
 
-This catalog describes **1.7.1 macOS developer preview**. Local/offline checks, isolated browser checks, installed runtime checks and GitHub publication are distinct evidence states. Current acceptance commands and limits are in [testing](testing.md).
+This catalog describes **1.8.0 macOS stable release**. Local/offline checks, isolated browser checks, installed runtime checks and GitHub publication are distinct evidence states. Current acceptance commands and limits are in [testing](testing.md).
 
 ## Capabilities
 
@@ -8,8 +8,8 @@ This catalog describes **1.7.1 macOS developer preview**. Local/offline checks, 
 |---|---|---|
 | Connection | Existing Chrome/Edge instances over Native Messaging; several browsers at once | Does not start browsers or copy profiles. Task isolation is not cookie or account isolation. |
 | Tasks and tabs | Per-task tab groups, exclusive tab leases, resume with a new generation, cleanup of task-created tabs only | Tabs you move out of the group or whose ownership is unclear are left alone. |
-| Page reading | Semantic snapshots (content, tables, interactive), filtering by region/name/role, paging and incremental deltas | Smart mode confirms a task's first read of each site; later reads of that site run directly. Tabs list only that task's leased tabs. Not a full accessibility tree. Automatic shielding also applies to read results. |
-| Targets | Open Shadow DOM, closed Shadow DOM in the main document, same-origin iframes, approved cross-origin (OOPIF) frames via `frame_catalog` tokens | Closed Shadow DOM inside same-origin iframes is not supported; rotated or skewed frames are rejected. |
+| Page reading | Semantic snapshots with bounded region/record context and compact text trees, control states, slot labels, virtual table indices, filtering, paging and deltas | Smart mode confirms a task's first read of each site; later reads of that site run directly. Tabs list only that task's leased tabs. Not a full accessibility tree. Explicit scoped AX supplementation is capped at 16 non-value-bearing controls; partial coverage is disclosed. Automatic shielding also applies to read results. |
+| Targets | Open/closed Shadow DOM, including closed components inside same-origin iframes; approved cross-origin (OOPIF) frames via `frame_catalog` tokens | Closed roots require confirmed CDP node access and are capped at 200. Unreadable child frames do not block parent DOM reads; rotated or skewed frames are rejected for actions. |
 | Actions | Confirmed reference clicks (trusted when visible, synthetic when hidden), fill, bounded key presses, checkboxes/radios/switches, native single/multi-select and ARIA single-select controls, scrolling (page or a specific container), back | Each action rechecks visibility, occlusion, stability and staleness before dispatch; nothing is retried after dispatch. |
 | Screenshot-bound interactions | Capture, element bounds, coordinate click, pointer drag and HTML5-synthetic drag | Coordinates are raw PNG pixels from the same capture. Hidden coordinate clicks use confirmed DOM events; hidden pointer drags are rejected. Synthetic HTML5 drags report `isTrusted: false`. |
 | Python scripts | `browser_shared_script` with page, file, download and page-execution helpers; request ledger, reconnect and explicit checkpoints | Each run is a new process running as your user — not an OS sandbox. A crashed script's Python state is not restored. |
@@ -39,7 +39,7 @@ Enable **自动屏蔽网页干扰** once in the browser popup. Built-in Chinese/
 
 The webpage DOM and visible user page stay intact. Captured pixels use opaque masks, including the ordinary screenshot and interaction-capture paths. Real CAPTCHA, sign-in, access-denied and rate-limit signals remain. A detected site automation restriction is still reported as `siteAutomationRestricted`; filtering is not permission to automate that site.
 
-Settings/readback failure, document or mask-geometry changes, and stale replay refuse unconfirmed content. Uninspectable frames, closed Shadow DOM and unsupported rendering are bounded refusals. Images/canvas/video are not OCR-scanned, and arbitrary JavaScript re-encoding is not a leakage-proof sandbox. See [complete boundaries](content-shield.md).
+Settings/readback failure, document or mask-geometry changes, and stale replay refuse unconfirmed content. Closed Shadow DOM uses confirmed CDP access. Structured reads can skip unreadable child frames and report partial coverage; screenshots and arbitrary scripts still refuse those frames. Unsupported rendering remains a bounded refusal. Images/canvas/video are not OCR-scanned, and arbitrary JavaScript re-encoding is not a leakage-proof sandbox. See [complete boundaries](content-shield.md).
 
 ## Cookie mirror
 
@@ -53,4 +53,9 @@ Cookie copying does not copy localStorage, IndexedDB, device keys or MFA state, 
 
 After installing the maintenance component, use `./install.sh --check-update`, `--update`, or `--auto-update check|install|off`. Scheduled checks run hourly; automatic installation waits until Chrome, Edge and Hermes exit. GitHub asset digest, archive paths, complete package inventory, version and extension identity are checked before the existing backup/rollback transaction. Manual upgrade, update and uninstall share the installation lock.
 
-Only stable releases qualify. GitHub pre-releases, including 1.7.1, are skipped; installing a preview uses its downloaded package and `--upgrade`. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
+Only stable releases qualify. GitHub pre-releases are skipped. Version 1.8.0 is stable; upgrade an older installation manually once to install the current update source. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
+## 独立云端连接
+
+扩展弹窗提供云端连接码、配对管理和独立完全访问开关。网页端显示已配对浏览器的实际在线状态；云端只授权任务页，原本地权限保持独立。
+
+云端不提供执行历史，执行日志继续保存在原本地位置。通信输入领取后清除，回执取走即清除，只保留防重复调用摘要。用法见 [云端连接](../cloud-link/README.md)。

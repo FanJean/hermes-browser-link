@@ -1,6 +1,6 @@
 # Hermes Browser Link
 
-**1.7.1 — macOS developer preview.** Authorized browser tasks, automatic text and screenshot shielding, a persistent task cursor, Desktop Cookie mirroring and stable-release updates.
+**1.8.0 — macOS stable release.** Authorized browser tasks, automatic text and screenshot shielding, a persistent task cursor, Desktop Cookie mirroring, independent cloud browser access and stable-release updates.
 
 ![Hermes Browser Link](docs/assets/readme-banner.png)
 
@@ -20,6 +20,7 @@ Read pages and tables, click, fill forms, upload files, track downloads and run 
 | Automatic content shielding | One switch detects matching Chinese/English notices and webpage instructions, hides the text block from Agent output and masks its screenshot region. No site or CSS-selector setup. |
 | Continuous task cursor | Always enabled during task work and between steps, with smooth target-to-target travel, takeover controls and reduced-motion support. |
 | Desktop Cookie mirror | Select source sites and target browsers in Hermes Desktop; every transfer requires confirmation in the source extension. |
+| Cloud access | Pair your browser with your own Sites plugin using a connection code; independent cloud permissions, separate conversation tasks, multiple pages and verified cleanup. See [Cloud connection](docs/cloud-connection.md). |
 | Installation and updates | Verified packages, backup/rollback, manual upgrade, hourly stable-release checks and idle installation. |
 
 Shielding protects Browser Link outputs, leaves your visible webpage intact, and preserves real verification/error signals. Unsupported raw channels or uninspectable page structures are refused. See [shielding boundaries](docs/content-shield.md), [complete features](docs/features.md), and the [module catalog](docs/product-modules.zh-CN.md).
@@ -35,10 +36,10 @@ Shielding protects Browser Link outputs, leaves your visible webpage intact, and
 
 ## Quick start (3 steps)
 
-1. Download a [Release package](https://github.com/FanJean/hermes-browser-link/releases) and install (no Node.js needed); **Program installed and enabled** confirms success:
+1. Download a [Release package](https://github.com/fanjing188/hermes-browser-link/releases) and install (no Node.js needed); **Program installed and enabled** confirms success:
 
    ```sh
-   curl -fL https://github.com/FanJean/hermes-browser-link/releases/download/v1.7.1/hermes-browser-link-1.7.1.zip -o hermes-browser-link-1.7.1.zip && unzip hermes-browser-link-1.7.1.zip && cd hermes-browser-link-1.7.1 && ./install.sh
+   curl -fL https://github.com/fanjing188/hermes-browser-link/releases/download/v1.8.0/hermes-browser-link-1.8.0.zip -o hermes-browser-link-1.8.0.zip && unzip hermes-browser-link-1.8.0.zip && cd hermes-browser-link-1.8.0 && ./install.sh
    ```
 
 2. Open `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** → paste the absolute path printed and copied by the installer. It waits up to 3 minutes and shows ✅ when connected; Ctrl+C skips the wait.
@@ -46,7 +47,7 @@ Shielding protects Browser Link outputs, leaves your visible webpage intact, and
 
 Upgrade: run `./install.sh --upgrade` from the new package (automatic backup and rollback), then reload the extension and restart Desktop. Uninstall: `./install.sh --uninstall` keeps task-private data; add `--purge` to delete it.
 
-Automatic updates accept stable releases and skip previews such as this 1.7.1 pre-release. After installing the update component, run `./install.sh --auto-update install`. It checks stable releases hourly and installs after browsers and Hermes exit. Reload the extension before starting Hermes again. Use `--auto-update check` for checks only, `--auto-update off` to disable, or `--update` to update now. See [automatic updates](docs/installation.md#automatic-updates--自动更新).
+Automatic updates accept stable releases; 1.8.0 is eligible. Upgrade an older installation manually once to install the current update source. After installing the update component, run `./install.sh --auto-update install`. It checks stable releases hourly and installs after browsers and Hermes exit. Reload the extension before starting Hermes again. Use `--auto-update check` for checks only, `--auto-update off` to disable, or `--update` to update now. See [automatic updates](docs/installation.md#automatic-updates--自动更新).
 
 [Source/manual installation, profiles and troubleshooting](docs/installation.md) · [Agent installation prompt](docs/agent-install-prompt.md).
 
@@ -94,7 +95,7 @@ python3 scripts/generate-browser-reference.py --check
 bash scripts/check-public-release.sh
 ```
 
-Real-browser runners are opt-in and use temporary profiles: see [testing](docs/testing.md). Mechanical and agent benchmark commands are in [benchmarks](docs/bench.md). See [development](docs/development.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities through [GitHub Security Advisories](https://github.com/FanJean/hermes-browser-link/security/advisories/new), not a public issue.
+Real-browser runners are opt-in and use temporary profiles: see [testing](docs/testing.md). Mechanical and agent benchmark commands are in [benchmarks](docs/bench.md). See [development](docs/development.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities through [GitHub Security Advisories](https://github.com/fanjing188/hermes-browser-link/security/advisories/new), not a public issue.
 
 ## License and acknowledgement
 

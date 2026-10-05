@@ -27,6 +27,8 @@ function executionError(error,message){
  else if(reason==='SENSITIVE_TARGET'){code='sensitive_target';text='Sensitive page target is not available for automation.';}
  else if(detail==='sensitive target blocked'){code='sensitive_target';text='Let the user fill this field, then read the page again.';}
  else if(reason==='TARGET_OCCLUDED'){code='target_occluded';text='The target is covered by another element; nothing was clicked.';}
+ // 中文注释：指针命中复核失败保留明确错误码，派发前状态由交互库提供，不输出底层异常。
+ else if(reason==='HIT_RECHECK_FAILED'){code='target_hit_unverified';text='无法确认点击命中，请重新读取页面定位。';}
  else if(reason==='TARGET_DISABLED'){code='target_disabled';text='The target is disabled.';}
  else if(reason==='TARGET_HIDDEN'){code='target_hidden';text='The target is inert or hidden from accessibility.';}
  else if(reason==='TARGET_ZERO_SIZE'){code='target_zero_size';text='The target has no usable size.';}
@@ -83,7 +85,9 @@ function executionError(error,message){
  else if(reason==='NETWORK_ENTRY_UNAVAILABLE'){code='network_entry_unavailable';text='List captured requests again.';}
  else if(reason==='PARSE_CURSOR_STALE'){code='parse_cursor_stale';text='Page changed; restart parsing without the old cursor.';}
  else if(reason==='BUDGET_TOO_SMALL'){code='parse_budget_too_small';text='The page result exceeds this parse budget; increase the budget or narrow sections.';}
- else if(reason==='INVALID_PARSE_OPTIONS'){code='invalid_params';text='Invalid page parser options.';}
+ else if(['INVALID_PARSE_OPTIONS','INVALID_OPTIONS'].includes(reason)){code='invalid_params';text='Invalid page parser options.';}
+ // 中文注释：局部无障碍读取不可用时明确失败，不猜测控件名称或回传浏览器异常正文。
+ else if(reason==='ACCESSIBILITY_UNAVAILABLE'){code='accessibility_unavailable';text='局部无障碍信息无法确认，请读取页面检查。';}
  else if(reason==='DOCUMENT_CHANGED'){code='document_changed';text='Document or navigation scope changed.';}
  else if(reason==='READ_ORIGIN_CHANGED'){code='site_changed';text='The page changed sites before the read completed; request a new site approval.';}
  else if(reason==='INVALID_NODE_REF'){code='stale_reference';text='The page reference is stale; obtain a new snapshot.';}
@@ -125,7 +129,7 @@ function executionError(error,message){
 }
 // Only the extension UI calls setEnabled; native messages cannot create consent.
 export class BrowserConsent {
- constructor(storage,executor){this.storage=storage;this.executor=executor;this.enabled=false;this.status='unknown';this.epoch=0;this.writes=Promise.resolve();}
+ constructor(storage,executor,{modeForTask=()=>null}={}){this.storage=storage;this.executor=executor;this.modeForTask=modeForTask;this.enabled=false;this.status='unknown';this.epoch=0;this.writes=Promise.resolve();}
  async readStatus(){
   try{
    const value=(await this.storage.get('browserFullConsent'))?.browserFullConsent;
@@ -149,7 +153,9 @@ export class BrowserConsent {
      const approved=await bridge.request('extension.approve',{taskId:task.id,generation:task.generation,tabIds:[],allowedOrigins:task.allowedOrigins,workspaceOnly:true},valid);
      if(!valid())throw Error('browser consent revoked');
      // 中文注释：工作区授权先进入 authorizing；两档模式都需向宿主确认后才能成为 ready。
-     const updated=await bridge.request('extension.mode',{taskId:task.id,generation:approved.generation,modeGeneration:approved.modeGeneration,mode:this.enabled?'full':'smart'});
+     // 中文注释：云端任务使用独立授权；普通本地任务继续使用原浏览器开关。
+     const taskMode=this.modeForTask(task);
+     const updated=await bridge.request('extension.mode',{taskId:task.id,generation:approved.generation,modeGeneration:approved.modeGeneration,mode:taskMode??(this.enabled?'full':'smart')});
      if(!valid())throw Error('browser mode changed');
      this.executor.setMode(updated);
     }catch(error){
@@ -166,7 +172,8 @@ export class BrowserConsent {
   if(typeof enabled!=='boolean')throw Error('invalid browser consent');
   this.enabled=false;this.status='unknown';const epoch=++this.epoch;
   const changeModes=async()=>{
-   const changes=[...this.executor.tasks.values()].filter(t=>!t.revoked&&t.policy.activeMode!==(enabled?'full':'smart')).map(async t=>{
+   // 中文注释：切换本地全局权限不能改写已登记的云端任务权限。
+   const changes=[...this.executor.tasks.values()].filter(t=>!t.revoked&&this.modeForTask(t)===null&&t.policy.activeMode!==(enabled?'full':'smart')).map(async t=>{
     const modeGeneration=t.policy.modeGeneration;
     if(!enabled){this.executor.revokeMode(t.id);await t.scriptCleanup;}
     if(bridge&&!bridge.closed){

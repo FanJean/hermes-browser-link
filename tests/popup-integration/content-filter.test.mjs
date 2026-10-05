@@ -504,3 +504,88 @@ test('未配置规则时动态公告自动参与下一次文本读取',async()=>
  const result=await f.e.execute({...f.request('page.observe'),options:{selector:'body'}});
  assert.equal(result.contentFilter.siteAutomationRestricted,true);assert.doesNotMatch(JSON.stringify(result),/Automated|prohibited/);assert.match(JSON.stringify(result),/公开正文/);f.dom.window.close();
 });
+
+// 中文注释：结构读取不输出不可访问框架的内部文本；截图与任意脚本保留拒绝边界。
+test('跨源 iframe 不阻断顶层结构读取，但明确报告不完整',async()=>{
+ const f=shieldFixture(),frame=f.w.document.createElement('iframe');
+ f.w.document.body.append(frame);Object.defineProperty(frame,'contentDocument',{get:()=>null});
+ await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+ for(const action of ['snapshot','semantic_snapshot','page.parse','page.observe','official.ready_state','frame_catalog']){
+  f.e.performSettled=async()=>({items:[{name:'公开正文'},{name:secret}],coverage:{complete:true},...(action==='page.parse'?{status:'complete',warnings:[]}: {})});
+  const result=await f.e.execute(f.request(action));
+  assert.equal(result.coverage.complete,false);assert.equal(result.contentFilter.unreadFrames,1);
+  assert.equal(result.items[0].name,'公开正文');assert(!JSON.stringify(result).includes(secret));
+  if(action==='page.parse'){assert.equal(result.status,'partial');assert(result.warnings.includes('unread_frames'));}
+ }
+ for(const action of ['screenshot','js.evaluate'])await assert.rejects(f.e.execute(f.request(action)),/CONTENT_SHIELD_UNINSPECTABLE/);
+ // 中文注释：无关框架在解析根外，不能导致严格定位器把完整的局部读取判为不完整。
+ const scoped=await f.e.execute({...f.request('semantic_snapshot'),options:{root:'#private'}});
+ assert.equal(scoped.coverage.complete,true);assert.equal(scoped.contentFilter.unreadFrames,undefined);
+ // 中文注释：目标框架的正文尚未保护时，即使显式选择该框架也不能借部分读取规则输出。
+ await assert.rejects(f.e.execute({...f.request('semantic_snapshot'),options:{frameToken:'frame-token',root:'#private'}}),/CONTENT_SHIELD_UNINSPECTABLE/);
+ f.dom.window.close();
+});
+
+// 中文注释：CDP 提供的封闭组件必须进入与开放组件相同的文本屏蔽；页面代码无法创建该映射。
+test('保护探测通过宿主映射读取封闭 Shadow Root 并屏蔽文字',async()=>{
+ const f=shieldFixture({selectors:[]}),host=f.w.document.createElement('div');f.w.document.body.append(host);
+ const shadow=host.attachShadow({mode:'closed'});shadow.innerHTML='<p>禁止自动化操作</p><button aria-label="封闭公开按钮">封闭公开按钮</button>';
+ const send=f.e.api.debugger.sendCommand;
+ f.e.api.debugger.sendCommand=async(t,m,p)=>{
+  if(m==='DOM.getDocument')return {root:{nodeName:'HTML',children:[{shadowRoots:[{shadowRootType:'closed',backendNodeId:99}]}]}};
+  if(m==='DOM.resolveNode')return {object:{objectId:'closed-root'}};
+  if(m==='Runtime.callFunctionOn'&&p.objectId==='closed-root')return {result:{value:f.w.eval(`(${p.functionDeclaration})`).call(shadow)}};
+  return send(t,m,p);
+ };
+ await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+ f.e.performSettled=async()=>({items:[{name:'禁止自动化操作'},{name:'封闭公开按钮'}]});
+ const r=await f.e.execute(f.request('semantic_snapshot'));
+ assert(!JSON.stringify(r).includes('禁止自动化操作'));assert.equal(r.items[1].name,'封闭公开按钮');
+ assert(f.w.__hermesClosedShadowRoots.get(host)===shadow);
+ f.dom.window.close();
+});
+
+// 中文注释：短屏蔽片段不能损坏解析协议；任意脚本返回的同名字段仍当作用户值脱敏。
+test('短屏蔽词保留固定角色与覆盖率，但不豁免脚本对象',()=>{
+ const result=redactShieldResult({coverage:{scope:'accessible same-origin-frame',complete:true},items:[{role:'listbox',name:'is',ref:'ref'}],value:{role:'listbox',coverage:{scope:'is'}}},{tokens:['is']});
+ assert.equal(result.items[0].role,'listbox');assert.equal(result.items[0].ref,undefined);
+ assert.equal(result.coverage.scope,'accessible same-origin-frame');
+ assert.equal(result.value.role,'l[已屏蔽区域]tbox');assert.equal(result.value.coverage.scope,'[已屏蔽区域]');
+});
+
+// 中文注释：封闭组件扫描上限和节点解析失败均须拒绝，不能漏读后继续发送输出。
+for(const failure of ['limit','missing-object','exception'])test(`封闭组件 ${failure} 拒绝不完整探测`,async()=>{
+ const f=shieldFixture(),send=f.e.api.debugger.sendCommand;
+ f.e.api.debugger.sendCommand=async(t,m,p)=>{
+  if(m==='DOM.getDocument')return {root:{nodeName:'HTML',children:Array.from({length:failure==='limit'?201:1},(_,i)=>({shadowRoots:[{shadowRootType:'closed',backendNodeId:i+1}]}))}};
+  if(m==='DOM.resolveNode')return {object:failure==='missing-object'?{}:{objectId:'closed-root'}};
+  if(m==='Runtime.callFunctionOn'&&p.objectId==='closed-root')return {exceptionDetails:{text:'不可公开的页面异常'}};
+  return send(t,m,p);
+ };
+ await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+ f.e.performSettled=async()=>{assert.fail('保护探测失败不得进入动作');};
+ await assert.rejects(f.e.execute(f.request('semantic_snapshot')),/CONTENT_SHIELD_UNINSPECTABLE/);
+ if(failure==='exception')assert(f.calls.some(([m])=>m==='Runtime.releaseObject'));
+ f.dom.window.close();
+});
+
+// 中文注释：真实 Agent 的不可读 sandbox iframe 采用 display:none，不能阻断固定 DOM 读取和输入回执。
+test('隐藏不可读 sandbox 框架不阻断 DOM 读取与输入，任意 JS 仍拒绝',async()=>{
+ const f=shieldFixture(),frame=f.w.document.createElement('iframe');frame.style.display='none';frame.setAttribute('sandbox','');f.w.document.body.append(frame);Object.defineProperty(frame,'contentDocument',{get:()=>null});
+ await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+ let dispatches=0;f.e.performSettled=async()=>{dispatches++;return {filled:true,coverage:{complete:true},items:[{name:secret},{name:'公开'}]};};
+ for(const action of ['semantic_snapshot','page.parse','ref_fill','ref_click']){
+  const result=await f.e.execute(f.request(action));assert.equal(result.coverage.complete,true);assert(!JSON.stringify(result).includes(secret));
+ }
+ assert.equal(dispatches,4);await assert.rejects(f.e.execute(f.request('js.evaluate')),/CONTENT_SHIELD_UNINSPECTABLE/);assert.equal(dispatches,4);
+ frame.style.display='block';await assert.rejects(f.e.execute(f.request('ref_fill')),/CONTENT_SHIELD_UNINSPECTABLE/);assert.equal(dispatches,4);
+ f.dom.window.close();
+});
+
+// 中文注释：隐藏到可见的状态变化必须在后置检查拒绝，不能交付未经确认的输出。
+test('隐藏 sandbox 框架在操作中显示会拒绝结果',async()=>{
+ const f=shieldFixture(),frame=f.w.document.createElement('iframe');frame.style.display='none';f.w.document.body.append(frame);Object.defineProperty(frame,'contentDocument',{get:()=>null});
+ await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+ f.e.performSettled=async()=>{frame.style.display='block';return {filled:true};};
+ await assert.rejects(f.e.execute(f.request('ref_fill')),/CONTENT_SHIELD_UNINSPECTABLE/);f.dom.window.close();
+});

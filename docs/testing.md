@@ -175,3 +175,11 @@ To keep gate scratch files outside the user's Hermes directory, set `HERMES_BROW
 ### 页面内容屏蔽候选
 
 受影响的离线回归复用既有 `tests/popup-integration/content-filter.test.mjs`、`native-routing.test.mjs` 和 `popup.test.mjs`；此前未登记的 `native-routing.test.mjs` 已加入显式 Node 清单和 coverage matrix。内容、截图和回放用例通过真实 Executor→Bridge；配置用例通过实际 background 消息处理器。CDP、DOM、Canvas 是合成后端，不代表个人浏览器验收。完整配置、拒绝矩阵和个人验收要求见 [页面内容屏蔽](content-shield.md)。
+
+## 1.8.0 云端发布检查
+
+固定离线门禁包含 `cloud-link/tests/`、`tests/native-extension/cloud-link.test.mjs` 和 `cloud-link/site/tests/cloud.test.mjs`，源码与站点分别安装锁文件依赖；CI 不使用个人站点 ID、凭据、浏览器 profile 或执行日志。云端站点的 SQLite/HTTP/MCP 测试验证会话隔离、原子领取、去重、正文擦除和关闭路由。
+
+实际 Chrome 验收覆盖多个独立云端会话、一个任务的两个页面及另一任务的一个页面并发、审批等待时其他任务继续运行、取消后显式恢复、空任务关闭，以及关闭一个会话不影响另一个会话。最终本机未交付回执与未关闭路由均为零。Edge 在线状态已确认；此轮多页面并发的实际操作在 Chrome 完成。闲置一小时回收通过可控时间测试，不代表已等待一小时墙钟时间。
+
+每次正式发布仍需重新执行本文件规定的固定 Hermes 门禁与变更后的安装包检查，历史浏览器记录不能覆盖未经验证的新行为。

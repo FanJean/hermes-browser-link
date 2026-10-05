@@ -36,9 +36,12 @@ SKIP_ROOT_DIR = {'release', 'dist', '.ci'}
 SKIP_FILES = {'CODEX-AUDIT-REPORT.md', 'CODEX-STREAM-REPORT.md', '.DS_Store', 'build-info.json', '.env', '.env.local',
               'token.json', 'credentials.json', 'latest.json', 'steps.json'}
 # 当前共享浏览器桥接不再包含独立执行器依赖边界。
-NODE_BOUNDARIES = ('.',)
+NODE_BOUNDARIES = ('.', 'cloud-link/site')
 # Explicit runner inventory: no glob expands into browser, install, or evidence suites.
 NODE_TESTS = (
+    # 中文注释：云端授权与 SQLite/MCP 测试使用合成配对和设备，不连接个人浏览器。
+    'tests/native-extension/cloud-link.test.mjs',
+    'cloud-link/site/tests/cloud.test.mjs',
     # 中文注释：诊断三契约对照只导入源码并校验合成值，纳入显式离线清单。
     'browser-diagnostics/tests/diagnostics.test.mjs',
     # 中文注释：独立工作窗口和效果观察只用合成 API/DOM。
@@ -95,6 +98,8 @@ NODE_TESTS = (
     'page-semantics/controls.test.mjs',
     'tests/complex-ui/semantics.test.mjs',
     'tests/complex-ui/actions.test.mjs',
+    # 中文注释：局部无障碍查询验证真实引用、隐私、上限和句柄释放，不启动浏览器。
+    'tests/complex-ui/accessibility.test.mjs',
     'tests/native-extension/sensitive-fields.test.mjs',
     'tests/native-extension/bridge-cdp-errors.test.mjs',
     'tests/native-extension/file-upload-visual.test.mjs',
@@ -108,6 +113,8 @@ NODE_TESTS = (
     'tests/v1.4.4/round1f.test.mjs',
 )
 PYTHON_SUITES = (
+    # 中文注释：云端调度、原生帧及收尾测试仅使用临时 HOME 和可控网络替身。
+    'cloud-link/tests',
     # 中文注释：自动更新的网络与调度调用均由测试替换，不触碰真实安装。
     'tests/auto-update',
     'browser-diagnostics/tests',
@@ -123,6 +130,7 @@ PYTHON_SUITES = (
 )
 # Some directories contain explicitly unsafe runners: select files by fixed name.
 PYTHON_FILES = {
+    'cloud-link/tests': ('test_cloud.py', 'test_native.py', 'test_scheduler.py', 'test_service.py'),
     'tests/auto-update': ('test_update.py',),
     # 中文注释：诊断用例只使用合成事件和临时日志目录，按名称限定运行范围。
     'browser-diagnostics/tests': ('test_schema.py', 'test_runtime.py', 'test_sink.py'),

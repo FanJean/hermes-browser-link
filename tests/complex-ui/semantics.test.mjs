@@ -129,3 +129,95 @@ test('滚动后可重新读取新列表项；折叠按钮有可操作引用；ca
   assert.equal(summary.coverage.unsupportedCanvas,1);
  }finally{f.close();}
 });
+
+// 中文注释：图标按钮复用可访问名称规则，隐藏与私密图标不能提供名称。
+test('图片 alt、SVG title 和 tooltip 可命名图标按钮并保留脱敏',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<button id="image"><img alt="下载报告"></button><button id="svg"><svg><title>展开菜单</title></svg></button><button title="账户 alice@example.com"></button><button><img alt="PRIVATE_ICON" data-private></button>';
+  f.dom.window.SVGElement.prototype.getClientRects=()=>[{}];
+  const page=f.semantics.snapshot();
+  assert.equal(page.items.find(item=>item.name==='下载报告').nameSource,'descendant');
+  assert.equal(page.items.find(item=>item.name==='展开菜单').nameSource,'descendant');
+  assert.equal(page.items.find(item=>item.name==='账户 [email]').nameSource,'title');
+  assert(!JSON.stringify(page).includes('PRIVATE_ICON'));
+  assert.equal(f.semantics.resolve(token(page,page.items.find(item=>item.name==='下载报告'))).id,'image');
+ }finally{f.close();}
+});
+
+// 中文注释：display:contents 没有盒子，不能因此丢掉可见文字或 Shadow 宿主内的控件。
+test('display contents 的文字和 Shadow 子控件仍可解析',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<button><span style="display:contents">保存内容</span></button><div id="contents" style="display:contents"></div>';
+  const host=f.document.querySelector('#contents');
+  host.attachShadow({mode:'open'}).innerHTML='<button>Shadow 操作</button>';
+  const rects=f.dom.window.HTMLElement.prototype.getClientRects;
+  f.dom.window.HTMLElement.prototype.getClientRects=function(){return this.style.display==='contents'?[]:rects.call(this);};
+  const page=f.semantics.snapshot({composed:true});
+  assert.deepEqual(page.items.map(item=>item.name),['保存内容','Shadow 操作']);
+  host.setAttribute('data-private','');
+  assert(!JSON.stringify(f.semantics.snapshot({composed:true})).includes('Shadow 操作'));
+ }finally{f.close();}
+});
+
+// 中文注释：插槽标签进入控件名称，容器上下文用于区分同名动作，引用仍指向真实节点。
+test('slot 命名和记录上下文保留同名按钮的独立引用',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<main aria-label="镜像版本"><article><h2>版本 A</h2><button aria-expanded="false">更多</button></article><article><h2>版本 B</h2><button aria-expanded="true">更多</button></article><div id="host"><span slot="label">保存</span></div></main>';
+  f.document.querySelector('#host').attachShadow({mode:'open'}).innerHTML='<button><slot name="label"></slot></button>';
+  const page=f.semantics.snapshot({composed:true,budget:8000});
+  const more=page.items.filter(i=>i.name==='更多');assert.equal(more.length,2);assert.notEqual(more[0].ref,more[1].ref);
+  assert.deepEqual(more.map(i=>i.context.at(-1).name),['版本 A','版本 B']);assert.deepEqual(more.map(i=>i.expanded),[false,true]);
+  assert(page.items.some(i=>i.name==='保存'));assert.equal(f.semantics.resolve(token(page,more[1])),f.document.querySelectorAll('article button')[1]);
+ }finally{f.close();}
+});
+
+// 中文注释：AX 名称只可写回当前快照节点，隐私子内容和状态变化不能被 AX 缓存绕过。
+test('局部 AX 补充脱敏且拒绝私密标签，DOM 变化使其失效',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<button id="ax"></button><button id="private" aria-labelledby="secret"></button><span id="secret" data-private>PRIVATE_CANARY</span>';
+  let page=f.semantics.snapshot();const ax=page.items.find(i=>!i.name&&f.semantics.resolve(token(page,i)).id==='ax'),privateItem=page.items.find(i=>f.semantics.resolve(token(page,i)).id==='private');
+  assert.equal(f.semantics.accessibilityNode(token(page,privateItem)),null);
+  f.semantics.applyAccessibility({...page.binding,snapshotId:page.snapshotId},[{ref:ax.ref,name:'打开 alice@example.com',states:{expanded:false}}]);
+  page=f.semantics.snapshot();assert(page.items.some(i=>i.name==='打开 [email]'&&i.nameSource==='accessibility'));
+  f.document.querySelector('#ax').textContent='更新名称';assert(!f.semantics.snapshot().items.some(i=>i.nameSource==='accessibility'));
+ }finally{f.close();}
+});
+
+// 中文注释：同一个 DOM 按钮被虚拟行复用时，旧引用不能操作另一个行索引。
+test('虚拟行回收改变逻辑索引时拒绝旧引用',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<div role="grid" aria-rowcount="1000"><div role="row" aria-rowindex="51"><button>删除</button></div></div>';
+  const page=f.semantics.snapshot(),old=token(page,page.items[0]);assert.equal(page.items[0].context.at(-1).index,51);
+  f.document.querySelector('[role=row]').setAttribute('aria-rowindex','52');
+  assert.throws(()=>f.semantics.resolve(old),/REF_TARGET_MISSING/);
+  assert.equal(f.semantics.snapshot().items[0].context.at(-1).index,52);
+ }finally{f.close();}
+});
+
+// 中文注释：私密插槽不能通过 light DOM 扫描泄露其分配节点。
+test('私密 slot 同时排除分配的控件和文字',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<div id="host"><button slot="label">PRIVATE_SLOT_CANARY</button></div>';
+  f.document.querySelector('#host').attachShadow({mode:'open'}).innerHTML='<slot name="label" data-private></slot>';
+  assert(!JSON.stringify(f.semantics.snapshot({composed:true})).includes('PRIVATE_SLOT_CANARY'));
+ }finally{f.close();}
+});
+
+// 中文注释：选定根外不提供上下文，后续读取其他根也不能破坏原快照中的有效引用。
+test('上下文限定在 root，旧快照在新 root 读取后仍可解析',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<main aria-label="OUTSIDE"><section id="a" aria-label="A"><button>保存 A</button></section><section id="b" aria-label="B"><button>保存 B</button></section></main>';
+  const page=f.semantics.snapshot({root:'#a'});assert.deepEqual(page.items[0].context.map(c=>c.name),['A']);
+  f.semantics.snapshot({root:'#b'});assert.equal(f.semantics.resolve(token(page,page.items[0])).textContent,'保存 A');assert.equal(f.semantics.relocation(),false);
+ }finally{f.close();}
+});
+
+// 中文注释：隐藏 iframe 不在语义输出范围内，不应使严格定位器误认为已读取的可见控件不完整。
+test('隐藏不可读 iframe 不计语义覆盖缺口',()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<button>发送</button><iframe style="display:none" sandbox></iframe>';
+  Object.defineProperty(f.document.querySelector('iframe'),'contentDocument',{get:()=>null});
+  let page=f.semantics.snapshot({composed:true});assert.equal(page.coverage.skippedFrames,0);assert.equal(page.coverage.complete,true);assert.equal(page.items[0].name,'发送');
+  f.document.querySelector('iframe').style.display='block';page=f.semantics.snapshot({composed:true});assert.equal(page.coverage.skippedFrames,1);assert.equal(page.coverage.complete,false);
+ }finally{f.close();}
+});

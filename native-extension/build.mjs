@@ -13,7 +13,7 @@ await mkdir(dest, {recursive: true});
 for (const file of ['manifest.json', 'work-window.mjs', 'work-window.html', 'action-effects.mjs', 'request-ledger.mjs', 'content-filter.mjs', 'content-shield.mjs', 'bridge.mjs', 'background.mjs', 'automation-overlay.mjs', 'interaction-highlight.mjs', 'official-actions.mjs', 'downloads.mjs', 'page-runtime.mjs', 'network-evidence.mjs', 'cdp-policy.mjs', 'page-observers.mjs', 'page-observation.mjs', 'vault.mjs',
   'approval-notifier.mjs', 'approval-panel.html', 'approval-panel.css', 'approval-panel.mjs',
   'icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png',
-  'popup.html', 'popup.css', 'popup.mjs']) {
+  'popup.html', 'popup.css', 'popup.mjs', 'cloud-link.mjs', 'cloud-popup.mjs']) {
   await copyFile(path.join(source, file), path.join(dest, file));
 }
 

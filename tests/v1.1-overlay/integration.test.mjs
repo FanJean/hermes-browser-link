@@ -122,13 +122,17 @@ test('production CDP declarations create and restore a real overlay in an isolat
  dom.window.close();
 });
 
-test('semantic snapshot enables composed coverage without bypassing frame origin authorization',async()=>{
+// 中文注释：跨源框架不阻断组合读取，但不在该框架创建隔离世界；全框架操作仍保留来源校验。
+test('semantic snapshot skips unrelated cross-origin frames without granting their action authority',async()=>{
  const {api,calls}=fixture(),e=new Executor(api);await e.approve(task);
  await e.execute({...request('semantic_snapshot'),options:{mode:'content',composed:true}});
  const semantic=calls.find(([m,p])=>m==='Runtime.callFunctionOn'&&p.arguments?.[1]?.value?.options?.composed===true)?.[1];
  assert.equal(semantic.arguments[1].value.options.composed,true);
- api.debugger.sendCommand=async(t,m,_p)=>{if(m==='Page.getFrameTree')return {frameTree:{frame:{id:'main',url,loaderId:'doc'},childFrames:[{frame:{id:'foreign',url:'https://other.test/'}}]}};if(m==='Page.createIsolatedWorld')return {executionContextId:17};if(m==='Runtime.callFunctionOn')return {result:{value:{}}};};
- await assert.rejects(e.execute({...request('semantic_snapshot'),options:{composed:true}}),/frame origin denied/);
+ const send=api.debugger.sendCommand;
+ api.debugger.sendCommand=async(t,m,p)=>m==='Page.getFrameTree'?{frameTree:{frame:{id:'main',url,loaderId:'doc-1'},childFrames:[{frame:{id:'foreign',url:'https://other.test/'}}]}}:send(t,m,p);
+ await e.execute({...request('semantic_snapshot'),options:{composed:true}});
+ assert(!calls.some(([m,p])=>m==='Page.createIsolatedWorld'&&p.frameId==='foreign'));
+ await assert.rejects(e.checkedFrameTree({tabId:1},e.tasks.get('work'),()=>{},true),/frame origin denied/);
 });
 
 test('interaction.capture hides overlay throughout state/screenshot/state, then restores',async()=>{
@@ -315,4 +319,24 @@ test('截图回执超时后恢复遮罩并丢弃迟到结果',async context=>{
   context.mock.timers.tick(8001);for(let i=0;i<20;i++)await Promise.resolve();
   assert.equal(result?.error?.message,'SCREENSHOT_TIMEOUT');assert.equal(overlay.host.isConnected,true);assert.equal(overlay.host.style.pointerEvents,'auto');assert.notEqual(overlay.host.style.opacity,'0');
  }finally{finish({data:'迟到的截图'});await capture;overlay.remove();dom.window.close();}
+});
+
+// 中文注释：CSS 伪元素的真实宿主仍须通过浮层和 Shadow 检查，不能因为有 element 属性就放行。
+for(const kind of ['public','overlay','missing'])test(`CDP CSSPseudoElement 宿主复核 ${kind}`,async()=>{
+ const dom=new JSDOM('<button>公开</button><div data-hermes-automation-overlay><button>浮层</button></div>',{url,runScripts:'outside-only'}),calls=[];
+ const element=kind==='missing'?null:dom.window.document.querySelector(kind==='overlay'?'div button':'button');
+ const adapter=createCDPAdapter(async(m,p)=>{
+  calls.push(m);
+  if(m==='Page.getFrameTree')return {frameTree:{frame:{id:'main',loaderId:'doc'}}};
+  if(m==='Page.createIsolatedWorld')return {executionContextId:3};
+  if(m==='Runtime.evaluate')return {result:{value:{token:'t',scroll:{x:0,y:0}}}};
+  if(m==='DOM.getNodeForLocation')return {backendNodeId:11};
+  if(m==='DOM.resolveNode')return {object:{objectId:'pseudo',className:'CSSPseudoElement'}};
+  if(m==='Runtime.callFunctionOn'){
+   try{return {result:{value:dom.window.eval(`(${p.functionDeclaration})`).call({element},...(p.arguments||[]).map(a=>a.value))}};}
+   catch{return {exceptionDetails:{text:'fixture failure'}};}
+  }
+  return {};
+ });
+ try{if(kind==='public')await adapter.verifyHit({x:10,y:10});else await assert.rejects(adapter.verifyHit({x:10,y:10}),kind==='missing'?/HIT_RECHECK_FAILED/:/UNSUPPORTED_SHADOW_DOM/);assert(calls.includes('Runtime.releaseObject'));}finally{dom.window.close();}
 });

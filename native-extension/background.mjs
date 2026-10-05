@@ -4,6 +4,7 @@ import {NativeWorkspaces,registerWorkspaceStartup} from './workspace-adapter.mjs
 registerWorkspaceStartup(chrome);
 import {Executor,origin} from './core.mjs';
 import {Bridge,isUiSender,BrowserConsent} from './bridge.mjs';
+import {CloudLink} from './cloud-link.mjs';
 import {CookieMirror} from './cookie-mirror.mjs';
 import {createApprovalNotifier,showPanelNotification,clearPanelNotification} from './approval-notifier.mjs';
 let bridge=null,connected=false,connecting=false,lastError='尚未连接本地桥';
@@ -147,7 +148,10 @@ const pushCdpEvents=async p=>{try{if((await readContentShield()).enabled)return;
 const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}),{onOverlayCommand:overlayCommand,onDownloadEvent:reportDownload,onCdpEvents:pushCdpEvents,onContentShield:readContentShield});
 // 中文注释：镜像状态变化只刷新源扩展确认面板，弹窗不保留复制结果。
 const cookieMirror=new CookieMirror(chrome,{onChanged:()=>{void refreshApprovals();}});
-const consent=new BrowserConsent(chrome.storage.local,executor);
+let cloud=null;
+const consent=new BrowserConsent(chrome.storage.local,executor,{modeForTask:task=>cloud?.modeForTask(task)??null});
+// 中文注释：云端状态通知只刷新弹窗，不触发本地任务的全局权限同步。
+cloud=new CloudLink(chrome,{localBridge:()=>connected?bridge:null,executor,consent,changed:()=>chrome.runtime.sendMessage({type:'changed'}).catch(()=>{})});
 const consentLoaded=consent.load();
 let disconnectBarrier=Promise.resolve();
 // The host list is authoritative. Never accept a request supplied by the page,
@@ -279,6 +283,8 @@ const changed=()=>{chrome.runtime.sendMessage({type:'changed'}).catch(()=>{});if
 async function connect(){if(bridge||connecting)return;connecting=true;try{
  await consentLoaded;await disconnectBarrier;
  const stored=await chrome.storage.local.get('browserInstanceId');const session=await chrome.storage.session.get('instanceId');const instanceId=stored.browserInstanceId||session.instanceId||crypto.randomUUID();await chrome.storage.local.set({browserInstanceId:instanceId});await chrome.storage.session.set({instanceId});
+ // 中文注释：独立连接云端 host；原本地 Native 端口及重连流程保持原样。
+ void cloud.connect(instanceId,/Edg/.test(navigator.userAgent)?'Edge':'Chrome');
  if(!executor.workspaces)executor.workspaces=new NativeWorkspaces(chrome,instanceId,id=>executor.leases.has(id));
  await executor.workspaces.manager.reconcile();
  const port=chrome.runtime.connectNative('com.hermes.browser_link');const current=new Bridge(port,executor,changed,{onConsentStatus:()=>consent.readStatus(),onAccessRequest:openAccessManagementRequest,onContentFilter:readContentFilter,onCookieMirror:(method,p)=>cookieMirror.handle(method,p),onCookieDisconnect:()=>{cookieMirror.disconnect();}});bridge=current;
@@ -286,8 +292,8 @@ async function connect(){if(bridge||connecting)return;connecting=true;try{
   // 中文注释：本地桥意外断开（如 daemon 重启）后很快重连一次；在途动作不重放，其余仍靠 30 秒定时重连兜底。
   setTimeout(()=>{connect();},1500);});
  // 中文注释：握手版本与扩展清单保持一致，避免安装后仍报告旧版本。
- // 中文注释：握手版本与 1.7.1 发布清单一致。
- const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.7.1',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}// 中文注释：握手后按 daemon 本实例终态与本地工作区日志清理重载遗留浮层，先于恢复授权派发。
+ // 中文注释：握手版本与 1.8.0 发布清单一致。
+ const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:'1.8.0',capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}// 中文注释：握手后按 daemon 本实例终态与本地工作区日志清理重载遗留浮层，先于恢复授权派发。
  await executor.cleanupOrphanOverlays(await current.request('extension.tasks',{includeClosed:true}),instanceId);await consent.synchronize(current);await refreshApprovals(current);}
  }catch(e){
   lastError=e.message;
@@ -297,7 +303,7 @@ async function connect(){if(bridge||connecting)return;connecting=true;try{
    disconnectBarrier=executor.disconnect().catch(()=>{});
   }
  }finally{connecting=false;}}
-chrome.alarms.create('reconnect',{periodInMinutes:0.5});chrome.alarms.onAlarm.addListener(()=>{connect();refreshApprovals();});
+chrome.alarms.create('reconnect',{periodInMinutes:0.5});chrome.alarms.onAlarm.addListener(()=>{connect();refreshApprovals();void cloud.refresh();});
 chrome.windows?.onRemoved?.addListener(windowId=>{accessWindowClosed(windowId);notifier?.panelClosed(windowId).catch(()=>{});});
 chrome.tabs.onCreated.addListener(tab=>executor.tabCreated(tab).catch(()=>{}));
 chrome.tabs.onRemoved.addListener(id=>executor.tabEvent(id,'closed').catch(()=>{}));
@@ -340,6 +346,20 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
  if(!isUiSender(sender,chrome.runtime.id))return false;
  (async()=>{
  await consentLoaded;
+ // 中文注释：云端管理仅接受原有受信任扩展 UI，网页、工具参数和原生反向请求不能开完全访问。
+ if(m.type==='cloud_connect'){
+  const instanceId=(await chrome.storage.local.get('browserInstanceId')).browserInstanceId;
+  if(!instanceId)throw Error('浏览器尚未完成本地连接');
+  await cloud.connect(instanceId,/Edg/.test(navigator.userAgent)?'Edge':'Chrome');
+  return cloud.act('connect',{replace:m.replace===true});
+ }
+ if(m.type==='cloud_full_access')return cloud.act('full_access',{enabled:m.enabled});
+ if(m.type==='cloud_disconnect')return cloud.act('disconnect');
+ if(m.type==='cloud_open_web'){
+  const site=cloud.view().site,url=new URL(site);
+  if(url.protocol!=='https:'||url.origin!==site||url.username||url.password)throw Error('云端网址未确认');
+  await chrome.tabs.create({url:site});return {opened:true};
+ }
  // 中文注释：此分支位于 isUiSender 校验之后，网页和 native 请求不能切换过滤设置。
  if(m.type==='page_content_filter'){
   if(typeof m.enabled!=='boolean')throw Error('无效的过滤设置');
@@ -370,8 +390,8 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
  if(m.type==='diagnostics_export')return executor.diagnostics.exportBundle();
  // 中文注释：弹窗只读取当前浏览器的任务摘要和实际归属页，不返回输入或日志正文。
  if(m.type==='popup_status'){
-  // 中文注释：弹窗状态报告与 Native 握手相同的 1.7.1 版本。
-  const base={connected,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,observedAt:Date.now(),version:'1.7.1'};
+  // 中文注释：弹窗状态报告与 Native 握手相同的 1.8.0 版本。
+  const base={connected,browserFullConsentStatus:await consent.readStatus(),pageContentFilter:await readContentFilter(),browser:/Edg/.test(navigator.userAgent)?'Edge':'Chrome',instanceId:connectedInstanceId,cloud:cloud.view(),observedAt:Date.now(),version:'1.8.0'};
   if(!connected||!bridge)return {...base,tasks:[],page:null};
   const tasks=await bridge.request('extension.tasks');
   const active=(await chrome.tabs.query({active:true,currentWindow:true}))[0];

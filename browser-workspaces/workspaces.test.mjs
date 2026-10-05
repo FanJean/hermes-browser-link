@@ -401,3 +401,13 @@ test('人工移交保留标签组并撤销旧工作区操作权',async()=>{
  assert.equal(f.calls.filter(([method])=>method==='remove').length,0);
  await assert.rejects(()=>f.manager.open(cap,{requestId:'stale',url:'https://example.test/form'}),/CANCELLED/);
 });
+
+test('可信空任务可确认回收，缺失创建日志仍报告未知',async()=>{
+ // 中文注释：只改变有可信 start 记录的空任务状态，不操作任何个人标签页。
+ const f=fixture(),cap=f.grant();
+ assert.equal((await f.manager.status(cap)).cleanupState,'unknown');
+ await f.manager.start(cap);
+ const status=await f.manager.status(cap);assert.equal(status.cleanupState,'succeeded');assert.equal(status.cleanupReason,'verified_complete');
+ const cleanup=await f.manager.cleanup(cap,{closeTabs:true});assert.equal(cleanup.cleanupState,'succeeded');
+ assert.equal(f.calls.filter(c=>c[0]==='remove').length,0);
+});

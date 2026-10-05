@@ -29,6 +29,8 @@ jobs:
         with:
           python-version: '3.11'
       - run: npm ci --ignore-scripts
+      # 中文注释：云端站点依赖独立锁文件，只用于离线 SQLite/MCP 验收，不使用个人站点凭据。
+      - run: npm ci --ignore-scripts --prefix cloud-link/site
       - run: npm test
         # 中文注释：macOS AF_UNIX 路径最多 103 字节；runner.temp 是工作流拥有的短临时目录。
         env:

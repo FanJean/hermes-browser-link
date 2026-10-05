@@ -37,4 +37,8 @@ Offline: `npm test` / `npm run verify`. Real-browser runners live in `tests/nati
 
 页面文本与指定元素截图屏蔽的配置、入口支持及拒绝边界见 [页面内容屏蔽](../docs/content-shield.md)。扩展仅交付经过保护的图片；未知框架、视觉变更和未支持的原始入口不回退原图。
 
-浏览器弹窗右上角从当前 manifest 显示版本，只保留权限、当前任务控制和自动屏蔽。模拟鼠标固定启用，任务执行和等待下一步期间持续显示，目标间以 240ms 的 transform 动画衔接；接管、断连及任务结束时隐藏，截图完成后恢复。
+浏览器弹窗右上角从当前 manifest 显示版本，提供本地权限、独立云端连接与云端权限、当前任务控制和自动屏蔽。模拟鼠标固定启用，任务执行和等待下一步期间持续显示，目标间以 240ms 的 transform 动画衔接；接管、断连及任务结束时隐藏，截图完成后恢复。
+
+## 独立云端连接
+
+`cloud-link.mjs` 连接 `com.hermes.browser_link.cloud`，原本地 host 继续使用既有端口。云端模式按任务绑定，已有个人标签页不授权；连接码、配对与站点配置见 [云端连接](../docs/cloud-connection.md)。

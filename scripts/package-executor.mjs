@@ -58,7 +58,7 @@ async function record(dir) {
 const nativeModules = ['browser-workspaces/index.mjs', 'browser-diagnostics/js/diagnostics.mjs'];
 const diagnosticsPackage = 'browser-diagnostics/python/browser_diagnostics';
 const diagnosticsFiles = ['__init__.py', 'schema.py', 'runtime.py', 'sink.py'];
-const inputs = ['executor-plugin','native-bridge','native-extension', 'browser-workspaces', 'browser-diagnostics', ...modules,
+const inputs = ['executor-plugin','native-bridge','native-extension', 'cloud-link', 'browser-workspaces', 'browser-diagnostics', ...modules,
   'CHANGELOG.md','docs'];
 async function sourceSnapshot() {
   const entries = {};
@@ -66,7 +66,7 @@ async function sourceSnapshot() {
     const file = path.join(source,relative), stat = await lstat(file);
     if (stat.isSymbolicLink()) throw new Error(`Refusing symbolic link in package: ${file}`);
     if (stat.isDirectory()) {
-      for (const name of (await readdir(file)).sort()) if (!excluded(name)) await visit(path.join(relative,name));
+      for (const name of (await readdir(file)).sort()) if (!excluded(name)&&!(relative==='cloud-link'&&name==='site')) await visit(path.join(relative,name));
     } else if (stat.isFile()) {
       if(tracked&&!tracked.has(relative.split(path.sep).join('/')))throw new Error(`Formal release input is not tracked: ${relative}`);
       entries[relative] = createHash('sha256').update(await readFile(file)).digest('hex');
@@ -237,6 +237,8 @@ try {
   // 中文注释：独立 ESM 边界避免依赖仓库根目录的 package.json。
   await writeFile(path.join(output,'browser-link/package.json'), JSON.stringify({private:true,type:'module'})+'\n');
   await copyTree(path.join(source,'native-bridge'),path.join(output,'browser-link','native_bridge'));
+  // 中文注释：云端只打包本机运行时，网页源码、执行证据和服务器配置不进入扩展安装包。
+  await copyTree(path.join(source,'cloud-link'),path.join(output,'browser-link','cloud_link'),new Set(['site','evidence','tests']));
   const diagnosticsOutput = path.join(output, 'browser-link/native_bridge/browser_diagnostics');
   await mkdir(diagnosticsOutput, {recursive:true});
   for (const name of diagnosticsFiles) await copyFile(path.join(source, diagnosticsPackage, name), path.join(diagnosticsOutput, name));

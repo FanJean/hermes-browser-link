@@ -18,7 +18,8 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-REPOSITORY = 'FanJean/hermes-browser-link'
+# 中文注释：正式附件来自当前公开仓库，使用实际命名空间，避免旧 API 重定向及附件地址不匹配。
+REPOSITORY = 'fanjing188/hermes-browser-link'
 API = f'https://api.github.com/repos/{REPOSITORY}/releases/latest'
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_EXPANDED = 256 * 1024 * 1024

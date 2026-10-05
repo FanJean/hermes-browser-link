@@ -11,6 +11,11 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   const refs=new WeakMap(); let sequence=0n,generation=0n,currentId;
   let active=new Map(), baseline=null, cursorState=null, epoch=0, revoked=false, frameDocuments=new Map();
   const savedSnapshots=new Map();
+  // 中文注释：无障碍补充只保存在真实节点上，任何 DOM epoch 变化都会使其失效。
+  const accessibilityNames=new WeakMap();
+  // 中文注释：样式和上下文缓存只活在一次同步解析内，下一次读或动作必定重新计算。
+  let styles=new WeakMap(),contextNames=new WeakMap();
+  const computed=node=>{if(!styles.has(node))styles.set(node,node.ownerDocument.defaultView.getComputedStyle(node));return styles.get(node);};
   const documentRoot=doc.documentElement;
   const isOverlay=node=>{
     for(let n=node;n;n=n.parentNode || n.host){if(n.nodeType===1 && n.hasAttribute?.('data-hermes-automation-overlay'))return true;}
@@ -26,6 +31,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   const observer=new doc.defaultView.MutationObserver(changed);
   observer.observe(doc,{subtree:true,childList:true,attributes:true,characterData:true});
   function sync(){
+    styles=new WeakMap();contextNames=new WeakMap();
     changed(observer.takeRecords());
     if(revoked)throw new Error('LEASE_REVOKED');if(Date.now()>=expiresAt)throw new Error('LEASE_EXPIRED');if(doc.documentElement!==documentRoot)throw new Error('DOCUMENT_REPLACED');
     for(const [frame,state] of frameDocuments){
@@ -124,27 +130,50 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     return redact(raw.slice(0,limit).replace(/\S+$/u,''));
   }
   function clip(value){const safe=redact(value);if(safe.length>maxText)truncated=true;const end=maxText<safe.length && /[\uD800-\uDBFF]/.test(safe[maxText-1])?maxText-1:maxText;return safe.slice(0,end);}
-  function readText(node, full=false, limit=maxFullText){
-    let out='';const walker=node.ownerDocument.createTreeWalker(node,4);let n,seen=0;
-    while((n=walker.nextNode())){
-      if(seen++>=maxScan){truncated=true;break;}
-      const p=n.parentElement;if(!p || isOverlay(p) || !visible(p,false) || p.closest('script,style,noscript,input,textarea,select,[hidden],[aria-hidden="true"],[data-private]'))continue;
-      if(full){
-        const shared=typeof limit==='object';
-        const available=Math.max(0,shared?limit.remaining:limit-out.length);
-        if(n.length>available){out+=n.substringData(0,available);if(shared)limit.remaining=0;truncated=true;return redact(out.replace(/\S+$/u,''));}
-        out+=n.substringData(0,available);
-        if(shared)limit.remaining-=n.length;
-        if(shared?limit.remaining>0:out.length<limit){out+=' ';if(shared)limit.remaining--;}
-      } else {const raw=n.substringData(0,maxText*8+1);if(n.length>maxText*8)truncated=true;out+=`${raw.slice(0,maxText*8)} `;if(out.length>maxText*8){truncated=true;break;}}
+  // 中文注释：slot 按分配节点读取；原有 inline 文本连续拼接，跨块才加分隔，整体脱敏后截断。
+  function* textNodes(root){
+    const stack=[root],seen=new Set();let scanned=0;
+    while(stack.length){
+      const node=stack.pop();if(seen.has(node))continue;seen.add(node);
+      if(++scanned>maxScan){truncated=true;break;}
+      if(node.nodeType===3){yield node;continue;}
+      if(node.nodeType===1&&node.matches('script,style,noscript,input,textarea,select,[hidden],[aria-hidden="true"],[inert],[data-private]'))continue;
+      const assigned=node.localName==='slot'?node.assignedNodes({flatten:true}):[];
+      const children=assigned.length?assigned:node.childNodes;
+      for(let i=children.length-1;i>=0;i--)stack.push(children[i]);
     }
+  }
+  function readText(node, full=false, limit=maxFullText){
+    let out='',previousBlock=null,consumed=0;
+    const shared=typeof limit==='object',cap=full?(shared?limit.remaining:limit):maxText*8;
+    for(const n of textNodes(node)){
+      const p=n.parentElement;if(!p||isOverlay(p)||!visible(p,false))continue;
+      let block=p;
+      while(block.parentElement&&!/^(block|flex|grid|table|list-item|flow-root)/.test(computed(block).display))block=block.parentElement;
+      const separator=out&&previousBlock!==block?' ':'';previousBlock=block;
+      const available=Math.max(0,cap-out.length-separator.length);
+      out+=separator+n.substringData(0,available);
+      consumed+=separator.length+Math.min(n.length,available);
+      if(n.length>available){truncated=true;out=out.replace(/\S+$/u,'');break;}
+    }
+    if(shared)limit.remaining=Math.max(0,limit.remaining-consumed);
     return full?redact(out):clip(out);
+  }
+  // 中文注释：option 无布局矩形，检查它及 optgroup 的样式和隐私标记，避免读取隐藏组选项。
+  function optionVisible(node){
+    for(let n=node;n;n=n.parentElement){
+      if(n.matches('[hidden],[aria-hidden="true"],[inert],[data-private]'))return false;
+      const style=n.ownerDocument.defaultView.getComputedStyle(n);
+      if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;
+      if(n.localName==='select')break;
+    }
+    return true;
   }
   function text(node){return readText(node);}
   // 中文注释：只暴露控件状态，不返回输入值；同一逻辑用于正文和交互快照。
   function controlState(node,value){
     if(node.disabled || node.matches(':disabled') || node.getAttribute('aria-disabled')==='true')value.disabled=true;
-    if('checked' in node && ['checkbox','radio','switch'].includes(value.role))value.checked=node.checked;
+    if('checked' in node && ['checkbox','radio','switch'].includes(value.role))value.checked=node.indeterminate?'mixed':node.checked;
     else if(['checkbox','radio','switch'].includes(value.role)){
       const checked=node.getAttribute('aria-checked');
       if(['true','false','mixed'].includes(checked))value.checked=checked==='mixed'?'mixed':checked==='true';
@@ -178,9 +207,10 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     if(!name && node.labels?.length){name='';for(const el of node.labels){if(!quota.remaining || name.length>=remaining){truncated=true;break;}name+=`${readText(el,true,quota)} `;}name=bounded(name,remaining);}
     value.name=name||readText(node,true,quota);
     remaining=Math.max(0,remaining-value.name.length);
-    if(value.role==='row')value.cells=Array.from(node.children).filter(n=>n.matches('th,td,[role="cell"],[role="gridcell"],[role="columnheader"],[role="rowheader"]')||node.getAttribute('data-ui-name')==='Body.Row').slice(0,40).map(n=>{const s=bounded(readText(n,true,quota),remaining);remaining=Math.max(0,remaining-s.length);return s;});
+    const cells=value.role==='row'?rowCells(node):[];
+    if(value.role==='row')value.cells=cells.slice(0,40).map(n=>{const s=bounded(readText(n,true,quota),remaining);remaining=Math.max(0,remaining-s.length);return s;});
     controlState(node,value);
-    if(value.role==='row' && node.children.length>40){value.omittedCells=node.children.length-40;truncated=true;}
+    if(value.role==='row' && cells.length>40){value.omittedCells=cells.length-40;truncated=true;}
     if(truncated)value.truncated=true;
     return value;
   }
@@ -223,16 +253,32 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     if(tag==='select' && (node.multiple || node.size>1))return 'listbox';
     return ({button:'button',a:'link',select:'combobox',textarea:'textbox',summary:'button',tr:'row',li:'listitem'})[tag] || (node.getAttribute('data-ui-name')==='Body.Row'?'row':inferredClick(node)?'button':/^h[1-6]$/.test(tag)?'heading':node.isContentEditable||node.getAttribute('contenteditable')==='true'?'textbox':'text');
   }
+  // 中文注释：组件库常在行与单元格之间加入包装层；按最近行归属读取，排除嵌套表格。
+  function rowCells(row){
+    if(row.getAttribute('data-ui-name')==='Body.Row')return Array.from(row.children);
+    const cells=[],walker=row.ownerDocument.createTreeWalker(row,1,{acceptNode:node=>
+      node.matches('tr,[role="row"],table,[role="table"],[role="grid"],[role="treegrid"]')?2:1});
+    let node,scanned=0;
+    while((node=walker.nextNode())&&scanned++<maxScan){
+      if(node.matches('th,td,[role="cell"],[role="gridcell"],[role="columnheader"],[role="rowheader"]')&&visible(node,false))cells.push(node);
+    }
+    return cells;
+  }
   function visible(node,viewport){
     if(isOverlay(node))return false;
+    // 中文注释：插槽隐私和隐藏状态同样约束被分配的 light DOM 节点，包括宿主提供的封闭根。
+    const shadow=node.parentElement&&shadowRootOf(node.parentElement);
+    const assigned=node.assignedSlot||(shadow&&Array.from(shadow.querySelectorAll('slot')).find(slot=>slot.assignedNodes().includes(node)));
+    if(assigned&&!visible(assigned,false))return false;
     let ancestor=node;
     while(ancestor){
       for(let element=ancestor;element;element=element.parentElement){
         if(element.matches('[hidden],[aria-hidden="true"],[inert],[data-private]'))return false;
-        const style=element.ownerDocument.defaultView.getComputedStyle(element);
+        const style=computed(element);
         if(style.display==='none'||(element===ancestor && (style.visibility==='hidden'||style.visibility==='collapse')))return false;
       }
-      if(!ancestor.getClientRects().length)return false;
+      // 中文注释：display:contents 没有自身矩形，但其正文和子控件仍参与布局。
+      if(!ancestor.getClientRects().length&&computed(ancestor).display!=='contents')return false;
       const root=ancestor.getRootNode();
       ancestor=root.host || (ancestor.ownerDocument!==doc ? ancestor.ownerDocument.defaultView?.frameElement : null);
     }
@@ -251,6 +297,8 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       const node=stack.pop();if(isOverlay(node))continue;yield node;
       for(let i=node.children.length-1;i>=0;i--)stack.push(node.children[i]);
       if(node.localName==='iframe' || node.localName==='frame'){
+        // 中文注释：隐藏/私密框架不在语义范围内，不能因不可读取而误报可见页面缺口。
+        if(!visible(node,false))continue;
         let child;try{child=node.contentDocument;}catch{child=null;}
         if(child?.body && child.documentElement){
           frameDocuments.set(node,{document:child,root:child.documentElement});
@@ -266,7 +314,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       }
     }
   }
-  function item(node){truncated=false;const r=role(node);let name=node.getAttribute('aria-label');
+  function item(node,scope=doc.body){truncated=false;const r=role(node);let name=node.getAttribute('aria-label');
     if(!name && node.getAttribute('aria-labelledby'))name=node.getAttribute('aria-labelledby').split(/\s+/).map(id=>{const el=node.getRootNode().getElementById?.(id);return el?text(el):'';}).join(' ');
     if(!name && node.labels?.length)name=Array.from(node.labels).map(text).join(' ');
     // 中文注释：无标签输入框可按占位提示定位，明确来源且仍经过脱敏/预算检查。
@@ -275,9 +323,34 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       if(node.type==='image')name=node.getAttribute('alt')||'';
       else if(['submit','reset','button'].includes(node.type))name=node.getAttribute('value')||({submit:'Submit',reset:'Reset'}[node.type]||'');
     }
-    const content=name||text(node);
+    let content=name||text(node),nameSource=null;
+    // 中文注释：图标按钮的名称可来自图片 alt、SVG title 或 tooltip，仍使用既有脱敏和截断。
+    if(!content){
+      const icons=node.querySelectorAll('img[alt],svg title');
+      content=Array.from(icons).slice(0,100).filter(icon=>visible(icon.localName==='title'?icon.parentElement:icon,false)&&!icon.closest('[hidden],[aria-hidden="true"],[data-private]')).map(icon=>icon.localName==='img'?clip(icon.getAttribute('alt')||''):bounded(icon.textContent||'',1024)).join(' ');
+      if(content)nameSource='descendant';
+    }
+    if(!content&&node.getAttribute('title')){content=node.getAttribute('title');nameSource='title';}
     const placeholder=!content && node.matches('input,textarea')?node.getAttribute('placeholder'):null;
     const result={ref:ref(node),role:r,name:clip(content||placeholder||'')};
+    const ax=accessibilityNames.get(node);
+    if(ax?.epoch===epoch){const currentState={role:r};controlState(node,currentState);if(ax.signature===JSON.stringify(currentState)){result.name=clip(ax.name);result.nameSource='accessibility';if(ax.role)result.role=ax.role;Object.assign(result,ax.states);}}
+    // 中文注释：上下文只保留有语义的区域和记录，不给容器创建可操作引用。
+    const context=[];
+    for(let parent=node===scope?null:node.assignedSlot||node.parentElement||node.getRootNode().host;parent&&context.length<6;parent=parent.parentElement||parent.getRootNode().host){
+      if(!parent.matches('main,nav,section,article,li,fieldset,dialog,[role="region"],[role="dialog"],[role="row"],[role="listitem"],[role="group"],[role="listbox"],[role="tablist"],[role="menu"]')){if(parent===scope)break;continue;}
+      if(!contextNames.has(parent)){
+        // 中文注释：区域只采用自己的直接标题，避免拿内部另一条记录的标题命名整个区域。
+        const heading=Array.from(parent.children).find(child=>child.matches('legend,h1,h2,h3,h4,h5,h6'));
+        const label=parent.getAttribute('aria-label')|| (heading&&visible(heading,false)?text(heading):parent.matches('li,article,[role="row"],[role="listitem"]')?text(parent):'');
+        const rowIndex=Number(parent.getAttribute('aria-rowindex')||parent.getAttribute('aria-posinset'));
+        contextNames.set(parent,{ref:ref(parent),role:parent.getAttribute('role')||parent.localName,name:clip(label).slice(0,120),...(Number.isSafeInteger(rowIndex)&&rowIndex>0?{index:rowIndex}:{})});
+      }
+      const entry=contextNames.get(parent);
+      if(entry.name||parent.localName!=='section'||parent===scope)context.unshift(entry);
+      if(parent===scope)break;
+    }
+    if(context.length){result.context=context;result.parentRef=context.at(-1).ref;}
     // 中文注释：组合树目标记录 frame 与开放 Shadow 的交错路径，子文档身份随重建而变化。
     const path=[];let current=node;
     while(current){
@@ -293,18 +366,20 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     }
     if(path.length)result.targetPath=path;
     if(placeholder)result.nameSource='placeholder';
-    if(r==='row')result.cells=Array.from(node.children).filter(n=>n.matches('th,td,[role="cell"],[role="gridcell"],[role="columnheader"],[role="rowheader"]')||node.getAttribute('data-ui-name')==='Body.Row').slice(0,40).map(text);
+    else if(nameSource&&result.nameSource!=='accessibility')result.nameSource=nameSource;
+    const cells=r==='row'?rowCells(node):[];
+    if(r==='row')result.cells=cells.slice(0,40).map(text);
     if(inferredClick(node)&&!node.hasAttribute('role'))result.inferred=true;
     controlState(node,result);
-    if(r==='row' && node.children.length>40){result.omittedCells=node.children.length-40;truncated=true;}
+    if(r==='row' && cells.length>40){result.omittedCells=cells.length-40;truncated=true;}
     if(truncated)result.truncated=true;
     return result;
   }
   // 中文注释：引用只使用非敏感的结构和标签重定位；同名目标不作猜测。
   function stableKey(node,value){
-    const attrs=['id','name','type','data-testid','data-ui-name'].map(key=>node.getAttribute(key)||'');
+    const attrs=['id','name','type','data-testid','data-ui-name','aria-rowindex','aria-colindex','aria-posinset'].map(key=>node.getAttribute(key)||'');
     const ancestors=[];let parent=node.parentElement||node.getRootNode().host;
-    while(parent&&ancestors.length<4){ancestors.push([parent.localName,parent.getAttribute('role')||'',parent.id||'']);parent=parent.parentElement||parent.getRootNode().host;}
+    while(parent&&ancestors.length<4){ancestors.push([parent.localName,parent.getAttribute('role')||'',parent.id||'',parent.getAttribute('aria-rowindex')||parent.getAttribute('aria-posinset')||'']);parent=parent.parentElement||parent.getRootNode().host;}
     return JSON.stringify([node.localName,value.role,value.name,attrs,ancestors]);
   }
   // 中文注释：保存真实文档、Shadow 树及边界节点身份，路径名称相同不能替代原作用域。
@@ -322,8 +397,36 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   }
   let lastRelocated=false;
   function relocation(){return lastRelocated;}
+  // 中文注释：隐藏、私密子内容和外部标签不能通过浏览器计算名称重新进入输出。
+  function accessibilityNode(token){
+    const node=resolve(token);
+    // 中文注释：AX 响应可能附带 value，带值控件不进入 AX 查询，继续使用已有 DOM 名称和状态。
+    if(node.matches('input,textarea,select,[contenteditable],[role="textbox"],[role="combobox"],[role="listbox"],[role="slider"],[role="spinbutton"]'))return null;
+    if(node.querySelector('[data-private],[hidden],[aria-hidden="true"],input,textarea,select'))return null;
+    // 中文注释：AX 计算名称会展开 slot，分配节点的隐私检查不能只靠 Shadow 内的 querySelector。
+    for(const slot of node.querySelectorAll('slot'))for(const assigned of slot.assignedNodes({flatten:true})){
+      const element=assigned.nodeType===1?assigned:assigned.parentElement;
+      if(!element||!visible(element,false)||element.matches('input,textarea,select,[contenteditable]')||element.querySelector('[data-private],[hidden],[aria-hidden="true"],input,textarea,select'))return null;
+    }
+    for(const id of (node.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean)){
+      const label=node.getRootNode().getElementById?.(id);
+      if(!label||!visible(label,false)||label.querySelector('[data-private],[hidden],[aria-hidden="true"]'))return null;
+    }
+    return node;
+  }
+  function applyAccessibility(token,values){
+    sync();if(!Array.isArray(values)||values.length>16)throw Error('INVALID_OPTIONS');
+    for(const value of values){
+      if(typeof value.name!=='string'||value.name.length>2000)throw Error('INVALID_OPTIONS');
+      if(value.role&&!['button','link','tab','treeitem','menuitem','menuitemcheckbox','menuitemradio','checkbox','radio','switch'].includes(value.role))throw Error('INVALID_OPTIONS');
+      if(value.states&&Object.entries(value.states).some(([key,state])=>!['expanded','selected','checked','disabled','readonly','required','busy'].includes(key)||typeof state!=='boolean'&&!(key==='checked'&&state==='mixed')))throw Error('INVALID_OPTIONS');
+      const node=accessibilityNode({...token,ref:value.ref});
+      if(node){const signature={role:role(node)};controlState(node,signature);accessibilityNames.set(node,{name:redact(value.name),role:value.role,states:value.states||{},signature:JSON.stringify(signature),epoch});}
+    }
+  }
   function snapshot(options={}){
     sync();
+    if('accessibility' in options&&typeof options.accessibility!=='boolean')throw Error('INVALID_OPTIONS');
     const {mode='interactive',root=null,query='',roles=[],viewport=false,budget=3000,cursor=null,baselineId=null,composed=false}=options;
     if(!selectors[mode] || typeof query!=='string' || query.length>2000 || !Array.isArray(roles) || roles.length>100 || roles.some(r=>typeof r!=='string'||r.length>100) || typeof viewport!=='boolean' || typeof composed!=='boolean' || !Number.isSafeInteger(budget) || budget<512)throw new Error('INVALID_OPTIONS');
     const scope=typeof root==='string'?doc.querySelector(root):root||doc.body;
@@ -355,7 +458,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       if(!node.matches(selectors[mode]))continue;
       if(mode==='interactive' && !node.matches('button,a[href],input,select,textarea,summary,[contenteditable="true"],[tabindex]') && !['button','link','textbox','checkbox','radio','combobox','listbox','option','menuitem','menuitemcheckbox','menuitemradio','switch','slider','spinbutton','tab','treeitem'].includes(role(node)))continue;
       if(!visible(node,viewport) || (mode==='interactive' && node.matches('input[type="hidden"]'))){output.coverage.filtered++;continue;}
-      const value=mode==='interactive'?item(node):fullItem(node,mode);
+      const value=mode==='interactive'?item(node,scope):fullItem(node,mode);
       if((roles.length && !roles.includes(value.role)) || (query && !value.name.toLocaleLowerCase().includes(redact(query).toLocaleLowerCase()))){output.coverage.filtered++;continue;}
       if(seenKeys?.has(stableKey(node,value)))continue;
       output.coverage.matched++;if(value.truncated)output.coverage.truncated++;
@@ -397,7 +500,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       active.set(c.value.ref,c.node);
       records.set(c.value.ref,{node:c.node,value:c.value,key:stableKey(c.node,c.value),scope:targetScope(c.node)});
     }
-    savedSnapshots.set(currentId,{records,mode,epoch});
+    savedSnapshots.set(currentId,{records,mode,epoch,root:scope});
     while(savedSnapshots.size>5)savedSnapshots.delete(savedSnapshots.keys().next().value);
     if(output.nextCursor){const last=candidates[materialized.length-1];cursorState={id:output.nextCursor,fingerprint,epoch,offset:last.nextOffset,fragmentOffset:last.nextFragment,
       seenMode:!!seenKeys,seen:[...(seenKeys||[]),...candidates.slice(0,materialized.length).map(c=>stableKey(c.node,c.value))].slice(-1000)};}
@@ -418,7 +521,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     if(node.isConnected && saved?.fragment){
       const value=fullItem(node),part=fragments(value)?.[saved.fragment.part];
       current=part?fragmentItem(value,part,saved.fragment.part):null;
-    } else if(node.isConnected)current=savedSnapshot.mode==='interactive'?item(node):fullItem(node);
+    } else if(node.isConnected)current=savedSnapshot.mode==='interactive'?item(node,savedSnapshot.root):fullItem(node);
     if(node.isConnected&&visible(node,false)&&JSON.stringify(current)===JSON.stringify(saved))return node;
     // 中文注释：只遍历原作用域的普通子树，不进入其他 frame 或 Shadow 树。
     const matches=[],scope=root.host?root:owner.body;
@@ -426,20 +529,20 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     for(let candidate=scope;candidate;candidate=walker.nextNode()){
       if(matches.length>5)break;
       if(!candidate.matches?.(selectors[savedSnapshot.mode])||!visible(candidate,false))continue;
-      const description=savedSnapshot.mode==='interactive'?item(candidate):fullItem(candidate);
+      const description=savedSnapshot.mode==='interactive'?item(candidate,savedSnapshot.root):fullItem(candidate);
       if(stableKey(candidate,description)===record.key)matches.push(candidate);
     }
     if(matches.length!==1){
       const code=matches.length?'REF_TARGET_AMBIGUOUS':'REF_TARGET_MISSING';
       // 中文注释：错误仅含经过快照脱敏的角色和名称，不含属性值或输入框当前值。
-      const candidates=matches.slice(0,5).map(candidate=>{const description=savedSnapshot.mode==='interactive'?item(candidate):fullItem(candidate);return {role:description.role,name:description.name.slice(0,80)};});
+      const candidates=matches.slice(0,5).map(candidate=>{const description=savedSnapshot.mode==='interactive'?item(candidate,savedSnapshot.root):fullItem(candidate);return {role:description.role,name:description.name.slice(0,80)};});
       throw new Error(`${code}|${encodeURIComponent(JSON.stringify(candidates))}`);
     }
     node=matches[0];record.node=node;record.relocated=true;lastRelocated=true;
     return node;
   }
   // 中文注释：解析器仅复用受限读取，不向模型暴露节点或可执行引用。
-  const parsingContext=()=>({doc,binding,visible,describe:item,
+  const parsingContext=()=>({doc,binding,visible,describe:item,cells:rowCells,optionVisible,
     revision:()=>{sync();return epoch;},
     read:node=>{truncated=false;const value=readText(node,true,4096);return {text:value.trim(),truncated};},
     option:node=>{truncated=false;return {text:bounded(node.label||node.textContent||'',1024),truncated};},
@@ -447,5 +550,5 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     source:node=>({sourceRef:ref(node),documentId:identityFor(node.ownerDocument),targetPath:item(node).targetPath||[]}),
     scan:function*(scope,composed,coverage){if(composed)yield* composedElements(scope,coverage);else{const walker=doc.createTreeWalker(scope,1);yield scope;let n;while((n=walker.nextNode()))yield n;}}
   });
-  return {snapshot,resolve,relocation,revoke,stats,parsingContext};
+  return {snapshot,resolve,relocation,revoke,stats,parsingContext,accessibilityNode,applyAccessibility};
 }

@@ -25,6 +25,8 @@ const sourceCopies = [
   'manifest.json',
   // 中文注释：四种尺寸图标必须逐字复制，发布包不能遗漏资源。
   'icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png',
+  // 中文注释：独立云端连接和弹窗必须进入显式产物清单并逐字核验。
+  'cloud-link.mjs', 'cloud-popup.mjs',
   'bridge.mjs',
   'request-ledger.mjs',
   'background.mjs',
@@ -319,14 +321,14 @@ test('native build refuses to replace its source directory without changing it',
   }
 });
 
-test('1.7.1 发布入口报告同一个版本', async () => {
+test('1.8.0 发布入口报告同一个版本', async () => {
   // 中文注释：以包版本为发布基准，插件、桌面 API、扩展和 Native 握手必须一致。
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const plugin = await readFile(path.join(root, 'executor-plugin/plugin.yaml'), 'utf8');
   const version = /^version:\s*([^\s]+)$/m.exec(plugin)?.[1];
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(pkg.version, '1.7.1');
+  assert.equal(pkg.version, '1.8.0');
   assert.equal(version, pkg.version);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);

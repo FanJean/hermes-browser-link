@@ -124,6 +124,8 @@ Limits are clamped to maxScan 100000, maxItems 1000 and maxText 2000. This is no
 
 Interactive snapshots fall back to a redacted placeholder when a control has no label or text, and mark `nameSource`. They report disabled fieldsets, ARIA checked/mixed, expanded, selected, busy, readonly and required states without reading input values. These states help locate targets; they do not replace the executor's final actionability checks.
 
+Icon controls can use visible image `alt`, SVG `title`, or a control's `title` after explicit labels and text, marked as `nameSource: 'descendant'` or `'title'`. Hidden/private icons remain excluded. `display:contents` containers do not suppress visible text or shadow descendants. Table rows accept cell wrappers, while nested rows/tables keep separate cell ownership. The parser shares those cell rules, supports ARIA treegrids, and follows `aria-controls`/`aria-owns` to associate portal options within the selected parse root; an external option list produces `options_outside_scope` instead of widening the root.
+
 ## Tests
 
 ```sh
@@ -132,3 +134,10 @@ node page-semantics/test.mjs   # real headless Chrome with a temporary profile; 
 ```
 
 The real-browser runner loads the unmodified module in a fresh temporary profile, runs synthetic fixtures and removes the profile on exit. Size savings it reports compare noisy synthetic HTML with a budgeted semantic response; they are not token measurements.
+
+
+## Structured interaction context
+
+Interactive items include bounded `context` entries for meaningful region/record/group ancestors inside the selected root, plus `parentRef`. Context refs describe containers, not actions. The host's compact text renderer derives its tree and states from these same items. Context uses direct headings and sanitized labels; same-name controls retain independent action refs. Slotted labels use assigned nodes, and slot hiding/privacy also applies to projected light DOM. Inline text is assembled before redaction and fragmentation; native option names check private/hidden optgroup ancestors without reading option values. Virtual row/list position attributes participate in relocation identity, so reusing a DOM button for another declared row invalidates its prior reference.
+
+The host may explicitly supplement up to 16 scoped interactive DOM refs with browser AX names, allowlisted roles and states. The pure module does not call CDP. `accessibilityNode` and `applyAccessibility` are trusted-host helpers and must not be exposed to page scripts. Hidden/private label sources and value-bearing controls are excluded; adopted strings are redacted. Supplements expire on DOM epoch or control-state changes. Existing final DOM reference, scope and actionability checks remain necessary.

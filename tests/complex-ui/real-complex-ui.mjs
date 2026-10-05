@@ -39,6 +39,15 @@ try{
  await run('ref_fill',{...await ref('受控输入',['textbox']),text:'受控内容'});
  await run('ref_fill',{...await ref('正文',['textbox']),text:'富文本内容'});
  const table=await run('semantic_snapshot',{options:{mode:'table',budget:5000}});assert.ok(table.items.some(item=>item.cells?.includes('示例')));
+ // 中文注释：实际 Hermes 插件与 daemon 转发 accessibility 参数，AX 名称仍绑定同一个 DOM 控件。
+ await tab.read(`document.body.insertAdjacentHTML('beforeend','<section id="native-ax"><button id="native-ax-button"></button></section><style>#native-ax-button::before{content:"完整链路按钮"}</style>')`);
+ const ax=await run('semantic_snapshot',{options:{root:'#native-ax',accessibility:true,query:'完整链路按钮',budget:5000}});
+ assert.equal(ax.items.length,1);assert.equal(ax.items[0].nameSource,'accessibility');assert.equal(ax.coverage.axEnriched,1);
+ await tab.read(`document.querySelector('#native-ax-button').onclick=e=>e.currentTarget.setAttribute('data-clicked','true')`);
+ // 中文注释：查询后的真实页面修改需要重新获取快照，不能沿用失效的 AX 名称引用。
+ const freshAx=await run('semantic_snapshot',{options:{root:'#native-ax',accessibility:true,query:'完整链路按钮',budget:5000}});
+ await run('ref_click',{binding:freshAx.binding,snapshot_id:freshAx.snapshotId,ref:freshAx.items[0].ref});
+ assert.equal(await tab.read(`document.querySelector('#native-ax-button').getAttribute('data-clicked')`),'true');
  await run('ref_click',await ref('更多信息',['button']));
  const canvas=await run('semantic_snapshot',{options:{mode:'interactive',budget:5000}});assert.equal(canvas.coverage.unsupportedCanvas,1);
  const save=await ref('保存',['button']);

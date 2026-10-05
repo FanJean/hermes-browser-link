@@ -816,3 +816,23 @@ class MultiTabTests(unittest.TestCase):
         self.assertNotIn('[@e2]', result['snapshot'])
         self.assertNotIn('@e2', adapter._bindings['session-a'].refs)
         self.assertIn('[@e1]', result['snapshot'])
+
+# 中文注释：树形展示增加上下文与状态，但每个动作别名仍绑定到原 native ref。
+class TreeSnapshotTests(unittest.TestCase):
+    def test_tree_context_states_and_alias_binding(self):
+        runtime = FakeRuntime()
+        adapter = SingleToolAdapter(runtime)
+        adapter.bind('session-a', 'task-native')
+        runtime.snapshot['items'] = [
+            {'ref': 'ref-a', 'role': 'button', 'name': '更多', 'expanded': False,
+             'context': [{'ref': 'region', 'role': 'main', 'name': '版本'}, {'ref': 'record-a', 'role': 'article', 'name': '版本 A'}]},
+            {'ref': 'ref-b', 'role': 'button', 'name': '更多', 'expanded': True,
+             'context': [{'ref': 'region', 'role': 'main', 'name': '版本'}, {'ref': 'record-b', 'role': 'article', 'name': '版本 B'}]},
+        ]
+        result = json.loads(adapter.dispatch('browser_snapshot', {}, session_id='session-a', tool_call_id='tree'))
+        self.assertIn('版本 A', result['snapshot'])
+        self.assertIn('版本 B', result['snapshot'])
+        self.assertIn('未展开', result['snapshot'])
+        self.assertIn('（展开）', result['snapshot'])
+        self.assertEqual(result['snapshot'].count('[main] 版本'), 1)
+        self.assertEqual(result['element_count'], 2)

@@ -312,7 +312,9 @@ export function createWorkspaces({chrome, authority}) {
   async function status(cap) {
     const {key}=identity(cap,true);await ready;
     const t=tasks.get(key),remainingTabIds=[],preservedTabIds=[],unknownTabIds=[];
-    if(!t || !t.requests.size)return {cleanupState:'unknown',remainingTabIds,preservedTabIds,unknownTabIds,remainingCount:0,preservedCount:0,unknownCount:0,cleanupReason:'no_journal'};
+    if(!t)return {cleanupState:'unknown',remainingTabIds,preservedTabIds,unknownTabIds,remainingCount:0,preservedCount:0,unknownCount:0,cleanupReason:'no_journal'};
+    // 中文注释：可信 start 日志存在但未派发任何创建请求，证明没有工作页需要回收；缺失日志仍为未知。
+    if(!t.requests.size)return {cleanupState:'succeeded',remainingTabIds,preservedTabIds,unknownTabIds,remainingCount:0,preservedCount:0,unknownCount:0,cleanupReason:'verified_complete'};
     let unknownCount=0,failedCount=0;
     for(const r of t.requests.values()) {
       if(r.status==='pending'||r.status==='unknown'){unknownCount++;if(Number.isInteger(r.tabId))unknownTabIds.push(r.tabId);continue;}

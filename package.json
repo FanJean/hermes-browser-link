@@ -1,17 +1,17 @@
 {
   "name": "hermes-browser-link",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "private": true,
   "description": "让 Hermes 在已登录的 Chrome/Edge 中完成网页任务，支持智能审批、Python 工作流、自动文本与截图屏蔽、持续任务鼠标和 Cookie 镜像。",
   "type": "module",
   "author": "FanJean",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FanJean/hermes-browser-link.git"
+    "url": "git+https://github.com/fanjing188/hermes-browser-link.git"
   },
-  "homepage": "https://github.com/FanJean/hermes-browser-link#readme",
+  "homepage": "https://github.com/fanjing188/hermes-browser-link#readme",
   "bugs": {
-    "url": "https://github.com/FanJean/hermes-browser-link/issues"
+    "url": "https://github.com/fanjing188/hermes-browser-link/issues"
   },
   "keywords": [
     "hermes",

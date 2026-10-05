@@ -149,8 +149,8 @@ def verify_extension_tree(path, manifest):
     verify_extension(path)
 
 
-def registrations(user_home):
-    return [user_home / 'Library/Application Support' / browser / 'NativeMessagingHosts' / f'{HOST}.json'
+def registrations(user_home, host=HOST):
+    return [user_home / 'Library/Application Support' / browser / 'NativeMessagingHosts' / f'{host}.json'
             for browser in ('Google/Chrome', 'Microsoft Edge')]
 
 
@@ -168,6 +168,8 @@ def managed_paths(home, user_home, profiles):
                                    '核对 .hermes-package.json 后重试。')
         programs.append(desktop)
     files = [data / HOST, data / 'host-config.json', data / 'install-state.json', *registrations(user_home)]
+    # 中文注释：云端程序注册随升级备份、回滚和卸载；配对与日志目录仍是本地私有数据。
+    files += [home / 'plugin-data/browser-link-cloud' / (HOST + '.cloud'), *registrations(user_home, HOST + '.cloud')]
     return programs, files
 
 
@@ -426,7 +428,7 @@ def _run(args):
     if args.uninstall:
         deletions = [*programs, *files]
         if args.purge:
-            deletions = [*programs, *registrations(user_home), data]
+            deletions = [*programs, *registrations(user_home), *registrations(user_home,HOST+'.cloud'), data, home/'plugin-data/browser-link-cloud']
         print('将停用 / Disable profiles: ' + ', '.join(profiles))
         print('删除插件、扩展和浏览器连接程序 / Delete plugin, extension and browser connection programs.')
         if args.verbose:

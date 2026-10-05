@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import stat
 import sys
@@ -248,8 +249,11 @@ def _install_verified(package,user_home,hermes_home,origins,manifest,*,apply):
     data=hermes_home/'plugin-data/browser-link-native'
     launcher=data/HOST
     manifests=[user_home/'Library/Application Support'/browser/'NativeMessagingHosts'/f'{HOST}.json' for browser in ['Google/Chrome','Microsoft Edge']]
+    # 中文注释：新云端注册纳入同一安装事务，不覆盖原本地注册，也不重启原服务。
+    cloud_registration=runpy.run_path(str(source/'cloud_link/registration.py'))['registration']
+    cloud_launcher,cloud_text,cloud_manifests=cloud_registration(target/'cloud_link',user_home,hermes_home,origins,sys.executable)
     config=data/'host-config.json'
-    targets=[target,launcher,config,*manifests]
+    targets=[target,launcher,config,*manifests,cloud_launcher,*[p for p,_ in cloud_manifests]]
     reject_target_symlinks(targets)
     for p in targets:
         if p.exists() or p.is_symlink(): raise FileExistsError('拒绝覆盖已有安装: '+str(p))
@@ -286,6 +290,16 @@ def _install_verified(package,user_home,hermes_home,origins,manifest,*,apply):
             with os.fdopen(fd,'w') as f:json.dump(value,f,ensure_ascii=False,indent=2)
         for p in manifests:
             assert json.loads(p.read_text())==native_manifest
+        make_directories(cloud_launcher.parent,created_dirs,mode=0o700)
+        with cloud_launcher.open('x',encoding='utf8') as f:
+            created.append(cloud_launcher)
+            f.write(cloud_text)
+        os.chmod(cloud_launcher,0o700)
+        for p,value in cloud_manifests:
+            make_directories(p.parent,created_dirs)
+            fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            created.append(p)
+            with os.fdopen(fd,'w') as f:json.dump(value,f,ensure_ascii=False,indent=2)
         result['status']='installed_disabled'
         return result
     except BaseException:

@@ -78,6 +78,8 @@ def _semantic_options():
         'roles': {'type': 'array', 'minItems': 0, 'maxItems': 100, 'items': _text(100)},
         'viewport': {'type': 'boolean'},
         'composed': {'type': 'boolean'},
+        # 中文注释：显式 root 内最多补充 16 个复杂控件；不接受游标或增量基线。
+        'accessibility': {'type': 'boolean'},
         'budget': {'type': 'integer', 'minimum': 512},
         'cursor': _text(512),
         'baselineId': _text(512),
@@ -593,6 +595,9 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 'select_option_ambiguous': '有多个选项同名；请改用唯一的 value。未派发。',
                 'select_option_disabled': '指定的选项已禁用；未派发。',
                 'target_occluded': '目标被其他元素遮挡，未点击；等遮挡消失或先处理遮挡层后重新读取。',
+                # 中文注释：只返回固定复核错误，不把 CSS 或页面异常内容带入模型输出。
+                'target_hit_unverified': '无法确认点击命中，未派发点击；请重新读取页面。',
+                'accessibility_unavailable': '局部无障碍信息未能确认；请重新读取页面检查。',
                 # 中文注释：细分拒绝码使用固定文案，不返回页面异常文本。
                 'target_disabled': '目标已禁用；未派发。',
                 'target_hidden': '目标不可见；未派发。',
@@ -654,7 +659,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 'stale_reference', 'stale_frame', 'target_unavailable', 'invalid_select_option',
                 'invalid_target_state', 'document_changed', 'site_changed', 'cdp_method_denied', 'invalid_params',
                 'task_busy', 'target_not_owned', 'permission_denied', 'no_dialog', 'dialog_open', 'invalid_state', 'task_closed', 'instance_unavailable', 'task_preparing', 'browser_access_revoked',
-                'target_occluded', 'target_unstable', 'unsupported_frame_transform', 'background_pointer_unavailable', 'radio_cannot_uncheck',
+                'target_occluded', 'target_hit_unverified', 'target_unstable', 'unsupported_frame_transform', 'background_pointer_unavailable', 'radio_cannot_uncheck',
                 'target_disabled', 'target_hidden', 'target_zero_size', 'target_out_of_viewport',
                 'reference_target_missing', 'reference_target_ambiguous', 'closed_shadow_unavailable', 'cross_origin_frame_unavailable',
                 'select_option_missing', 'select_option_ambiguous', 'select_option_disabled'} or (
@@ -674,7 +679,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                       'outcome_unknown': unknown}
             # 中文注释：协议层固定码必须始终传给模型，未知码仍有稳定的分类入口。
             result['bridgeCode'] = code or 'bridge_error'
-            if code == 'click_no_effect' or code in _CONTENT_SHIELD_CODES:
+            if code in {'click_no_effect', 'accessibility_unavailable'} or code in _CONTENT_SHIELD_CODES:
                 result['code'] = code
             # 中文注释：只转发 client 已校验的固定诊断字段。
             for key in ('currentOrigin', 'scopeHint', 'stage', 'reasonCode', 'effect', 'suggestion'):
@@ -685,7 +690,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 result['finalOrigin'] = data['finalOrigin']
                 result['outcome_unknown'] = False
             # 中文注释：确定性拒绝保留细分码及最小摘要，未知结果仍不暴露页面信息。
-            if not unknown and code in {'target_occluded', 'target_disabled', 'target_hidden', 'target_zero_size',
+            if not unknown and code in {'target_occluded', 'target_hit_unverified', 'target_disabled', 'target_hidden', 'target_zero_size',
                                         'target_out_of_viewport', 'reference_target_missing', 'reference_target_ambiguous',
                                         'closed_shadow_unavailable', 'cross_origin_frame_unavailable',
                                         'capture_sensitive_blocked', 'capture_frame_uninspectable', 'element_timeout'}:

@@ -31,5 +31,5 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           version="${RELEASE_TAG#v}"
-          # 中文注释：只创建当前标签的 Release，不覆盖已有 Release 附件。
-          gh release create "$RELEASE_TAG" "out/hermes-browser-link-$version.zip" "out/hermes-browser-link-$version/SHA256SUMS.json" --verify-tag --title "Browser Link $version" --generate-notes --prerelease
+          # 中文注释：只发布验收通过的当前标签，采用对应中文发布说明和稳定版标记，不覆盖既有附件。
+          gh release create "$RELEASE_TAG" "out/hermes-browser-link-$version.zip" "out/hermes-browser-link-$version/SHA256SUMS.json" --verify-tag --title "Browser Link $version" --notes-file "docs/release-$version.md" --latest

@@ -1,3 +1,4 @@
+import {CloudLink} from '../support/cloud-link-stub.mjs';
 // 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
 import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 // Synthetic native port and extension event loop; never launches a browser.
@@ -51,7 +52,7 @@ function harness({hostState='cancelled',stopFails=false,resumeState='ready',resu
  class FakeWorkspace{constructor(){this.manager={reconcile:async()=>{}};}async status(){return [];}}
  // 中文注释：合成后台提供通知事件 API，不访问系统通知中心。
  const chrome={notifications:{onClicked:{addListener(){}},clear:async()=>true},runtime:{id:'extension',getURL:p=>`chrome-extension://extension/${p}`,connectNative:()=>port,onMessage:{addListener:f=>listeners.message=f},sendMessage:async()=>{}},storage:{local:{get:async()=>({browserInstanceId:instance}),set:async()=>{}},session:{get:async()=>({instanceId:instance}),set:async()=>{}}},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{get:async()=>({...tab}),query:async()=>[],onCreated:{addListener(){}},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
- vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{CookieMirror,registerWorkspaceStartup:()=>{},NativeWorkspaces:FakeWorkspace,Executor:FakeExecutor,Bridge,BrowserConsent,isUiSender,createApprovalNotifier:()=>null,origin:u=>new URL(u).origin,chrome,crypto:globalThis.crypto,navigator:{userAgent:'Node'},console,setTimeout,clearTimeout});
+ vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{CloudLink,CookieMirror,registerWorkspaceStartup:()=>{},NativeWorkspaces:FakeWorkspace,Executor:FakeExecutor,Bridge,BrowserConsent,isUiSender,createApprovalNotifier:()=>null,origin:u=>new URL(u).origin,chrome,crypto:globalThis.crypto,navigator:{userAgent:'Node'},console,setTimeout,clearTimeout});
  return {calls,tick,command:p=>executor.onOverlayCommand(p),local:()=>executor.tasks.get('task-1'),lease:owner=>executor.leases.set(7,owner),host:x=>host={...host,...x},tab:x=>tab={...tab,...x},disconnect:()=>disconnect?.()};
 }
 const scope={taskId:'task-1',generation:3,tabId:7,origin:'https://example.test',kind:'stop'};

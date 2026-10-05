@@ -105,6 +105,9 @@ _CODE_MESSAGES = {
     "target_out_of_viewport": "目标不在视口内；未派发。",
     "reference_target_missing": "旧引用在当前文档没有唯一目标；请重新读取。",
     "reference_target_ambiguous": "旧引用匹配多个目标；请缩小范围后重新读取。",
+    # 中文注释：保留复核与无障碍读取的固定原因，未确认的命中不派发点击。
+    "target_hit_unverified": "无法确认点击命中；请重新读取页面。",
+    "accessibility_unavailable": "局部无障碍信息未能确认；请重新读取页面检查。",
     "closed_shadow_unavailable": "封闭 Shadow DOM 无法访问；请改用可见坐标操作。",
     "cross_origin_frame_unavailable": "该跨域子框架当前无法操作；请重新读取 frame 目录。",
     "target_unstable": "目标位置持续变化，未派发；请稍后重新读取。",
@@ -127,7 +130,7 @@ _DETERMINISTIC_REJECTIONS = frozenset({
     "approval_revoked", "invalid_action", "invalid_params", "permission_denied",
     "stale_reference", "document_changed", "site_changed", "target_unavailable", "page_not_ready",
     "browser_access_required", "frame_not_supported", "cdp_method_denied", "credential_mode_conflict",
-    "target_occluded", "target_unstable", "unsupported_frame_transform",
+    "target_occluded", "target_hit_unverified", "accessibility_unavailable", "target_unstable", "unsupported_frame_transform",
     "target_disabled", "target_hidden", "target_zero_size", "target_out_of_viewport",
     "reference_target_missing", "reference_target_ambiguous",
     "closed_shadow_unavailable", "cross_origin_frame_unavailable",
@@ -138,7 +141,7 @@ _MAX_LOCAL_CALLS = 128
 _MAX_RENDER_CHARS = 14_000
 _SEMANTIC_COVERAGE_FIELDS = frozenset({
     "scanned", "matched", "returned", "omitted", "filtered", "truncated", "offset",
-    "complete", "traversalComplete", "scope", "skippedFrames", "unsupportedCanvas",
+    "complete", "traversalComplete", "scope", "skippedFrames", "unsupportedCanvas", "contentShieldSkippedFrames", "axEnriched", "axOmitted", "axDiscoveryComplete",
 })
 
 
@@ -770,6 +773,7 @@ class SingleToolAdapter:
         lines = []
         refs = {}
         rendered_items = 0
+        previous_context = ()
         for item in items:
             native_ref = item.get("ref")
             if not isinstance(native_ref, str) or not native_ref or native_ref in refs.values():
@@ -777,10 +781,33 @@ class SingleToolAdapter:
             alias = f"@e{rendered_items + 1}"
             role = item.get("role") if isinstance(item.get("role"), str) else "element"
             name = item.get("name") if isinstance(item.get("name"), str) else ""
-            line = f"[{role}{' inferred' if item.get('inferred') is True else ''}] {name} [{alias}]"
-            if sum(len(part) + 1 for part in lines) + len(line) > _MAX_RENDER_CHARS:
+            # 中文注释：树形视图复用同一语义项和引用，容器路径仅作上下文、不生成动作别名。
+            context = item.get("context", [])
+            context = context[:6] if isinstance(context, list) else []
+            path = tuple((row.get("ref"), row.get("role"), row.get("name"), row.get("index") if type(row.get("index")) is int else None) for row in context
+                         if isinstance(row, dict) and isinstance(row.get("ref"), str)
+                         and isinstance(row.get("role"), str) and isinstance(row.get("name"), str))
+            previous = previous_context if rendered_items else ()
+            common = 0
+            while common < min(len(path), len(previous)) and path[common] == previous[common]:
+                common += 1
+            branch = ["  " * depth + f"[{entry[1]}] {entry[2]}" + (f"（第 {entry[3]} 项）" if entry[3] is not None else "")
+                      for depth, entry in enumerate(path) if depth >= common]
+            states = []
+            for key, label in (("expanded", "展开"), ("selected", "选中"), ("checked", "勾选"),
+                               ("disabled", "禁用"), ("readonly", "只读"), ("busy", "忙碌"), ("required", "必填")):
+                value = item.get(key)
+                if type(value) is bool:
+                    states.append(label if value else "未" + label)
+                elif key == "checked" and value == "mixed":
+                    states.append("部分勾选")
+            suffix = "（" + "、".join(states) + "）" if states else ""
+            line = "  " * len(path) + f"[{role}{' inferred' if item.get('inferred') is True else ''}] {name}{suffix} [{alias}]"
+            if sum(len(part) + 1 for part in lines + branch) + len(line) > _MAX_RENDER_CHARS:
                 break
+            lines.extend(branch)
             lines.append(line)
+            previous_context = path
             refs[alias] = native_ref
             rendered_items += 1
         coverage = self._safe_coverage(receipt["coverage"])
@@ -808,7 +835,7 @@ class SingleToolAdapter:
         for key, value in coverage.items():
             if key not in _SEMANTIC_COVERAGE_FIELDS:
                 continue
-            if key in {"complete", "traversalComplete"}:
+            if key in {"complete", "traversalComplete", "axDiscoveryComplete"}:
                 if type(value) is bool:
                     safe[key] = value
             elif key == "scope":

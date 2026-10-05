@@ -28,6 +28,8 @@ jobs:
         with:
           python-version: '3.14'
       - run: npm ci --ignore-scripts
+      # 中文注释：云端站点依赖独立锁文件，只用于离线 SQLite/MCP 验收，不使用个人站点凭据。
+      - run: npm ci --ignore-scripts --prefix cloud-link/site
       - run: python -m pip install uv==0.11.2
       - name: Prepare integration environment
         run: |

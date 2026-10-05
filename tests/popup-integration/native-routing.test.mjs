@@ -1,3 +1,4 @@
+import {CloudLink} from '../support/cloud-link-stub.mjs';
 // 中文注释：VM 夹具显式注入独立 Cookie 模块，保持生产后台模块依赖一致。
 import {validateShieldRules} from '../../native-extension/content-shield.mjs';
 import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
@@ -48,13 +49,13 @@ async function harness(initialStorage={}){
  }
  class TestWorkspaces{constructor(){this.manager={reconcile:async()=>{}};}async status(){return [];}}
  const event={addListener(){}};const storage=clone(initialStorage);const api={
-  runtime:{id:'test',getManifest:()=>({version:'1.7.1'}),onMessage:{addListener:f=>dispatch=f},connectNative:()=>port,sendMessage:async()=>({})},
+  runtime:{id:'test',getManifest:()=>({version:'1.8.0'}),onMessage:{addListener:f=>dispatch=f},connectNative:()=>port,sendMessage:async()=>({})},
   storage:{session:{get:async()=>({instanceId:'test-instance'}),set:async()=>{}},local:{get:async()=>clone(storage),set:async v=>Object.assign(storage,v)}},
   notifications:{onClicked:event},
   alarms:{create(){},onAlarm:event},tabs:{onCreated:event,onRemoved:event,onUpdated:event,query:async()=>[{id:7,url:'https://example.test/work',title:'工作页'}],get:async()=>({id:7,url:'https://example.test/work'})},debugger:{onDetach:event}
  };
  // Only ES module linking is replaced. The background handler body is unchanged.
- vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{validateShieldRules,CookieMirror,Executor:TestExecutor,NativeWorkspaces:TestWorkspaces,Bridge,BrowserConsent,isUiSender,registerWorkspaceStartup:()=>{},origin:u=>new URL(u).origin,chrome:api,navigator:{userAgent:'Node DOM harness'},crypto:globalThis.crypto,console});
+ vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{CloudLink,validateShieldRules,CookieMirror,Executor:TestExecutor,NativeWorkspaces:TestWorkspaces,Bridge,BrowserConsent,isUiSender,registerWorkspaceStartup:()=>{},origin:u=>new URL(u).origin,chrome:api,navigator:{userAgent:'Node DOM harness'},crypto:globalThis.crypto,console});
  const flush=async()=>{for(let i=0;i<6;i++)await new Promise(r=>setImmediate(r));};await flush();
  const sender={id:'test',url:'chrome-extension://test/popup.html'};
  const send=m=>new Promise(resolve=>{popupCalls.push(clone(m));assert.equal(dispatch(m,sender,resolve),true);});
@@ -115,7 +116,7 @@ test('指定屏蔽区域只接受受信 popup，校验 origin 与选择器并读
 test('生产弹窗仅提供自动屏蔽，右上角展示本扩展版本',async()=>{
  const h=await harness();
  assert.equal(h.d.querySelector('#shield-settings,#cursor-toggle,#cookie-mirror'),null);
- assert.equal(h.d.querySelector('#version-label').textContent,'v1.7.1');
+ assert.equal(h.d.querySelector('#version-label').textContent,'v1.8.0');
  await h.click('#filter-toggle');assert.equal(h.storage.pageContentFilter,true);
  assert.equal(h.popupCalls.some(row=>row.type==='visual_cursor'||row.type==='cookie_mirror_pending'||row.type.startsWith('page_content_shield')),false);h.dom.window.close();
 });

@@ -101,7 +101,83 @@ try{
    await ui.evaluate('document.querySelector("#filter-toggle").click()');await waitFor(()=>ui.evaluate('document.querySelector("#filter-toggle").getAttribute("aria-checked")==="true"'));
    await page.evaluate('document.body.style.filter="blur(8px)"');
    const refused=await ui.evaluate(`readProtected('screenshot')`);assert.equal(refused.error?.code,'content_shield_render_unsupported');assert.equal(refused.result,undefined);
-   results.push({browser:name,passed:true,noManualRules:true,popupSimplified:true,manifestVersionShown:true,persistentCursor:true,intermediateCursorX:moving,cursorPauseResume:true,reducedMotion:true,textRedacted:true,pngPixelChecks:2,dpr:2,domLayoutFocusUnchanged:true,disabledRestoresScreenshot:true,ancestorFilterRefused:true});
+   // 中文注释：复杂解析回归复用本脚本的生产 Executor/Bridge 和临时浏览器，保持保护开关打开。
+   await page.evaluate(`(()=>{
+    document.body.style.filter='';
+    const host=document.createElement('div');host.id='closed-component';document.body.append(host);
+    host.attachShadow({mode:'closed'}).innerHTML='<section style="position:absolute;left:20px;top:350px;width:240px;height:60px;background:red"><span>禁止自动化操作</span><button aria-label="CLOSED_PRIVATE_CANARY">CLOSED_PRIVATE_CANARY</button></section><button aria-label="封闭公开按钮">封闭公开按钮</button>';
+    document.body.insertAdjacentHTML('beforeend','<main id="complex"><button title="图标按钮"><img alt="下载报告"></button><button><svg width="20" height="20"><title>展开菜单</title></svg></button><button><span style="display:contents">保存内容</span></button><div role="combobox" aria-label="地区" aria-controls="portal"></div><div id="portal" role="listbox"><div role="option">中国</div></div><div role="treegrid"><div role="row"><div><span role="columnheader">名称</span><span role="columnheader">数量</span></div></div><div role="row"><div><span role="gridcell">设备</span><span role="gridcell">2</span></div></div></div><article><h2>记录标题</h2><div><h2>嵌套标题</h2></div></article></main>');
+    return true;
+   })()`);
+   // 中文注释：同源 iframe 中的封闭组件也由 CDP 交给父隔离世界，文本屏蔽与来源路径同时验证。
+   await page.evaluate(`(()=>{
+    const frame=document.createElement('iframe');frame.id='same-origin-frame';document.body.append(frame);
+    const host=frame.contentDocument.createElement('div');frame.contentDocument.body.append(host);
+    host.attachShadow({mode:'closed'}).innerHTML='<button aria-label="框架封闭按钮">框架封闭按钮</button><p>禁止自动化操作</p>';
+    return true;
+   })()`);
+   // 中文注释：第二轮能力验收覆盖跨 inline 脱敏、原生选项隐私、slot 名称及虚拟坐标。
+   await page.evaluate(`(()=>{
+    document.querySelector('#complex').insertAdjacentHTML('beforeend','<p><span>to</span><b>ken=</b><span>ROUND2_SECRET_CANARY</span></p><select aria-label="规格"><option>公开选项</option><option data-private>ROUND2_PRIVATE_CANARY</option><optgroup hidden><option>ROUND2_HIDDEN_CANARY</option></optgroup></select><div id="slots"><span slot="label">插槽保存</span></div><div id="virtual-grid" role="grid" aria-rowcount="1000" aria-colcount="10"><div role="row" aria-rowindex="51"><span role="gridcell" aria-colindex="4">虚拟单元</span><button aria-expanded="false">更多</button></div></div><section id="ax-scope"><button id="generated-name"></button></section>');
+    document.querySelector('#slots').attachShadow({mode:'open'}).innerHTML='<button><slot name="label"></slot></button>';
+    const style=document.createElement('style');style.textContent='#generated-name::before{content:"生成名称按钮"}';document.head.append(style);
+    return true;
+   })()`);
+   const round2=await ui.evaluate(`readProtected('page.parse',{options:{root:'#complex',sections:['blocks','forms'],budget:10000}})`);
+   assert.ok(round2.result,JSON.stringify(round2));assert.doesNotMatch(JSON.stringify(round2),/ROUND2_(SECRET|PRIVATE|HIDDEN)_CANARY/);
+   assert.deepEqual(round2.result.forms.find(field=>field.label==='规格').options,[{text:'公开选项',selected:true}]);
+   const virtual=await ui.evaluate(`readProtected('page.parse',{options:{root:'#virtual-grid',sections:['tables']}})`);
+   assert.ok(virtual.result,JSON.stringify(virtual));assert.equal(virtual.result.tables[0].row,50);assert.equal(virtual.result.tables[0].cells[0].column,3);assert.equal(virtual.result.tables[0].declaredRows,1000);
+   // 中文注释：真实树数据交给 Python 官方适配器验收，操作别名必须仍指向原节点。
+   await page.evaluate(`document.querySelector('#complex').insertAdjacentHTML('beforeend','<section id="tree-scope" aria-label="版本列表"><article><h2>版本 A</h2><button aria-expanded="false">更多</button></article><article><h2>版本 B</h2><button aria-expanded="true">更多</button></article></section>')`);
+   const tree=await ui.evaluate(`readProtected('semantic_snapshot',{options:{root:'#tree-scope',budget:5000}})`);
+   assert.ok(tree.result,JSON.stringify(tree));assert.deepEqual(tree.result.items.map(item=>item.context.at(-1).name),['版本 A','版本 B']);
+   await writeFile(path.join(output,`${name}-tree-snapshot.json`),JSON.stringify(tree.result,null,2));
+   // 中文注释：用树中第二条记录的原引用实际点击，验证不会误操作同名的第一条记录。
+   await page.evaluate(`document.querySelectorAll('#tree-scope button').forEach(button=>button.onclick=()=>button.parentElement.setAttribute('data-clicked','true'))`);
+   const clicked=await ui.evaluate(`readProtected('ref_click',{binding:${JSON.stringify(tree.result.binding)},snapshotId:${JSON.stringify(tree.result.snapshotId)},ref:${JSON.stringify(tree.result.items[1].ref)}})`);
+   assert.ok(clicked.result,JSON.stringify(clicked));assert.equal(clicked.result.clicked,true);
+   assert.deepEqual(await page.evaluate(`Array.from(document.querySelectorAll('#tree-scope article'),record=>record.getAttribute('data-clicked'))`),[null,'true']);
+   await page.evaluate('scrollTo(0,0)');
+
+   const axRead=await ui.evaluate(`readProtected('semantic_snapshot',{options:{root:'#ax-scope',query:'生成名称按钮',accessibility:true,budget:5000}})`);
+   assert.ok(axRead.result,JSON.stringify(axRead));assert.equal(axRead.result.items[0].name,'生成名称按钮');assert.equal(axRead.result.items[0].nameSource,'accessibility');assert.equal(axRead.result.coverage.axEnriched,1);
+   await writeFile(path.join(output,`${name}-semantic-tree.json`),JSON.stringify(axRead.result,null,2));
+   // 中文注释：复现真实 Agent 的 display:none opaque sandbox iframe；读取、填入临时测试控件与截图均不受其阻断。
+   await page.evaluate(`document.querySelector('#complex').insertAdjacentHTML('beforeend','<input id="hidden-frame-input" aria-label="隐藏框架测试输入"><iframe id="hidden-sandbox" sandbox style="display:none"></iframe>')`);
+   const hiddenRead=await ui.evaluate(`readProtected('semantic_snapshot',{options:{root:'#complex',composed:true,query:'隐藏框架测试输入',budget:5000}})`);
+   assert.ok(hiddenRead.result,JSON.stringify(hiddenRead));assert.equal(hiddenRead.result.coverage.complete,true);
+   const hiddenFilled=await ui.evaluate(`readProtected('ref_fill',{binding:${JSON.stringify(hiddenRead.result.binding)},snapshotId:${JSON.stringify(hiddenRead.result.snapshotId)},ref:${JSON.stringify(hiddenRead.result.items[0].ref)},text:'fixture-only'})`);
+   assert.ok(hiddenFilled.result,JSON.stringify(hiddenFilled));assert.equal(hiddenFilled.result.verified,true);
+   assert.equal(await page.evaluate(`document.querySelector('#hidden-frame-input').value`),'fixture-only');
+   // 中文注释：填写会按原有规则滚动，截图像素断言前恢复合成夹具的固定视口。
+   await page.evaluate('scrollTo(0,0)');
+   const closedBefore=await pageState();
+   const closedRead=await ui.evaluate(`readProtected('semantic_snapshot',{options:{composed:true,budget:10000}})`);
+   assert.ok(closedRead.result,JSON.stringify(closedRead));assert.doesNotMatch(JSON.stringify(closedRead),/CLOSED_PRIVATE_CANARY|禁止自动化操作/);
+   for(const label of ['封闭公开按钮','框架封闭按钮','下载报告','展开菜单','保存内容','插槽保存'])assert(closedRead.result.items.some(item=>item.name===label),label);
+   const frameItem=closedRead.result.items.find(item=>item.name==='框架封闭按钮');assert.deepEqual(frameItem.targetPath.map(part=>part.kind),['frame','shadow']);
+   const complex=await ui.evaluate(`readProtected('page.parse',{options:{root:'#complex',sections:['tables','forms'],budget:10000}})`);
+   assert.ok(complex.result,JSON.stringify(complex));assert.deepEqual(complex.result.tables.slice(0,2).map(row=>row.cells.map(cell=>cell.text)),[['名称','数量'],['设备','2']]);
+   assert.deepEqual(complex.result.forms.find(field=>field.label==='地区').options,[{text:'中国',selected:false}]);
+   const scoped=await ui.evaluate(`readProtected('page.parse',{options:{root:'#complex',sections:[],schema:{record:'article',fields:{title:{selector:':scope > h2',required:true}}}}})`);
+   assert.ok(scoped.result,JSON.stringify(scoped));assert.equal(scoped.result.records[0].fields.title,'记录标题');
+   const closedCapture=await ui.evaluate(`readProtected('screenshot')`);assert.ok(closedCapture.result,JSON.stringify(closedCapture));
+   await writeFile(path.join(output,`${name}-closed-shadow.png`),Buffer.from(closedCapture.result.data,'base64'));
+   const closedPixel=await ui.evaluate(`(async()=>{const bytes=Uint8Array.from(atob(${JSON.stringify(closedCapture.result.data)}),c=>c.charCodeAt(0));const bitmap=await createImageBitmap(new Blob([bytes],{type:'image/png'}));const canvas=new OffscreenCanvas(bitmap.width,bitmap.height),ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0);return Array.from(ctx.getImageData(80,740,1,1).data);})()`);
+   assert.deepEqual(closedPixel,[32,33,36,255]);assert.equal(await pageState(),closedBefore);
+   // 中文注释：第三方 iframe 使用本地不同主机名构造；只有该框架不可读，不影响父页面解析。
+   await page.evaluate(`(()=>{const frame=document.createElement('iframe');frame.id='opaque-frame';frame.src=${JSON.stringify(origin.replace('127.0.0.1','localhost'))};document.body.append(frame);return new Promise(resolve=>frame.addEventListener('load',()=>resolve(true),{once:true}));})()`);
+   const partial=await ui.evaluate(`readProtected('semantic_snapshot',{options:{composed:true,budget:10000}})`);
+   assert.ok(partial.result,JSON.stringify(partial));assert.equal(partial.result.coverage.complete,false);assert.equal(partial.result.contentFilter.unreadFrames,1);
+   assert(partial.result.items.some(item=>item.name==='封闭公开按钮'));
+   const parsedPartial=await ui.evaluate(`readProtected('page.parse',{options:{composed:true,sections:['forms'],budget:10000}})`);
+   assert.ok(parsedPartial.result,JSON.stringify(parsedPartial));assert.equal(parsedPartial.result.status,'partial');assert(parsedPartial.result.warnings.includes('unread_frames'));
+   // 中文注释：显式缩小解析根避开第三方框架时，局部结果应恢复完整覆盖。
+   const narrowRead=await ui.evaluate(`readProtected('semantic_snapshot',{options:{root:'#complex',composed:true,budget:10000}})`);
+   assert.ok(narrowRead.result,JSON.stringify(narrowRead));assert.equal(narrowRead.result.coverage.complete,true);assert.equal(narrowRead.result.contentFilter.unreadFrames,undefined);
+   const opaqueCapture=await ui.evaluate(`readProtected('screenshot')`);assert.equal(opaqueCapture.error?.code,'content_shield_uninspectable');assert.equal(opaqueCapture.result,undefined);
+   results.push({browser:name,passed:true,noManualRules:true,popupSimplified:true,manifestVersionShown:true,persistentCursor:true,intermediateCursorX:moving,cursorPauseResume:true,reducedMotion:true,textRedacted:true,pngPixelChecks:2,dpr:2,domLayoutFocusUnchanged:true,disabledRestoresScreenshot:true,ancestorFilterRefused:true,closedShadowRead:true,sameOriginFrameClosedShadow:true,inlinePrivacy:true,nativeOptionPrivacy:true,slotName:true,virtualGridIndices:true,scopedAccessibility:true,sameNameReferenceClick:true,hiddenSandboxReadFillCapture:true,closedShadowTextRedacted:true,closedShadowPixelMasked:true,opaqueFramePartialRead:true,opaqueFrameCaptureRefused:true,wrappedAriaTable:true,portalOptions:true,scopedSchema:true,iconNames:true,displayContents:true});
   }finally{
    // 中文注释：浏览器主进程退出后子进程可能仍在收尾，只对本次临时 profile 有界重试清理。
    ui?.close();page?.close();browser?.close();proc.kill('SIGTERM');await new Promise(resolve=>proc.exitCode!==null?resolve():proc.once('exit',resolve));await rm(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});

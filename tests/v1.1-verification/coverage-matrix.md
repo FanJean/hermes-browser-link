@@ -184,3 +184,12 @@
 - `browser-diagnostics/tests/test_schema.py`、`test_runtime.py`、`test_sink.py`：只运行固定诊断源码契约、运行时及临时日志回归。
 - `tests/v1.1-verification/test_gate.py`：核心入口直接传递指定 TMPDIR，避免 Unix socket 路径被额外嵌套。
 - `tests/v1.6.0/real-background-input.mjs`、`tests/v1.6.0/real-work-window.mjs`：手动 Chrome/Edge 临时 profile 门禁，支持 --edge、--headed，不进入离线清单。
+
+## 独立云端连接
+
+- `tests/native-extension/cloud-link.test.mjs`：本地与云端授权隔离、实例绑定与云端重连
+- `cloud-link/site/tests/cloud.test.mjs`：配对、租户/会话隔离、SQLite 原子领取、并发去重、通信擦除及 MCP/HTTP 边界
+- `cloud-link/tests/test_cloud.py`：本机任务归属、闭合结果投影、审批回执、重复调用及晚创建回收
+- `cloud-link/tests/test_native.py`：临时 HOME 的 Native 帧、注册来源与未配对拒绝
+- `cloud-link/tests/test_scheduler.py`：跨会话/页面并发、同页顺序、关闭屏障、取消保留容量与闲置回收
+- `cloud-link/tests/test_service.py`：等待执行时心跳继续、结束后线程与锁释放

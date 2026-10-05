@@ -114,7 +114,8 @@ export function createCDPAdapter(send) {
       const hit=await send('DOM.getNodeForLocation',{x:Math.floor(point.x+state.scroll.x),y:Math.floor(point.y+state.scroll.y),includeUserAgentShadowDOM:false});
       const {object}=await send('DOM.resolveNode',{backendNodeId:hit.backendNodeId,executionContextId:isolatedContext});
       try {
-        const r=await send('Runtime.callFunctionOn',{objectId:object.objectId,functionDeclaration:'function(allowOpenShadow,allowClosedShadow){const root=this.getRootNode();return !!this.closest?.("[data-hermes-automation-overlay]") || !!root.host?.hasAttribute("data-hermes-automation-overlay") || (root instanceof ShadowRoot && !(root.mode==="open"?allowOpenShadow:allowClosedShadow));}',arguments:[{value:allowOpenShadow},{value:allowClosedShadow}],returnByValue:true});
+        // 中文注释：CDP 命中 CSS 生成内容时返回 CSSPseudoElement；检查其真实宿主，不能把伪元素当 DOM Element。
+        const r=await send('Runtime.callFunctionOn',{objectId:object.objectId,functionDeclaration:'function(allowOpenShadow,allowClosedShadow,isPseudo){const element=isPseudo?this.element:this;if(!element||typeof element.getRootNode!=="function")throw Error("HIT_RECHECK_FAILED");const root=element.getRootNode();return !!element.closest?.("[data-hermes-automation-overlay]") || !!root.host?.hasAttribute("data-hermes-automation-overlay") || (root instanceof ShadowRoot && !(root.mode==="open"?allowOpenShadow:allowClosedShadow));}',arguments:[{value:allowOpenShadow},{value:allowClosedShadow},{value:object.className==='CSSPseudoElement'}],returnByValue:true});
         if(r.exceptionDetails) fail('HIT_RECHECK_FAILED');
         if(r.result.value) fail('UNSUPPORTED_SHADOW_DOM');
       } finally {await send('Runtime.releaseObject',{objectId:object.objectId});}

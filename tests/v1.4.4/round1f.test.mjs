@@ -105,5 +105,6 @@ test('技能长度、直接 open、传值、同脚本读回和输出约定均有
  }
  const batch=await readFile('executor-plugin/skills/batch-scrape/SKILL.md','utf8');
  for(const term of ['arguments','isolated','main','satisfied','nextCursor','workspace','elements'])assert.ok(batch.includes(term),term);
- assert.ok(Buffer.byteLength(semanticWorldDeclaration)<=65000);
+ // 中文注释：共享语义库增加 slot、上下文及 AX 绑定；仍限制一次安装且保持后续调用的小消息。
+ assert.ok(Buffer.byteLength(semanticWorldDeclaration)<=70000);
 });

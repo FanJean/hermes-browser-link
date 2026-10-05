@@ -23,7 +23,7 @@ The script uses the task's only work tab automatically. If the task has several 
 | `wait_for_load(timeout=15, until='interactive')` | Poll `document.readyState` until the DOM is readable (`interactive`, default) or `complete` (`until='complete'`); tolerates the transient errors of a slow page being replaced. Not proof that dynamic content has appeared. |
 | `wait_for(selector, state='present', timeout=10)` | Wait for a specific element or state on a dynamic page; prefer this when the target is known. |
 | `read_page(query='', root=None, mode='content', budget=3000, cursor=None)` | Read a region as text (`content`), tables (`table`) or controls (`interactive`), with coverage and paging info; pass `nextCursor` after scrolling a virtual list |
-| `semantic_snapshot(**options)` | The underlying snapshot: `mode`, `root`, `query`, `roles`, `viewport`, `composed`, `frameToken`, `budget`, `cursor`, `baselineId` |
+| `semantic_snapshot(**options)` | The underlying snapshot: `mode`, `root`, `query`, `roles`, `viewport`, `composed`, `accessibility`, `frameToken`, `budget`, `cursor`, `baselineId` |
 | `frame_catalog()` | List child frames; approved cross-origin frames get a `frameToken` |
 | `page_text()`, `screenshot(path)` | Basic text snapshot; save a screenshot into the working directory |
 
@@ -104,7 +104,7 @@ The following helpers use the existing task, origin and lease checks. Parsing is
 | Helper | Contract |
 | --- | --- |
 | `parse_page(root=None, sections=[...], composed=False, budget=12000, maxScan=20000, cursor=None)` | Returns regions, blocks, table-row fragments, form relationships and collections, with source references, coverage, warnings and a continuation cursor. Sections are `regions`, `blocks`, `tables`, `forms`, `collections`. |
-| `extract(schema, **options)` | A schema has a CSS `record` selector and named `fields`; each field accepts `selector`, `type` (`text`, `number`, `url`), optional allowlisted `attribute`, and `required`. `:scope` selects the record itself. Ambiguous/missing/redacted/truncated fields are explicit, never guessed. |
+| `extract(schema, **options)` | A schema has a CSS `record` selector and named `fields`; each field accepts `selector`, `type` (`text`, `number`, `url`), optional allowlisted `attribute`, and `required`. `:scope` selects the record itself; selectors such as `:scope > h2` are evaluated relative to each record in its own DOM tree. Ambiguous/missing/redacted/truncated fields are explicit, never guessed. |
 | `page_markdown(**options)` | Renders the current block page as Markdown while retaining coverage and continuation metadata. |
 | `evaluate(function, arguments=None, world='isolated', timeout_ms=10000)` | Executes a JavaScript function string with separately serialized arguments. This is arbitrary JavaScript, not a read-only sandbox. |
 | `wait_for(selector, state='present', text=None, count=None, timeout=10, interval=0.25)` | Read-only wait for `present`, `absent`, `text`, `count` or `stable`. Returns `satisfied`, `timed_out` and the last observation. Partial reads never prove absence. |
@@ -183,3 +183,19 @@ try:
 except BrowserError as error:
     print(error.code, error.effect, error.suggestion)
 ```
+
+
+## 局部无障碍读取与树形结果
+
+官方 `browser_snapshot` 使用同一份语义数据展示所属区域、记录、控件状态和 `@eN`，容器不创建动作别名。Python 的 `semantic_snapshot` 仍返回结构化数据，可明确请求局部浏览器语义：
+
+```python
+# 中文注释：只补充指定区域内的控件，不读取 AX value；完整性不足时先缩小 root。
+page = semantic_snapshot(root="#actions", mode="interactive", accessibility=True, budget=5000)
+print(page["items"])
+print(page["coverage"])
+```
+
+`accessibility=True` 不支持分页或增量基线，最多查询 16 个复杂控件；`axEnriched`、`axOmitted` 和 `axDiscoveryComplete` 说明覆盖范围。带值控件及私密名称来源不进行 AX 查询。不要在不完整范围内推断唯一目标。
+
+虚拟表格的 `row`、`column` 使用从零开始的 ARIA 业务索引，`domRow` 保留本次 DOM 顺序；`observedRows` 与 `declaredRows/declaredColumns` 分开。声明总量不是已读取总量，仍须检查 partial 和 warnings。
