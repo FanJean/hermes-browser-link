@@ -4,7 +4,7 @@
 
 ## 配置站点
 
-安装 1.8.2 后，本机云端 host 已注册；站点访问配置仍需初始化一次。先用 [站点源码](https://github.com/fanjing188/hermes-browser-link/tree/v1.8.2/cloud-link/site) 在 Sites 创建自己的私有站点，保留 D1 和 MCP 能力，发布后安装该站点创建的插件。源码里的托管配置不包含任何个人站点 ID；Sites 注册会写入你自己的 ID。
+安装 1.8.3 后，本机云端 host 已注册；站点访问配置仍需初始化一次。先用 [站点源码](https://github.com/fanjing188/hermes-browser-link/tree/v1.8.3/cloud-link/site) 在 Sites 创建自己的私有站点，保留 D1 和 MCP 能力，发布后安装该站点创建的插件。源码里的托管配置不包含任何个人站点 ID；Sites 注册会写入你自己的 ID。
 
 在本机运行以下命令，将网址换成自己的站点来源。命令隐藏询问 Sites 服务访问凭据，不要把凭据放到命令参数、Git 或 ChatGPT 消息里。
 

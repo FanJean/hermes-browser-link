@@ -17,8 +17,8 @@ test('semantic CDP command and byte budget',async t=>{
  }}});
  for(let i=0;i<8;i++)await executor.callSemanticWorld({tabId:7},'main','rect_ref',{},()=>{},17);
  t.diagnostic(JSON.stringify({calls,bytes}));
- // 中文注释：slot、上下文及虚拟索引共用语义库；冷启动最多 75KB，后续八次调用仍限定 6KB。
- assert.equal(calls,9);assert.ok(bytes<75000);
+ // 中文注释：增加标准控件角色与共享动作资格后，冷安装增长约 2.5KB；八次热调用仍限定 6KB。
+ assert.equal(calls,9);assert.ok(bytes<77000);
  const cold={calls,bytes};
  for(let i=0;i<8;i++)await executor.callSemanticWorld({tabId:7},'main','rect_ref',{},()=>{},17);
  t.diagnostic(JSON.stringify({warmCalls:calls-cold.calls,warmBytes:bytes-cold.bytes}));

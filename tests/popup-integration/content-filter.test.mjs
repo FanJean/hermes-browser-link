@@ -588,6 +588,13 @@ test('短屏蔽词保留固定角色与覆盖率，但不豁免脚本对象',()=
  assert.equal(result.value.role,'l[已屏蔽区域]tbox');assert.equal(result.value.coverage.scope,'[已屏蔽区域]');
 });
 
+test('固定动作词表不被短屏蔽词破坏，脚本同名字段仍过滤',()=>{
+ const page=redactShieldResult({items:[{ref:'r',role:'textbox',name:'姓名',actions:['click','press','fill']}]},{tokens:['fill'],siteAutomationRestricted:false});
+ assert.deepEqual(page.items[0].actions,['click','press','fill']);assert.equal(page.items[0].ref,'r');
+ const script=redactShieldResult({value:{actions:['fill','PRIVATE_ACTION']}},{tokens:['fill','PRIVATE_ACTION'],siteAutomationRestricted:false});
+ assert.doesNotMatch(JSON.stringify(script),/PRIVATE_ACTION|"fill"/);
+});
+
 // 中文注释：封闭组件扫描上限和节点解析失败均须拒绝，不能漏读后继续发送输出。
 for(const failure of ['limit','missing-object','exception'])test(`封闭组件 ${failure} 拒绝不完整探测`,async()=>{
  const f=shieldFixture(),send=f.e.api.debugger.sendCommand;
@@ -623,4 +630,88 @@ test('隐藏 sandbox 框架在操作中显示会拒绝结果',async()=>{
  await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
  f.e.performSettled=async()=>{frame.style.display='block';return {filled:true};};
  await assert.rejects(f.e.execute(f.request('ref_fill')),/CONTENT_SHIELD_UNINSPECTABLE/);f.dom.window.close();
+});
+
+// 中文注释：只改框架文档标识，主页面与保护规则不变，复现后台 iframe 刷新造成的读取拒绝。
+function changingFrameFixture(){
+ const f=shieldFixture(),frame=f.w.document.createElement('iframe');
+ f.w.document.body.append(frame);Object.defineProperty(frame,'contentDocument',{get:()=>null});
+ let revision=0,reads=0;const send=f.e.api.debugger.sendCommand;
+ f.e.api.debugger.sendCommand=async(t,m,p)=>m==='Page.getFrameTree'?{frameTree:{frame:{id:'main',url:shieldOrigin,loaderId:'doc'},
+  childFrames:[{frame:{id:'ad',url:'https://thirdparty.test/ad',loaderId:`ad-${revision}`}}]}}:send(t,m,p);
+ f.e.performSettled=async()=>{
+  reads++;if(reads===1)revision++;
+  return {items:[{name:reads===1?'旧结果':'当前正文'},{name:secret}],coverage:{complete:true}};
+ };
+ return {...f,reads:()=>reads,change:()=>revision++};
+}
+for(const action of ['snapshot','semantic_snapshot','page.parse','page.observe','official.ready_state','frame_catalog'])test(`${action} 遇到一次框架变化后重新读取，丢弃旧结果并保留脱敏与覆盖率`,async()=>{
+ const f=changingFrameFixture();try{
+  await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+  const p=f.request(action),result=await f.e.execute(p);
+  assert.equal(f.reads(),2);assert.equal(result.items[0].name,'当前正文');
+  assert.doesNotMatch(JSON.stringify(result),new RegExp(`旧结果|${secret}`));
+  assert.equal(result.coverage.complete,false);assert.equal(result.contentFilter.unreadFrames,1);
+  assert.equal((await f.e.shieldResponse({method:'browser.execute',params:p},result)).items[0].name,'当前正文');
+ }finally{f.dom.window.close();}
+});
+test('框架持续变化只重新读取一次，仍拒绝交付结果',async()=>{
+ const f=changingFrameFixture();try{
+  await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+  const perform=f.e.performSettled;f.e.performSettled=async()=>{const result=await perform();f.change();return result;};
+  await assert.rejects(f.e.execute(f.request('semantic_snapshot')),/CONTENT_SHIELD_CHANGED/);assert.equal(f.reads(),2);
+ }finally{f.dom.window.close();}
+});
+for(const action of ['ref_click','ref_fill','js.evaluate','screenshot'])test(`${action} 的文档变化不自动重新执行`,async()=>{
+ const f=changingFrameFixture();try{
+  await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+  // 中文注释：此用例只验证执行次数；不可读框架的拒绝边界由已有真实探测用例覆盖。
+  const inventory=f.e.shieldInventory.bind(f.e);f.e.shieldInventory=(t,p,...args)=>inventory(t,{...p,action:'semantic_snapshot'},...args);
+  await assert.rejects(f.e.execute(f.request(action)),/CONTENT_SHIELD_CHANGED/);assert.equal(f.reads(),1);
+ }finally{f.dom.window.close();}
+});
+test('保护设置在读取中变化时不重试',async()=>{
+ const f=changingFrameFixture();try{
+  await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+  const perform=f.e.performSettled;f.e.performSettled=async()=>{const result=await perform();f.settings({enabled:false,rules:{}});return result;};
+  await assert.rejects(f.e.execute(f.request('semantic_snapshot')),/CONTENT_SHIELD_CHANGED/);assert.equal(f.reads(),1);
+ }finally{f.dom.window.close();}
+});
+for(const options of [{frameToken:'frame-token'},{cursor:'old-cursor'},{baselineId:'old-snapshot'}])test(`绑定既有框架或快照的读取不自动刷新 ${JSON.stringify(options)}`,async()=>{
+ const f=changingFrameFixture();try{
+  await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+  const inventory=f.e.shieldInventory.bind(f.e);f.e.shieldInventory=(t,p,...args)=>inventory(t,{...p,options:{}},...args);
+  await assert.rejects(f.e.execute({...f.request('semantic_snapshot'),options}),/CONTENT_SHIELD_CHANGED/);assert.equal(f.reads(),1);
+ }finally{f.dom.window.close();}
+});
+test('读取失败后用户接管禁止刷新',async()=>{
+ const f=changingFrameFixture();try{
+  await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+  const perform=f.e.performSettled;f.e.performSettled=async()=>{const result=await perform();f.e.tasks.get(f.task.id).paused=true;return result;};
+  await assert.rejects(f.e.execute(f.request('semantic_snapshot')),/task paused/);assert.equal(f.reads(),1);
+ }finally{f.dom.window.close();}
+});
+test('单次审批读取不复用已消耗凭证',async()=>{
+ const f=changingFrameFixture();try{
+  await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+  await assert.rejects(f.e.execute({...f.request('semantic_snapshot'),approval:{nonce:'single-use'}}),/CONTENT_SHIELD_CHANGED/);
+  assert.equal(f.reads(),1);
+ }finally{f.dom.window.close();}
+});
+test('真实语义解析在框架变化后交付新正文，Bridge 回放不再次读取',async()=>{
+ const f=changingFrameFixture();try{
+  await f.e.approve(f.task);f.e.setMode({...f.task,modeGeneration:2,activeMode:'full'});
+  let reads=0;
+  f.e.performSettled=async(t,p)=>{
+   const result=await Executor.prototype.performSettled.call(f.e,t,p);
+   if(++reads===1){f.change();f.w.document.querySelector('body > button').textContent='刷新后的公开正文';}
+   return result;
+  };
+  let reply;const bridge=new Bridge({onMessage:{addListener(){}},postMessage:value=>reply(value)},f.e,()=>{},{onContentFilter:async()=>true});
+  const request={id:'fresh-shield-read',method:'browser.execute',params:{...f.request('semantic_snapshot'),options:{mode:'interactive',budget:8000}}};
+  const call=()=>new Promise(resolve=>{reply=resolve;bridge.receive(request);});
+  const result=await call();assert.equal(result.error,undefined,JSON.stringify(result));assert.equal(reads,2);
+  assert.match(JSON.stringify(result.result),/刷新后的公开正文/);assert.doesNotMatch(JSON.stringify(result.result),new RegExp(secret));
+  assert.deepEqual(await call(),result);assert.equal(reads,2);
+ }finally{f.dom.window.close();}
 });

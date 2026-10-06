@@ -3,6 +3,7 @@ import {DIRECTIVES,SITE_AUTOMATION_RESTRICTIONS,BLOCKER,filterPageResult} from '
 import {validateShieldRules,collectShield,redactShieldResult} from './content-shield.mjs';
 const SHIELD_SETTINGS=Symbol('content shield settings');
 const SHIELD_WRITE_TARGET=Symbol('content shield write target');
+const SHIELD_DOCUMENT_CHANGED=Symbol('content shield document changed');
 // 中文注释：这些结构读取只返回可访问 DOM；不可读取的子框架必须在覆盖率中明确报告。
 const STRUCTURED_PAGE_READS=new Set(['snapshot','semantic_snapshot','page.parse','page.observe','official.ready_state','frame_catalog']);
 // 中文注释：这些出口只返回固定 DOM/图像结果；隐藏框架不参与渲染，任意脚本与业务 JSON 不适用。
@@ -159,7 +160,7 @@ export const semanticWorldDeclaration=`function(op,p){
  const createPageParser=${createPageParser.toString().replace(/^\s*\/\/[^\n]*\n/gm,'')};
  const same=(a,b)=>a&&b&&a.taskId===b.taskId&&a.documentId===b.documentId&&a.leaseId===b.leaseId;
  // 中文注释：扩展重载后旧隔离世界还可能存在；实现版本变化必须撤销旧引用并重新创建语义实例。
- const make=()=>({version:4,binding:p.binding,semantics:createPageSemantics({document,taskId:p.binding.taskId,documentId:p.binding.documentId,leaseId:p.binding.leaseId,
+ const make=()=>({version:5,binding:p.binding,semantics:createPageSemantics({document,taskId:p.binding.taskId,documentId:p.binding.documentId,leaseId:p.binding.leaseId,
   shadowRootOf:node=>node.shadowRoot||globalThis.__hermesClosedShadowRoots?.get(node)||null})});
  const classifySensitiveField=${classifySensitiveField.toString()};
  const sensitive=e=>classifySensitiveField(e)!==null;
@@ -196,7 +197,7 @@ export const semanticWorldDeclaration=`function(op,p){
   let current=e;
   while(current){
    const doc=current.ownerDocument,view=doc.defaultView,root=current.getRootNode();
-   if(current.disabled||current.getAttribute('aria-disabled')==='true')throw Error('TARGET_DISABLED');
+   if(state.semantics.interaction(current).disabled)throw Error('TARGET_DISABLED');
    if(current.closest('[inert],[aria-hidden="true"]'))throw Error('TARGET_HIDDEN');
    const style=view.getComputedStyle(current),r=current.getBoundingClientRect();
    if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||!current.getClientRects().length||r.width<=0||r.height<=0)throw Error('TARGET_ZERO_SIZE');
@@ -245,13 +246,13 @@ export const semanticWorldDeclaration=`function(op,p){
  };
  let state=globalThis.__hermesNativeSemanticsV2;
  if(op==='semantic_snapshot'||op==='page.parse'){
-  if(!state||state.version!==4||!same(state.binding,p.binding)){try{state?.semantics.revoke();}catch{}state=make();globalThis.__hermesNativeSemanticsV2=state;}
+  if(!state||state.version!==5||!same(state.binding,p.binding)){try{state?.semantics.revoke();}catch{}state=make();globalThis.__hermesNativeSemanticsV2=state;}
   try{if(op==='page.parse'){state.parser??=createPageParser(state.semantics.parsingContext());return state.parser.parse(p.options||{});}return state.semantics.snapshot(p.options||{});}catch(error){
    if(error?.message!=='DOCUMENT_REPLACED')throw error;
    try{state.semantics.revoke();}catch{}state=make();globalThis.__hermesNativeSemanticsV2=state;if(op==='page.parse'){state.parser=createPageParser(state.semantics.parsingContext());return state.parser.parse(p.options||{});}return state.semantics.snapshot(p.options||{});
   }
  }
- if(!state||state.version!==4||!same(state.binding,p.binding))throw Error('BINDING_MISMATCH');
+ if(!state||state.version!==5||!same(state.binding,p.binding))throw Error('BINDING_MISMATCH');
  // 中文注释：只有宿主内部 CDP 查询使用节点对象，模型工具不会公开这两个操作。
  if(op==='accessibility_node')return state.semantics.accessibilityNode({...p.binding,snapshotId:p.snapshotId,ref:p.ref});
  if(op==='apply_accessibility'){state.semantics.applyAccessibility({...p.binding,snapshotId:p.snapshotId},p.values);return true;}
@@ -292,8 +293,9 @@ export const semanticWorldDeclaration=`function(op,p){
  const node=(usingDelivery?delivery.node:pending?.node)||state.semantics.resolve({...p.binding,snapshotId:p.snapshotId,ref:p.ref});
  // 中文注释：预审、准备和填写复用同一资格判断；disabled 仍由各阶段原有检查拒绝。
  // 中文注释：编辑区判断覆盖 HTML 空属性和 plaintext-only，填写及回读使用同一资格。
- const editable=()=>node.isContentEditable||node.matches('[contenteditable="true" i],[contenteditable=""],[contenteditable="plaintext-only" i]');
- const fillable=()=>!(!['INPUT','TEXTAREA'].includes(node.tagName)&&!editable()||node.type==='file'||node.type==='hidden'||node.readOnly);
+ const interaction=()=>state.semantics.interaction(node);
+ const editable=()=>interaction().editable;
+ const fillable=()=>interaction().actions.includes('fill');
  if(op==='shield_write_target'){
   // 中文注释：动作已由宿主限定为五类原生引用操作，此处只核实真实节点和所在文档。
   const a=p.action.slice(4),tag=node.tagName;
@@ -302,11 +304,11 @@ export const semanticWorldDeclaration=`function(op,p){
   return ok&&node.ownerDocument===document?(a==='click'||a==='set_checked'?controlVisual(node):node):null;
  }
  // 中文注释：计划和指针定位共用选项查找，保留缺失、歧义及禁用检查，不缓存页面节点。
- const ariaList=ids=>node.getAttribute('role')==='listbox'?node:node.getRootNode().getElementById?.(ids[0])||node.ownerDocument.getElementById(ids[0]);
+ const ariaList=ids=>interaction().role==='listbox'?node:node.getRootNode().getElementById?.(ids[0])||node.ownerDocument.getElementById(ids[0]);
  const ariaOption=list=>{
-  const matches=[...(list?.querySelectorAll('[role="option"]')||[])].filter(option=>(p.by==='label'?(option.getAttribute('aria-label')||option.textContent||'').trim():option.getAttribute('data-value')??option.getAttribute('value'))===p.values[0]);
+  const matches=[...(list?.querySelectorAll('[role]')||[])].filter(option=>state.semantics.interaction(option).role==='option'&&(p.by==='label'?(option.getAttribute('aria-label')||option.textContent||'').trim():option.getAttribute('data-value')??option.getAttribute('value'))===p.values[0]);
   if(matches.length!==1)throw Error(matches.length?'SELECT_OPTION_AMBIGUOUS':'SELECT_OPTION_MISSING');
-  if(matches[0].disabled||matches[0].getAttribute('aria-disabled')==='true')throw Error('SELECT_OPTION_DISABLED');
+  if(state.semantics.interaction(matches[0]).disabled)throw Error('SELECT_OPTION_DISABLED');
   return matches[0];
  };
  if(reading)state.pendingTarget=null;
@@ -328,7 +330,7 @@ export const semanticWorldDeclaration=`function(op,p){
   if(sensitive(node))return {targetAssessment:'sensitive',fieldKind:fieldKind(node)};
   // 中文注释：预审只判字段类别；视口和遮挡留给批准后的 prepare 阶段滚动并重查。
   if(op==='assess_ref_fill'&&(!fillable()||node.disabled))throw Error('TARGET_NOT_ACTIONABLE');
-  if(op==='assess_ref_press'&&(typeof node.focus!=='function'||node.disabled||node.matches?.('input[type="file"],input[type="hidden"]')))throw Error('TARGET_NOT_ACTIONABLE');
+  if(op==='assess_ref_press'&&(typeof node.focus!=='function'||!interaction().actions.includes('press')))throw Error('TARGET_NOT_ACTIONABLE');
   return {targetAssessment:'ordinary'};
  }
  const rectOf=()=>{const r=node.getBoundingClientRect();return [r.left,r.top,r.width,r.height];};
@@ -418,15 +420,21 @@ export const semanticWorldDeclaration=`function(op,p){
   // 中文注释：先验状态再由宿主点击。
   if(typeof p.checked!=='boolean')throw Error('INVALID_CHECKED_STATE');
   const native=node.tagName==='INPUT'&&['checkbox','radio'].includes(node.type);
-  const role=node.getAttribute('role');
-  const aria=!native&&['checkbox','switch','radio'].includes(role);
+  const descriptor=interaction(),role=descriptor.role;
+  const aria=!native&&['checkbox','switch','radio','menuitemcheckbox','menuitemradio'].includes(role);
   if(!native&&!aria)throw Error('TARGET_NOT_ACTIONABLE');
-  const read=()=>native?node.checked:node.getAttribute('aria-checked');
+  if(descriptor.disabled)throw Error('TARGET_DISABLED');
+  if(descriptor.readonly)throw Error('TARGET_NOT_ACTIONABLE');
+  const read=()=>native?(node.type==='checkbox'&&node.indeterminate?'mixed':node.checked):node.getAttribute('aria-checked');
   const before=read();
   if(aria&&!['true','false','mixed'].includes(before))throw Error('TARGET_STATE_UNKNOWN');
-  if((native&&node.type==='radio'||role==='radio')&&!p.checked)throw Error('RADIO_CANNOT_UNCHECK');
+  if((native&&node.type==='radio'||['radio','menuitemradio'].includes(role))&&!p.checked)throw Error('RADIO_CANNOT_UNCHECK');
   const matches=before===p.checked||before===String(p.checked);
-  if(op==='plan_ref_set_checked'){state.pendingTarget={snapshotId:p.snapshotId,ref:p.ref,node};return {needsClick:!matches};}
+  if(op==='plan_ref_set_checked'){
+   // 中文注释：三态框的点击会反转底层 checked；无法单次达到目标时先拒绝，不能改错后再自动点击。
+   if(native&&node.type==='checkbox'&&node.indeterminate&&node.checked===p.checked)throw Error('TARGET_STATE_UNKNOWN');
+   state.pendingTarget={snapshotId:p.snapshotId,ref:p.ref,node};return {needsClick:!matches};
+  }
   if(op==='synthetic_ref_set_checked'){
 
    const clicks=delivery.target.click;node.click();
@@ -438,6 +446,7 @@ export const semanticWorldDeclaration=`function(op,p){
   return {checked:before===true||before==='true',changed:true,verified,kind:'trusted-input',...(verified?{}:{outcomeUnknown:true})};
  }
  if(op==='plan_ref_select_option'||op==='read_ref_select_option'||op==='apply_native_ref_select_option'||op==='synthetic_ref_select_option'){
+  if(!interaction().actions.includes('select_option'))throw Error('TARGET_NOT_ACTIONABLE');
   // 中文注释：原生控件按 value、去首尾空白的 Unicode 标签或零基 index 精确定位，校验全部选项后才写入。
   if(!Array.isArray(p.values)||p.values.length>100||!['value','label','index'].includes(p.by)||
    p.values.some(value=>p.by==='index'?!Number.isSafeInteger(value)||value<0:typeof value!=='string'||value.length>1000))throw Error('INVALID_SELECT_OPTIONS');
@@ -469,7 +478,7 @@ export const semanticWorldDeclaration=`function(op,p){
   if(op==='apply_native_ref_select_option')throw Error('INVALID_SELECT_OPTIONS');
   // 中文注释：自定义 listbox/combobox 仍只支持单选，并由宿主派发可信指针点击。
   if(p.by==='index'||p.values.length!==1)throw Error('INVALID_SELECT_OPTIONS');
-  const role=node.getAttribute('role'),ids=(node.getAttribute('aria-controls')||'').trim().split(/\\s+/).filter(Boolean);
+  const role=interaction().role,ids=(node.getAttribute('aria-controls')||'').trim().split(/\\s+/).filter(Boolean);
   if(!['combobox','listbox'].includes(role)||role==='combobox'&&ids.length!==1)throw Error('INVALID_SELECT_OPTIONS');
   const list=ariaList(ids);
   if(op==='plan_ref_select_option'&&role==='combobox'&&node.getAttribute('aria-expanded')!=='true'&&!list){
@@ -1407,6 +1416,19 @@ export class Executor {
  }
  async performProtected(t,p){
   const settings=await this.shieldSettings();
+  const refreshable=STRUCTURED_PAGE_READS.has(p.action)&&!p.approval&&!p.frameToken&&!p.options?.frameToken&&!p.options?.cursor&&!p.options?.baselineId;
+  for(let attempt=0;attempt<2;attempt++){
+   try{return await this.performProtectedAttempt(t,p,settings);}
+   catch(error){
+    // 中文注释：仅重新执行无副作用的新结构读取，丢弃旧结果；设置变化、写入和截图继续拒绝。
+    if(attempt||!refreshable||!error[SHIELD_DOCUMENT_CHANGED])throw error;
+    this.check(t,p);
+    if(t.paused||t.pauseRequested)throw Object.assign(Error('task paused'),{code:'TASK_PAUSED',preDispatch:true});
+    if(JSON.stringify(settings)!==JSON.stringify(await this.shieldSettings()))throw error;
+   }
+  }
+ }
+ async performProtectedAttempt(t,p,settings){
   if(settings.enabled&&['cdp.send','cdp.events','network.inspect','images','console','dialog'].includes(p.action))throw Object.assign(Error('CONTENT_SHIELD_UNSUPPORTED'),{preDispatch:true});
   const scoped={...p,[SHIELD_SETTINGS]:settings};
   const inspect=settings.enabled&&Number.isInteger(p.tabId)&&!['navigate','back','official.goto_url'].includes(p.action);
@@ -1430,7 +1452,8 @@ export class Executor {
   const capture=this.shieldResults.get(result);
   if(inspect){
    after=await this.shieldInventory(t,p,settings,before.writeTarget);
-   if(before.document!==after.document||image&&capture?.inventory!==JSON.stringify(after))throw Error('CONTENT_SHIELD_CHANGED');
+   if(before.document!==after.document)throw Object.assign(Error('CONTENT_SHIELD_CHANGED'),{[SHIELD_DOCUMENT_CHANGED]:true});
+   if(image&&capture?.inventory!==JSON.stringify(after))throw Error('CONTENT_SHIELD_CHANGED');
    const inventory={tokens:[...new Set([...before.tokens,...after.tokens])],siteAutomationRestricted:before.siteAutomationRestricted||after.siteAutomationRestricted,image};
    // 中文注释：DOM 输出使用实际文本块判定，不能再对父汇总拼接文字重新匹配；脚本自建返回值单独过滤。
    result=redactShieldResult(result,inventory);
@@ -2281,7 +2304,7 @@ export class Executor {
   let world=executionContextId?{executionContextId}:await createWorld();guard();
   const key=()=>JSON.stringify([target.tabId,target.sessionId,world.executionContextId]);
   const install=async()=>{const installed=await this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:world.executionContextId,functionDeclaration:`function(){globalThis.__hermesSemanticLibrary={version:1,call:(${semanticWorldDeclaration})};return true;}`,returnByValue:true});guard();if(installed.exceptionDetails||installed.result?.value!==true)throw Object.assign(Error('SEMANTIC_LIBRARY_UNAVAILABLE'),{preDispatch:true});this.semanticWorlds.add(key());};
-  const invoke=()=>this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:world.executionContextId,functionDeclaration:op==='page.observe'?`function(op,p){const library=globalThis.__hermesSemanticLibrary;if(library?.version!==1)return {hermesSemanticMissing:true};const state=globalThis.__hermesNativeSemanticsV2;if(!state||JSON.stringify(state.binding)!==JSON.stringify(p.binding))library.call('semantic_snapshot',{binding:p.binding,options:{root:'head',mode:'content',budget:512}});return (${observePage.toString()})(globalThis.__hermesNativeSemanticsV2.semantics.parsingContext(),p.options);}`:'function(op,p){const library=globalThis.__hermesSemanticLibrary;return library?.version===1?library.call(op,p):{hermesSemanticMissing:true};}',arguments:[{value:op},{value:payload}],returnByValue:true,awaitPromise:true});
+  const invoke=()=>this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:world.executionContextId,functionDeclaration:op==='page.observe'?`function(op,p){const library=globalThis.__hermesSemanticLibrary;if(library?.version!==1)return {hermesSemanticMissing:true};const state=globalThis.__hermesNativeSemanticsV2;if(!state||state.version!==5||JSON.stringify(state.binding)!==JSON.stringify(p.binding))library.call('semantic_snapshot',{binding:p.binding,options:{root:'head',mode:'content',budget:512}});return (${observePage.toString()})(globalThis.__hermesNativeSemanticsV2.semantics.parsingContext(),p.options);}`:'function(op,p){const library=globalThis.__hermesSemanticLibrary;return library?.version===1?library.call(op,p):{hermesSemanticMissing:true};}',arguments:[{value:op},{value:payload}],returnByValue:true,awaitPromise:true});
   let result;
   try{if(!this.semanticWorlds.has(key()))await install();result=await invoke();}
   catch(error){

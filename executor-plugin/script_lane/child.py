@@ -509,9 +509,11 @@ def wait_for_element(name, *, role=None, root=None, exact=True, timeout=10.0, ta
         rejected = matches
         if action == 'fill':
             matches = [item for item in matches if item.get('role') in {'textbox', 'searchbox', 'spinbutton', 'combobox'}
-                       and not (item.get('disabled') or item.get('readonly') or item.get('busy'))]
+                       and not (item.get('disabled') or item.get('readonly') or item.get('busy'))
+                       and ('actions' not in item or isinstance(item['actions'], list) and 'fill' in item['actions'])]
         elif action == 'click':
-            matches = [item for item in matches if not (item.get('disabled') or item.get('busy'))]
+            matches = [item for item in matches if not (item.get('disabled') or item.get('busy'))
+                       and ('actions' not in item or isinstance(item['actions'], list) and 'click' in item['actions'])]
         nearest = difflib.get_close_matches(normalized, [_normalized_accessible_name(item['name'])
                                                             for item in candidates], n=3, cutoff=0)
         suggestions = [{'role': item.get('role', ''), 'name': item['name'][:80]}
@@ -522,7 +524,8 @@ def wait_for_element(name, *, role=None, root=None, exact=True, timeout=10.0, ta
                                ', '.join(row['name'] for row in suggestions),
                                code='ambiguous_target', outcome_unknown=False, candidates=suggestions)
         if action == 'fill' and rejected and not matches:
-            reason = 'target_disabled' if all(item.get('disabled') or item.get('busy') for item in rejected) else 'target_readonly'
+            reason = ('target_disabled' if all(item.get('disabled') or item.get('busy') for item in rejected)
+                      else 'target_readonly' if all(item.get('readonly') for item in rejected) else 'target_not_actionable')
             raise BrowserError('matching fields are not editable; candidates: ' + ', '.join(item['name'][:80] for item in rejected[:3]),
                                code=reason, outcome_unknown=False, candidates=suggestions)
         if matches and not matches[0].get('disabled') and not matches[0].get('busy'):

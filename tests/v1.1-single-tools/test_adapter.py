@@ -819,6 +819,15 @@ class MultiTabTests(unittest.TestCase):
 
 # 中文注释：树形展示增加上下文与状态，但每个动作别名仍绑定到原 native ref。
 class TreeSnapshotTests(unittest.TestCase):
+    def test_snapshot_shows_only_fixed_action_capabilities(self):
+        runtime = FakeRuntime()
+        adapter = SingleToolAdapter(runtime)
+        adapter.bind('session-a', 'task-native')
+        runtime.snapshot['items'][0]['actions'] = ['click', 'fill', 'PRIVATE_ACTION_CANARY', {'value': 'PRIVATE_OBJECT_CANARY'}]
+        result = json.loads(adapter.dispatch('browser_snapshot', {}, session_id='session-a', tool_call_id='capabilities'))
+        self.assertIn('操作：点击/填写', result['snapshot'])
+        self.assertNotIn('PRIVATE_', result['snapshot'])
+
     def test_tree_context_states_and_alias_binding(self):
         runtime = FakeRuntime()
         adapter = SingleToolAdapter(runtime)

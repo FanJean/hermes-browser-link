@@ -61,6 +61,24 @@ try{
  const save=await ref('保存',['button']);
  await tab.read(`document.querySelector('#save').outerHTML='<button id="save">保存</button>'`);
  const relocated=await run('ref_click',save);assert.equal(relocated.relocated,true);
+ // 中文注释：控件能力在完整 daemon→扩展→浏览器→公共投影链路核验，不只直调页面库。
+ await tab.read(`(()=>{const section=document.createElement('section');section.id='standard-controls';section.innerHTML='<button role="future command button">标准保存</button><div id="standard-check" role="future menuitemcheckbox" tabindex="0" aria-label="标准复选菜单" aria-checked="false" style="width:180px;height:32px">显示列</div><div id="standard-radio" role="menuitemradio" tabindex="0" aria-label="标准单选菜单" aria-checked="false" style="width:180px;height:32px">排序</div><input id="standard-mixed" type="checkbox" aria-label="标准三态"><div contenteditable aria-readonly="true" aria-label="标准只读">原有正文</div><div aria-disabled="true"><button>标准禁用</button></div>';document.body.append(section);section.scrollIntoView();document.querySelector('#standard-check').onclick=e=>e.currentTarget.setAttribute('aria-checked','true');document.querySelector('#standard-radio').onclick=e=>e.currentTarget.setAttribute('aria-checked','true');document.querySelector('#standard-mixed').indeterminate=true;return true})()`);
+ const standard=await run('semantic_snapshot',{options:{root:'#standard-controls',budget:5000}});
+ assert.equal(standard.items.find(item=>item.name==='标准保存').role,'button');
+ assert.ok(standard.items.find(item=>item.name==='标准复选菜单').actions.includes('set_checked'));
+ assert.equal(standard.items.find(item=>item.name==='标准三态').checked,'mixed');
+ assert.deepEqual(standard.items.find(item=>item.name==='标准禁用').actions,[]);
+ assert.ok(!standard.items.find(item=>item.name==='标准只读').actions.includes('fill'));
+ for(const name of ['标准复选菜单','标准单选菜单']){
+  const target=await ref(name);const result=await run('ref_set_checked',{...target,checked:true});assert.equal(result.verified,true);
+ }
+ const mixedRef=await ref('标准三态');
+ const unsafeMixed=await tab.run('ref_set_checked',{...mixedRef,checked:false});assert.ok(unsafeMixed.error);assert.equal(unsafeMixed.outcome_unknown,false);
+ assert.equal(await tab.read(`document.querySelector('#standard-mixed').indeterminate`),true);
+ const mixed=await run('ref_set_checked',{...await ref('标准三态'),checked:true});assert.equal(mixed.verified,true);
+ assert.equal(await tab.read(`document.querySelector('#standard-mixed').indeterminate`),false);
+ const readonly=await tab.run('ref_fill',{...await ref('标准只读'),text:'不应填写'});assert.ok(readonly.error);assert.equal(readonly.outcome_unknown,false);
+ assert.equal(await tab.read(`document.querySelector('[aria-label="标准只读"]').textContent`),'原有正文');
  // 中文注释：固定遮罩覆盖按钮时只检查拒绝回执，不触发关闭按钮。
  await tab.read(`(()=>{const mask=document.createElement('div');mask.id='acceptance-mask';mask.setAttribute('role','dialog');mask.setAttribute('aria-label','验收遮挡层');mask.style.cssText='position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.1)';const close=document.createElement('button');close.textContent='关闭遮挡层';close.onclick=()=>mask.remove();mask.append(close);document.body.append(mask);return true})()`);
  const covered=await tab.run('ref_click',await ref('保存',['button']));

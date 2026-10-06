@@ -223,6 +223,7 @@ export function redactShieldResult(result,inventory){
  const tokens=inventory.tokens||[],protocol=new Set(['binding','snapshotId','parseId','nextCursor','screenshotId','id','url','origin','code','status','ok','outcomeUnknown','retryable']);
  // 中文注释：固定语义角色和覆盖率是解析协议，短屏蔽词不能把 listbox 等角色破坏成不可识别值。
  const roles=new Set(['button','link','textbox','checkbox','radio','combobox','listbox','option','menuitem','menuitemcheckbox','menuitemradio','switch','slider','spinbutton','tab','treeitem','row','listitem','heading','text']);
+ const actions=new Set(['click','press','fill','set_checked','select_option']);
  const clean=text=>{
   let output=text;
   // 中文注释：先替换所有完整子片段，避免块汇总的空白差异触发截断检查，把正常邻文一并清空。
@@ -238,7 +239,7 @@ export function redactShieldResult(result,inventory){
   const out={};let changed=false;
   for(const [key,child] of Object.entries(value)){
    const binary=inventory.image&&!userValue&&key==='data'&&typeof child==='string';
-   const protectedField=!userValue&&(key==='binding'||depth===0&&(protocol.has(key)||key==='coverage')||key==='role'&&roles.has(child)||key==='nameSource'&&['placeholder','descendant','title','accessibility'].includes(child));
+   const protectedField=!userValue&&(key==='binding'||depth===0&&(protocol.has(key)||key==='coverage')||key==='role'&&roles.has(child)||key==='actions'&&Array.isArray(child)&&child.every(action=>actions.has(action))||key==='nameSource'&&['placeholder','descendant','title','accessibility'].includes(child));
    const filtered=binary||protectedField?child:visit(child,userValue||['value','fields','metadata'].includes(key),depth+1);
    const nextKey=userValue||depth>0&&!protectedField?clean(key):key;
    out[nextKey]=filtered;changed ||= nextKey!==key||JSON.stringify(filtered)!==JSON.stringify(child);

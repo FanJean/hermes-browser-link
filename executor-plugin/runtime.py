@@ -301,6 +301,7 @@ _RESULT_SEMANTIC = {
     'binding': _scalar_fields('taskId documentId leaseId'),
     # 中文注释：语义上下文和状态必须穿过公共工具投影，容器引用仍不是动作别名；不放行 value 或原始属性。
     'items': [{**_scalar_fields('ref role name nameSource parentRef disabled readonly busy checked expanded selected required omittedCells truncated inferred'),
+               'actions': frozenset({'click', 'press', 'fill', 'set_checked', 'select_option'}),
                'context': [_scalar_fields('ref role name index')],
                'targetPath': [_scalar_fields('kind mode frameRef hostRef frameToken documentId')], 'cells': [None]}],
     'removed': [None], 'order': [None], 'resync': _scalar_fields('reason'),
@@ -377,6 +378,9 @@ for _result_schema in _RESULT_ACTIONS.values():
 def _project_schema(value, schema):
     if value is None:
         return None
+    # 中文注释：固定动作词表只接受已知字符串，不让页面值或伪造对象进入协议动作清单。
+    if isinstance(schema, frozenset):
+        return list(dict.fromkeys(item for item in value if isinstance(item, str) and item in schema)) if isinstance(value, list) else []
     if isinstance(schema, dict):
         if not isinstance(value, dict):
             return {}

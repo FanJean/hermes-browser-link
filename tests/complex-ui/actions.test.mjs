@@ -28,6 +28,44 @@ function installedCaller(f){
  return {commands,call:(op,payload)=>executor.callSemanticWorld({tabId:7},'main',op,payload,()=>{},17)};
 }
 
+test('菜单复选与单选共用勾选动作，角色 token 回退和状态回读一致',async()=>{
+ for(const role of ['future menuitemcheckbox','menuitemradio']){
+  const f=setup();try{
+   f.document.body.innerHTML=`<div role="${role}" tabindex="0" aria-label="显示列" aria-checked="false"></div>`;
+   const node=f.document.querySelector('div'),api=installedCaller(f);f.setHit(node);
+   const page=await api.call('semantic_snapshot',{binding:f.binding,options:{query:'显示列'}}),item=page.items[0];
+   assert.ok(item.actions.includes('set_checked'));
+   const payload={binding:f.binding,snapshotId:page.snapshotId,ref:item.ref,checked:true};
+   assert.equal((await api.call('plan_ref_set_checked',payload)).needsClick,true);
+   node.setAttribute('aria-checked','true');assert.equal((await api.call('read_ref_set_checked',payload)).verified,true);
+   if(role==='menuitemradio')await assert.rejects(api.call('plan_ref_set_checked',{...payload,checked:false}),/RADIO_CANNOT_UNCHECK/);
+  }finally{f.close();}
+ }
+});
+test('原生 mixed 复选框不因 checked=false 误判为无需操作',async()=>{
+ const f=setup();try{
+  f.document.body.innerHTML='<input type="checkbox" aria-label="全部">';const node=f.document.querySelector('input');node.indeterminate=true;f.setHit(node);
+  const api=installedCaller(f),page=await api.call('semantic_snapshot',{binding:f.binding,options:{query:'全部'}});
+  const payload={binding:f.binding,snapshotId:page.snapshotId,ref:page.items[0].ref,checked:true};
+  assert.equal(page.items[0].checked,'mixed');
+  await assert.rejects(api.call('plan_ref_set_checked',{...payload,checked:false}),error=>error.preDispatch===true&&/TARGET_STATE_UNKNOWN/.test(error.message));
+  assert.equal(node.checked,false);assert.equal(node.indeterminate,true);
+  assert.equal((await api.call('plan_ref_set_checked',payload)).needsClick,true);
+  node.indeterminate=false;node.checked=true;assert.equal((await api.call('read_ref_set_checked',payload)).verified,true);
+ }finally{f.close();}
+});
+test('ARIA 只读编辑区和非文本 input 在准备及实际填写前拒绝，无输入事件',async()=>{
+ for(const html of ['<div contenteditable aria-readonly="true" aria-label="字段"></div>','<input type="checkbox" aria-label="字段">','<input type="range" aria-label="字段">']){
+  const f=setup();try{
+   f.document.body.innerHTML=html;const node=f.document.body.firstElementChild;f.setHit(node);let events=0;node.addEventListener('input',()=>events++);
+   const api=installedCaller(f),page=await api.call('semantic_snapshot',{binding:f.binding,options:{query:'字段'}});
+   const payload={binding:f.binding,snapshotId:page.snapshotId,ref:page.items[0].ref,text:'不应填写'};
+   for(const op of ['assess_ref_fill','prepare_ref_fill','ref_fill'])await assert.rejects(api.call(op,payload),/TARGET_NOT_ACTIONABLE/);
+   assert.equal(events,0);assert.notEqual(node.value||node.textContent,'不应填写');
+  }finally{f.close();}
+ }
+});
+
 test('实际 CDP 安装后填写各阶段保留资格检查和敏感拒绝，不额外派发',async()=>{
  const cases=[['input','',true],['textarea','',true],['div','contenteditable="true"',true],['div','contenteditable',true],['div','contenteditable="plaintext-only"',true],
   ['div','role="textbox"',false],['input','readonly',false],['input','disabled',false],['input','type="file"',false],['input','type="password"','sensitive']];

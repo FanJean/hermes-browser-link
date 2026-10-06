@@ -291,7 +291,8 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
     item.textContent=`${String(row.time||'').slice(11,19)} ${String(row.action||'').slice(0,40)} · ${String(row.target||'').slice(0,80)} · ${Number(row.durationMs)||0}ms · ${state==='succeeded'?'成功':state==='pending'?'等待确认':state==='unknown'?'结果不确定':'失败'}`;
     if(failed){
      item.style.color='#ffaaa2';
-     const explanation=Object.hasOwn(explanations,code)?explanations[code]:'请核对页面状态，不要重复提交';
+     const readChanged=code==='content_shield_changed'&&['snapshot','semantic_snapshot','page.parse','page.observe','official.ready_state','frame_catalog'].includes(row.action);
+     const explanation=readChanged?'读取期间页面或保护状态发生变化，本次未返回内容，请重新读取':Object.hasOwn(explanations,code)?explanations[code]:'请核对页面状态，不要重复提交';
      item.textContent+=`${code?` [${code}]`:''}（${explanation}）`;
     }
     return item;

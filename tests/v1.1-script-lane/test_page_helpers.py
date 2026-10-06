@@ -113,6 +113,18 @@ class PageHelpersTests(unittest.TestCase):
             child.scroll('down')
             self.assertEqual(call.call_args.args, ('run', ['scroll', {'direction': 'down'}]))
 
+    def test_fill_uses_capability_to_disambiguate_display_textbox_and_editable_field(self):
+        items = [button('display', role='textbox', actions=['click', 'press']),
+                 button('editable', role='textbox', actions=['click', 'press', 'fill'])]
+        with patch.object(child, '_call', side_effect=[snapshot(items), {'filled': True}]) as call:
+            self.assertTrue(child.fill_element('继续', '示例')['filled'])
+            self.assertEqual(call.call_args.args[1][1]['ref'], 'editable')
+        with patch.object(child, '_call', return_value=snapshot(items[:1])) as call:
+            with self.assertRaises(child.BrowserError) as caught:
+                child.fill_element('继续', '示例')
+            self.assertEqual(caught.exception.code, 'target_not_actionable')
+            self.assertEqual(call.call_count, 1)
+
     def test_required_suffix_and_whitespace_use_exact_normalized_name(self):
         # 中文注释：必填标记只在末尾去除；原始引用仍交给 ref_fill。
         for suffix in (' *', '（必填）', ' (required)'):

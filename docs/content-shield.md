@@ -39,6 +39,7 @@
 ## 拒绝与边界
 
 - 每次操作和发送/回放都读取当前设置。设置读失败、规则无效、设置在执行中变化，均不返回未经确认的页面内容。
+- 新的结构读取（snapshot、semantic_snapshot、page.observe、page.parse、official.ready_state、frame_catalog）在前后文档标识不一致时，丢弃旧结果并最多重新读取一次，重新执行全部保护检查。保护设置变化、单次审批凭证、显式 frameToken、cursor/baselineId 读取、截图、脚本和写入动作不自动重试；框架持续变化仍拒绝输出。缓存回放不会重新执行操作。步骤面板对结构读取提示重新读取，写入动作仍提示核对实际结果、不要重复提交。
 - 文档、URL、视口、滚动、DPR、文本、遮罩位置在截图检查中变化时拒绝图片。不会回退原图。旧结果的设置或页面检查不一致时返回 `content_shield_stale`，须用新请求读取；不会为重放重新执行脚本或动作。
 - 同源 iframe、开放及通过 CDP 确认的封闭 Shadow DOM 参与遍历，包括同源 iframe 内的封闭组件。封闭组件超过 200 个、节点解析失败、视觉缩放/偏移、未知几何和扫描上限失败会拒绝相关输出。iframe 内命中规则时遮住最外层宿主框架，以免局部坐标错误。
 - snapshot、semantic_snapshot、page.observe、page.parse、official.ready_state 和 frame_catalog 可跳过不可读取 iframe，继续返回可访问 DOM；结果带 `contentFilter.unreadFrames`，已有 `coverage.complete` 置为 false，page.parse 还返回 `status:partial` 与 `unread_frames` 警告。不会返回被跳过框架的内部正文，也不会因此获得框架动作权限。截图、任意脚本、复杂控件和显式子框架操作仍保留不可检查框架的拒绝边界。

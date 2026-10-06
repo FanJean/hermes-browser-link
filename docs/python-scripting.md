@@ -15,6 +15,8 @@ The script uses the task's only work tab automatically. If the task has several 
 
 ## Helpers
 
+交互快照的每个元素返回固定 `actions`：`click`、`press`、`fill`、`set_checked`、`select_option`，对应现有 `ref_*` 动作。优先使用声明支持的动作；菜单复选/单选共用 `ref_set_checked`。禁用项清单为空，只读项不声明填写/勾选/选择能力。`fill_element` 会利用清单排除同名但不可编辑的展示控件，官方紧凑快照也展示可用动作。此清单只描述控件能力；宿主仍在执行前重新解析引用、核对权限、敏感字段、遮挡和当前状态，执行后读回核验。原生三态框若无法通过一次点击达到目标状态，会在派发前拒绝，不会自动点击两次。
+
 ### Navigation and reading
 
 | Helper | Description |

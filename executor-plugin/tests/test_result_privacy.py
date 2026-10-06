@@ -76,13 +76,14 @@ class ResultPrivacyTests(unittest.TestCase):
     def test_semantic_context_states_and_ax_coverage_survive_closed_projection(self):
         semantic = {'version': 2, 'snapshotId': 's', 'binding': {'taskId': 't', 'documentId': 'd', 'leaseId': 'l'},
                     'items': [{'ref': 'r', 'role': 'button', 'name': '保存', 'nameSource': 'accessibility',
-                               'expanded': False, 'selected': True, 'required': True, 'parentRef': 'row',
+                               'expanded': False, 'selected': True, 'required': True, 'parentRef': 'row', 'actions': ['click', CANARY, {'value': CANARY}, 'press', 'click'],
                                'context': [{'ref': 'row', 'role': 'row', 'name': '设备', 'index': 51, 'value': CANARY}],
                                'value': CANARY, 'axNodes': [CANARY]}],
                     'coverage': {'complete': False, 'axDiscoveryComplete': True, 'axEnriched': 1, 'axOmitted': 1},
                     'contentFilter': {'enabled': True, 'unreadFrames': 1}}
         result, _ = self.invoke(True, 'run', {'task_id': 't', 'tab_id': 1, 'action': 'semantic_snapshot'}, semantic)
         self.assertEqual(result['items'][0]['nameSource'], 'accessibility')
+        self.assertEqual(result['items'][0]['actions'], ['click', 'press'])
         self.assertFalse(result['items'][0]['expanded'])
         self.assertEqual(result['items'][0]['context'][0]['index'], 51)
         self.assertEqual(result['coverage']['axEnriched'], 1)

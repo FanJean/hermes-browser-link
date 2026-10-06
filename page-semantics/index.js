@@ -43,6 +43,9 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   function stats(){return {activeRefs:active.size,baselineItems:baseline?.items.length||0,cursors:cursorState?1:0,maxItems,maxScan,maxText};}
   // 中文注释：复用合法 HTML 编辑属性形式，空值和纯文本模式与 true 使用相同解析链路。
   const editable='[contenteditable="true" i],[contenteditable=""],[contenteditable="plaintext-only" i]';
+  // 中文注释：按 WAI-ARIA 1.2 采用首个有效非抽象角色，未知 token 不覆盖原生语义。
+  const ariaRoles=new Set('alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox complementary contentinfo definition deletion dialog directory document emphasis feed figure form generic grid gridcell group heading img insertion link list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox menuitemradio meter navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status strong subscript suggestion superscript switch tab table tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem'.split(' '));
+  const checkRoles=new Set(['checkbox','radio','switch','menuitemcheckbox','menuitemradio']);
   const selectors={interactive:`button,a[href],input,select,textarea,summary,${editable},[role],[tabindex],div,span`,content:'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,[role="heading"]',table:'tr,[role="row"],[data-ui-name="Body.Row"]'};
   function ref(node){if(!refs.has(node))refs.set(node,`${instance}:e${++sequence}`);return refs.get(node);}
   function quotedValueEnd(text,start,quote){
@@ -174,9 +177,9 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   function text(node){return readText(node);}
   // 中文注释：只暴露控件状态，不返回输入值；同一逻辑用于正文和交互快照。
   function controlState(node,value){
-    if(node.disabled || node.matches(':disabled') || node.getAttribute('aria-disabled')==='true')value.disabled=true;
-    if('checked' in node && ['checkbox','radio','switch'].includes(value.role))value.checked=node.indeterminate?'mixed':node.checked;
-    else if(['checkbox','radio','switch'].includes(value.role)){
+    if(disabled(node))value.disabled=true;
+    if('checked' in node && checkRoles.has(value.role))value.checked=node.indeterminate?'mixed':node.checked;
+    else if(checkRoles.has(value.role)){
       const checked=node.getAttribute('aria-checked');
       if(['true','false','mixed'].includes(checked))value.checked=checked==='mixed'?'mixed':checked==='true';
     }
@@ -250,10 +253,32 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     const view=node.ownerDocument.defaultView;
     return view.getComputedStyle(node).cursor==='pointer'&&(!node.parentElement||view.getComputedStyle(node.parentElement).cursor!=='pointer');
   }
-  function role(node){const explicit=node.getAttribute('role');if(explicit)return explicit.split(/\s+/)[0];const tag=node.localName;
+  function role(node){
+    const explicit=(node.getAttribute('role')||'').split(/\s+/).find(token=>ariaRoles.has(token));
+    // 中文注释：可聚焦元素的 none/presentation 不取消自身原生控件语义。
+    if(explicit&&!(['none','presentation'].includes(explicit)&&(node.tabIndex>=0||node.hasAttribute('tabindex'))))return explicit;
+    const tag=node.localName;
     if(tag==='input'){const type=node.type;return ['checkbox','radio','range','number'].includes(type)?({range:'slider',number:'spinbutton'}[type]||type):['submit','reset','button','image'].includes(type)?'button':'textbox';}
     if(tag==='select' && (node.multiple || node.size>1))return 'listbox';
     return ({button:'button',a:'link',select:'combobox',textarea:'textbox',summary:'button',tr:'row',li:'listitem'})[tag] || (node.getAttribute('data-ui-name')==='Body.Row'?'row':inferredClick(node)?'button':/^h[1-6]$/.test(tag)?'heading':node.isContentEditable||node.matches(editable)?'textbox':'text');
+  }
+  function disabled(node){
+    if(node.disabled||node.matches(':disabled'))return true;
+    // 中文注释：ARIA 禁用约束沿组合祖先链传播，原生 fieldset 的 legend 例外交给 :disabled。
+    for(let current=node;current;current=current.assignedSlot||current.parentElement||current.getRootNode().host||current.ownerDocument.defaultView?.frameElement){
+      if(current.getAttribute('aria-disabled')==='true')return true;
+    }
+    return false;
+  }
+  function interaction(node){
+    const result={role:role(node),actions:[],editable:Boolean(node.isContentEditable||node.matches(editable)),disabled:disabled(node),readonly:Boolean(node.readOnly||node.getAttribute('aria-readonly')==='true')};
+    if(result.disabled||!node.isConnected||node.matches('input[type="password"],input[type="file"],input[type="hidden"]'))return result;
+    result.actions.push('click','press');
+    const textInput=node.localName==='input'&&!['checkbox','radio','range','button','submit','reset','image','color'].includes(node.type);
+    if(!result.readonly&&(textInput||node.localName==='textarea'||result.editable))result.actions.push('fill');
+    if(!result.readonly&&(node.localName==='input'&&['checkbox','radio'].includes(node.type)||checkRoles.has(result.role)&&['true','false','mixed'].includes(node.getAttribute('aria-checked'))))result.actions.push('set_checked');
+    if(!result.readonly&&(node.localName==='select'||['combobox','listbox'].includes(result.role)))result.actions.push('select_option');
+    return result;
   }
   // 中文注释：组件库常在行与单元格之间加入包装层；按最近行归属读取，排除嵌套表格。
   function rowCells(row){
@@ -373,6 +398,8 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     if(r==='row')result.cells=cells.slice(0,40).map(text);
     if(inferredClick(node)&&!node.hasAttribute('role'))result.inferred=true;
     controlState(node,result);
+    // 中文注释：动作清单与宿主的预审和派发资格共用同一描述，只表达能力，不授予权限。
+    result.actions=interaction(node).actions;
     if(r==='row' && cells.length>40){result.omittedCells=cells.length-40;truncated=true;}
     if(truncated)result.truncated=true;
     return result;
@@ -561,5 +588,5 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     source:node=>({sourceRef:ref(node),documentId:identityFor(node.ownerDocument),targetPath:item(node).targetPath||[]}),
     scan:function*(scope,composed,coverage){if(composed)yield* composedElements(scope,coverage);else{const walker=doc.createTreeWalker(scope,1);yield scope;let n;while((n=walker.nextNode()))yield n;}}
   });
-  return {snapshot,resolve,relocation,revoke,stats,parsingContext,accessibilityNode,applyAccessibility};
+  return {snapshot,resolve,relocation,revoke,stats,parsingContext,accessibilityNode,applyAccessibility,interaction};
 }

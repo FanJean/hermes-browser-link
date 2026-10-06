@@ -801,6 +801,11 @@ class SingleToolAdapter:
                     states.append(label if value else "未" + label)
                 elif key == "checked" and value == "mixed":
                     states.append("部分勾选")
+            # 中文注释：官方紧凑快照也展示固定动作，不把任意页面字符串当作可执行能力。
+            action_labels = {'click': '点击', 'press': '按键', 'fill': '填写', 'set_checked': '勾选', 'select_option': '选择'}
+            if isinstance(item.get('actions'), list):
+                actions = list(dict.fromkeys(action for action in item['actions'] if isinstance(action, str) and action in action_labels))
+                states.append('操作：' + '/'.join(action_labels[action] for action in actions) if actions else '无可用动作')
             suffix = "（" + "、".join(states) + "）" if states else ""
             line = "  " * len(path) + f"[{role}{' inferred' if item.get('inferred') is True else ''}] {name}{suffix} [{alias}]"
             if sum(len(part) + 1 for part in lines + branch) + len(line) > _MAX_RENDER_CHARS:

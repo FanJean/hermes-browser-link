@@ -41,6 +41,7 @@
 - `tests/popup-integration/native-routing.test.mjs`：后台受信配置、保存读回、配置 UI 和持续 CDP 事件出口
 - `page-semantics/long-text.test.mjs`
 - `page-semantics/controls.test.mjs`
+- `page-semantics/interaction-contract.test.mjs`：标准角色 token、控件动作清单、禁用继承、只读拒绝及增量能力变化
 - `tests/complex-ui/semantics.test.mjs`：重定位的原文档/Shadow 树身份及边界重挂拒绝、Shadow/iframe、推断点击、组合框、富文本、虚拟列表、表格和 canvas
 - `tests/native-extension/sensitive-fields.test.mjs`：普通字段误判与密码、卡号、验证码正例；旧版失败已复现。
 - `tests/native-extension/bridge-cdp-errors.test.mjs`：扩展固定错误码及结果不确定语义。
