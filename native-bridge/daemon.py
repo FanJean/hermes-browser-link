@@ -2813,10 +2813,16 @@ class BridgeDaemon:
         # 中文注释：只有可信扩展可为浮层清理读取本实例已关闭任务；默认列表保持原有语义。
         if method == "extension.tasks" and (params == {} or (set(params) == {"includeClosed"} and params["includeClosed"] is True)):
             with self.state_lock:
+                if params.get("includeClosed") is True:
+                    # 中文注释：重连清理只需任务身份、代次、状态和标签证据；历史详情会撑破单帧上限。
+                    return [
+                        {key: task[key] for key in ("id", "instanceId", "generation", "state", "tabIds")}
+                        for task in self.tasks.values() if task["instanceId"] == instance_id
+                    ]
                 return [
                     self._public_task(task)
                     for task in self.tasks.values()
-                    if task["instanceId"] == instance_id and (params.get("includeClosed") is True or task["state"] != "closed")
+                    if task["instanceId"] == instance_id and task["state"] != "closed"
                 ]
         if method == "extension.approve":
             # 中文注释：API 请求已归入两档模式，旧的单独审批字段不再接受。

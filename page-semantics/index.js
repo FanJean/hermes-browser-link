@@ -43,6 +43,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   function stats(){return {activeRefs:active.size,baselineItems:baseline?.items.length||0,cursors:cursorState?1:0,maxItems,maxScan,maxText};}
   // 中文注释：复用合法 HTML 编辑属性形式，空值和纯文本模式与 true 使用相同解析链路。
   const editable='[contenteditable="true" i],[contenteditable=""],[contenteditable="plaintext-only" i]';
+  const interactiveRoles=new Set(['button','link','textbox','searchbox','checkbox','radio','combobox','listbox','option','menuitem','menuitemcheckbox','menuitemradio','switch','slider','spinbutton','tab','treeitem']);
   // 中文注释：按 WAI-ARIA 1.2 采用首个有效非抽象角色，未知 token 不覆盖原生语义。
   const ariaRoles=new Set('alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox complementary contentinfo definition deletion dialog directory document emphasis feed figure form generic grid gridcell group heading img insertion link list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox menuitemradio meter navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status strong subscript suggestion superscript switch tab table tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem'.split(' '));
   const checkRoles=new Set(['checkbox','radio','switch','menuitemcheckbox','menuitemradio']);
@@ -136,22 +137,24 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   }
   function clip(value){const safe=redact(value);if(safe.length>maxText)truncated=true;const end=maxText<safe.length && /[\uD800-\uDBFF]/.test(safe[maxText-1])?maxText-1:maxText;return safe.slice(0,end);}
   // 中文注释：slot 按分配节点读取；原有 inline 文本连续拼接，跨块才加分隔，整体脱敏后截断。
-  function* textNodes(root){
+  function* textNodes(root,skipControls=false){
     const stack=[root],seen=new Set();let scanned=0;
     while(stack.length){
       const node=stack.pop();if(seen.has(node))continue;seen.add(node);
       if(++scanned>maxScan){truncated=true;break;}
       if(node.nodeType===3){yield node;continue;}
+      // 中文注释：推断点击行的名称不汇总独立子控件，悬停工具按钮出现时仍指向同一业务目标。
+      if(skipControls&&node!==root&&node.nodeType===1&&(node.matches(`button,a[href],input,select,textarea,summary,${editable},[tabindex]`)||interactiveRoles.has(role(node))))continue;
       if(node.nodeType===1&&node.matches('script,style,noscript,input,textarea,select,[hidden],[aria-hidden="true"],[inert],[data-private]'))continue;
       const assigned=node.localName==='slot'?node.assignedNodes({flatten:true}):[];
       const children=assigned.length?assigned:node.childNodes;
       for(let i=children.length-1;i>=0;i--)stack.push(children[i]);
     }
   }
-  function readText(node, full=false, limit=maxFullText){
+  function readText(node, full=false, limit=maxFullText,skipControls=false){
     let out='',previousBlock=null,consumed=0;
     const shared=typeof limit==='object',cap=full?(shared?limit.remaining:limit):maxText*8;
-    for(const n of textNodes(node)){
+    for(const n of textNodes(node,skipControls)){
       const p=n.parentElement;if(!p||isOverlay(p)||!visible(p,false))continue;
       let block=p;
       while(block.parentElement&&!/^(block|flex|grid|table|list-item|flow-root)/.test(computed(block).display))block=block.parentElement;
@@ -341,7 +344,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       }
     }
   }
-  function item(node,scope=doc.body){truncated=false;const r=role(node);let name=node.getAttribute('aria-label');
+  function item(node,scope=doc.body){truncated=false;const r=role(node),inferred=inferredClick(node)&&!node.hasAttribute('role');let name=node.getAttribute('aria-label');
     if(!name && node.getAttribute('aria-labelledby'))name=node.getAttribute('aria-labelledby').split(/\s+/).map(id=>{const el=node.getRootNode().getElementById?.(id);return el?text(el):'';}).join(' ');
     if(!name && node.labels?.length)name=Array.from(node.labels).map(text).join(' ');
     // 中文注释：无标签输入框可按占位提示定位，明确来源且仍经过脱敏/预算检查。
@@ -350,7 +353,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       if(node.type==='image')name=node.getAttribute('alt')||'';
       else if(['submit','reset','button'].includes(node.type))name=node.getAttribute('value')||({submit:'Submit',reset:'Reset'}[node.type]||'');
     }
-    let content=name||text(node),nameSource=null;
+    let content=name||(inferred?readText(node,false,maxFullText,true):text(node)),nameSource=null;
     // 中文注释：图标按钮的名称可来自图片 alt、SVG title 或 tooltip，仍使用既有脱敏和截断。
     if(!content){
       const icons=node.querySelectorAll('img[alt],svg title');
@@ -396,7 +399,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     else if(nameSource&&result.nameSource!=='accessibility')result.nameSource=nameSource;
     const cells=r==='row'?rowCells(node):[];
     if(r==='row')result.cells=cells.slice(0,40).map(text);
-    if(inferredClick(node)&&!node.hasAttribute('role'))result.inferred=true;
+    if(inferred)result.inferred=true;
     controlState(node,result);
     // 中文注释：动作清单与宿主的预审和派发资格共用同一描述，只表达能力，不授予权限。
     result.actions=interaction(node).actions;
@@ -487,7 +490,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       output.coverage.scanned++;
       if(node.localName==='canvas'&&visible(node,false))output.coverage.unsupportedCanvas++;
       if(!node.matches(selectors[mode]))continue;
-      if(mode==='interactive' && !node.matches(`button,a[href],input,select,textarea,summary,${editable},[tabindex]`) && !['button','link','textbox','searchbox','checkbox','radio','combobox','listbox','option','menuitem','menuitemcheckbox','menuitemradio','switch','slider','spinbutton','tab','treeitem'].includes(role(node)))continue;
+      if(mode==='interactive' && !node.matches(`button,a[href],input,select,textarea,summary,${editable},[tabindex]`) && !interactiveRoles.has(role(node)))continue;
       if(!visible(node,viewport) || (mode==='interactive' && node.matches('input[type="hidden"]'))){output.coverage.filtered++;continue;}
       const value=mode==='interactive'?item(node,scope):fullItem(node,mode);
       if((roles.length && !roles.includes(value.role)) || (query && !value.name.toLocaleLowerCase().includes(redact(query).toLocaleLowerCase()))){output.coverage.filtered++;continue;}

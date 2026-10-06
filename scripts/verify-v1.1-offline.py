@@ -96,6 +96,7 @@ NODE_TESTS = (
     'tests/popup-integration/native-routing.test.mjs',
     'page-semantics/long-text.test.mjs',
     'page-semantics/controls.test.mjs',
+    'page-semantics/inferred-name.test.mjs',
     'page-semantics/interaction-contract.test.mjs',
     'tests/complex-ui/semantics.test.mjs',
     'tests/complex-ui/actions.test.mjs',
@@ -150,7 +151,7 @@ PYTHON_FILES = {
                               'test_native_integration.py', 'test_plugin.py', 'test_open_tool.py',
                               # 中文注释：结果隐私用例包含 1.3.3 复杂界面的跨层字段与错误摘要。
                               'test_result_privacy.py'),
-    'native-bridge/tests': ('test_tasks.py', 'test_fd_lifecycle.py', 'test_cleanup_contract.py',
+    'native-bridge/tests': ('test_tasks.py', 'test_fd_lifecycle.py', 'test_host_shutdown.py', 'test_cleanup_contract.py',
                             'test_cancel_routing.py', 'test_browser_consent.py', 'test_manual_input.py'),
 }
 # Keep one baseline step per suite, but import only these exact V1.1 files.

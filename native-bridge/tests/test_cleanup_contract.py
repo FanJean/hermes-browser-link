@@ -1,11 +1,13 @@
 """Cleanup is independent of task execution state and requires positive readback."""
+import copy
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from daemon import BridgeDaemon, ProtocolError
+from daemon import BridgeDaemon, ProtocolError, _encode_line
 
 
 class CleanupContractTests(unittest.TestCase):
@@ -41,6 +43,32 @@ class CleanupContractTests(unittest.TestCase):
         for params in ({'includeClosed': 1}, {'includeClosed': False}, {'includeClosed': True, 'instanceId': 'other'}):
             with self.assertRaises(ProtocolError):
                 self.daemon._dispatch_extension('browser', 'extension.tasks', params)
+
+    def test_overlay_cleanup_history_fits_transport_without_changing_records(self):
+        # 中文注释：历史操作详情会超过单帧上限，清理只需身份、状态、代次与标签证据。
+        row = self.daemon.tasks[self.task['id']]
+        row['state'] = 'needs_sync'
+        row['tabIds'] = [7]
+        row['currentOperation'] = {'action': 'snapshot', 'state': 'succeeded', 'startedAt': 1}
+        row['operationTimeline'] = [dict(row['currentOperation'], completedAt=2, durationMs=1000)] * 32
+        for index in range(500):
+            self.daemon.tasks[f'history-{index}'] = {**row, 'id': f'history-{index}', 'state': 'closed'}
+        self.daemon.tasks['foreign'] = {**row, 'id': 'foreign', 'instanceId': 'other'}
+        baseline = copy.deepcopy(self.daemon.tasks)
+        full = [self.daemon._public_task(t) for t in baseline.values() if t['instanceId'] == 'browser']
+        self.assertGreater(len(json.dumps({'id': 'history', 'result': full}).encode()), 1024 * 1024)
+        with self.assertRaises(ValueError):
+            _encode_line({'id': 'history', 'result': full})
+        listed = self.daemon._dispatch_extension('browser', 'extension.tasks', {'includeClosed': True})
+        self.assertEqual(len(listed), 501)
+        self.assertLess(len(_encode_line({'id': 'history', 'result': listed})), 128 * 1024)
+        self.assertEqual(listed[0], {key: row[key] for key in ('id', 'instanceId', 'generation', 'state', 'tabIds')})
+        self.assertTrue(all(set(t) == {'id', 'instanceId', 'generation', 'state', 'tabIds'} for t in listed))
+        self.assertEqual(self.daemon.tasks, baseline)
+        active = self.daemon._dispatch_extension('browser', 'extension.tasks', {})
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]['operationTimeline'], row['operationTimeline'])
+        self.assertEqual(active[0]['title'], row['title'])
 
     def test_handoff_preserves_work_page_and_revokes_lease(self):
         # 中文注释：用户接管时自动结束保留页面，但任务权限立即失效。

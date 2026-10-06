@@ -19,6 +19,8 @@ Runtime data lives in `$HERMES_HOME/plugin-data/browser-link-native/` (mode `070
 
 ## Behavior worth knowing
 
+- Native host uses cancellable unbuffered pipe I/O and joins both forwarding threads before closing its socket reader. Bridge EOF, partial frames and a browser that stops draining output do not leave a buffered daemon thread alive at interpreter shutdown.
+- `extension.tasks` with `{includeClosed: true}` is the trusted extension's overlay cleanup inventory. Each row contains only `id`, `instanceId`, `generation`, `state` and `tabIds`; operation history remains persisted and ordinary task reads retain their existing details. This keeps reconnect cleanup below the transport limit for large histories.
 - A lost response after dispatch returns `outcome_unknown`; the client never replays.
 - Approval authority is never restored after a daemon or connection restart. Non-terminal tasks become `needs_sync` and need `shared.resume` plus fresh approval.
 - Each task keeps at most 4096 hashed request-ID/payload bindings. A retained ID whose outcome is unknown after a restart fails with `request_outcome_unavailable`.

@@ -462,7 +462,7 @@ class GateNegativeControls(unittest.TestCase):
         # 中文注释：当前显式矩阵已纳入新增基准与版本回归，保持实际审阅后的数量。
         # 中文注释：诊断三个固定 Python runner 各新增一步，原有四十步全部保留。
         # 中文注释：自动更新增加一个固定离线 runner，不改变补充或真实浏览器门禁。
-        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 48)
+        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 49)
         self.assertEqual(len(gate.supplemental_matrix(Path('/scratch/source'), '/scratch/python')), 2)
 
     def test_browser_use_cli_source_is_discovered_from_cli_without_executing_it(self):

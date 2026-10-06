@@ -30,6 +30,9 @@ with (nullcontext(os.environ['TMPDIR']) if 'TMPDIR' in os.environ else tempfile.
             'tests/v1.6.0', 'tests/v1.5.2', 'tests/v1.5.0', 'tests/v1.4', 'tests/v1.4.1', 'tests/v1.4.2', 'tests/v1.4.3', 'tests/v1.4.4', 'tests/v1.3.6', 'tests/v1.1-runtime-performance', 'tests/v1.1-single-tools',
             'tests/v1.1-concurrency', 'browser-diagnostics/tests')],
         [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/site-tools', '-v'],
+        # 中文注释：真实管道的退出回归只使用临时 UDS，不连接或注册个人浏览器。
+        [sys.executable, '-m', 'unittest', 'discover', '-s', 'native-bridge/tests', '-p', 'test_host_shutdown.py', '-v'],
+        [sys.executable, '-m', 'unittest', 'discover', '-s', 'native-bridge/tests', '-p', 'test_cleanup_contract.py', '-v'],
         # 中文注释：独立云端入口的身份、Native 帧和本地任务隔离纳入离线门禁。
         [sys.executable, '-m', 'unittest', 'discover', '-s', 'cloud-link/tests', '-v'],
         [sys.executable, 'scripts/generate-browser-reference.py', '--check'],

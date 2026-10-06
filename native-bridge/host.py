@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import select
 import socket
 import struct
 import sys
@@ -15,6 +16,45 @@ from typing import Any, Dict
 from client import ensure_service
 
 _MAX_MESSAGE = 1024 * 1024
+
+
+class _NativePipe:
+    """可取消的无缓冲管道，避免退出时争用 Python 标准流的缓冲锁。"""
+
+    def __init__(self, fd: int, stopped: threading.Event):
+        self.fd = fd
+        self.stopped = stopped
+
+    def _wait(self, *, writing: bool = False) -> None:
+        while not self.stopped.is_set():
+            readable, writable, _ = select.select(
+                [] if writing else [self.fd], [self.fd] if writing else [], [], 0.1
+            )
+            if readable or writable:
+                return
+        raise EOFError
+
+    def read(self, size: int) -> bytes:
+        while True:
+            self._wait()
+            try:
+                return os.read(self.fd, size)
+            except BlockingIOError:
+                continue
+
+    def write(self, payload: bytes) -> None:
+        remaining = memoryview(payload)
+        while remaining:
+            self._wait(writing=True)
+            try:
+                written = os.write(self.fd, remaining)
+            except BlockingIOError:
+                continue
+            remaining = remaining[written:]
+
+    def flush(self) -> None:
+        # 中文注释：os.write 已直接写入管道，无 Python 缓冲需要刷新。
+        pass
 
 
 def _read_exact(stream, size: int) -> bytes:
@@ -98,11 +138,14 @@ def main() -> int:
     _write_json_line(bridge, {"role": "extension", "token": token, "origin": origin}, socket_write_lock)
 
     stopped = threading.Event()
+    input_fd, output_fd = sys.stdin.fileno(), sys.stdout.fileno()
+    native_input = _NativePipe(input_fd, stopped)
+    native_output = _NativePipe(output_fd, stopped)
 
     def native_to_bridge() -> None:
         try:
             while not stopped.is_set():
-                _write_json_line(bridge, read_native_message(sys.stdin.buffer), socket_write_lock)
+                _write_json_line(bridge, read_native_message(native_input), socket_write_lock)
         except (EOFError, OSError, ValueError, json.JSONDecodeError):
             pass
         finally:
@@ -115,20 +158,36 @@ def main() -> int:
     def bridge_to_native() -> None:
         try:
             while not stopped.is_set():
-                write_native_message(sys.stdout.buffer, _read_json_line(bridge_reader), native_write_lock)
+                write_native_message(native_output, _read_json_line(bridge_reader), native_write_lock)
         except (EOFError, OSError, ValueError, json.JSONDecodeError):
             pass
         finally:
             stopped.set()
 
-    input_thread = threading.Thread(target=native_to_bridge, daemon=True)
-    output_thread = threading.Thread(target=bridge_to_native, daemon=True)
-    input_thread.start()
-    output_thread.start()
-    while not stopped.wait(0.1):
-        pass
-    bridge_reader.close()
-    bridge.close()
+    input_thread = threading.Thread(target=native_to_bridge)
+    output_thread = threading.Thread(target=bridge_to_native)
+    original_blocking = {fd: os.get_blocking(fd) for fd in (input_fd, output_fd)}
+    try:
+        # 中文注释：半截帧和浏览器不读输出时也不能阻止线程收到退出信号。
+        for fd in original_blocking:
+            os.set_blocking(fd, False)
+        input_thread.start()
+        output_thread.start()
+        stopped.wait()
+    finally:
+        stopped.set()
+        try:
+            bridge.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        # 中文注释：先唤醒 socket 读写并等待两个线程结束，再关闭 reader；标准流不提前关闭。
+        for thread in (input_thread, output_thread):
+            if thread.ident is not None:
+                thread.join()
+        bridge_reader.close()
+        bridge.close()
+        for fd, blocking in original_blocking.items():
+            os.set_blocking(fd, blocking)
     return 0
 
 

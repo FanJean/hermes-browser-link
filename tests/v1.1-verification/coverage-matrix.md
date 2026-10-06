@@ -194,3 +194,10 @@
 - `cloud-link/tests/test_native.py`：临时 HOME 的 Native 帧、注册来源与未配对拒绝
 - `cloud-link/tests/test_scheduler.py`：跨会话/页面并发、同页顺序、关闭屏障、取消保留容量与闲置回收
 - `cloud-link/tests/test_service.py`：等待执行时心跳继续、结束后线程与锁释放
+
+## 1.8.4 退出与会话引用
+
+- 新增 Native host 退出文件后，固定 baseline 门禁为 49 步；reviewed 49 步和 supplemental 2 步保持独立。
+- `native-bridge/tests/test_host_shutdown.py`：真实管道、隔离 UDS、半截帧、输出堵塞、断管及大量历史经过真实 host/daemon 后继续读取，不连接个人浏览器。
+- `native-bridge/tests/test_cleanup_contract.py`：历史清理投影低于传输限制、跨实例隔离、完整历史与普通详情保留。
+- `page-semantics/inferred-name.test.mjs`：悬停按钮显隐不改变推断行名称，业务文字变更拒绝旧引用，独立控件、正文及多列表格链接保留。
