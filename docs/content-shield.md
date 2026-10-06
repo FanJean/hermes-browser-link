@@ -41,7 +41,8 @@
 - 每次操作和发送/回放都读取当前设置。设置读失败、规则无效、设置在执行中变化，均不返回未经确认的页面内容。
 - 文档、URL、视口、滚动、DPR、文本、遮罩位置在截图检查中变化时拒绝图片。不会回退原图。旧结果的设置或页面检查不一致时返回 `content_shield_stale`，须用新请求读取；不会为重放重新执行脚本或动作。
 - 同源 iframe、开放及通过 CDP 确认的封闭 Shadow DOM 参与遍历，包括同源 iframe 内的封闭组件。封闭组件超过 200 个、节点解析失败、视觉缩放/偏移、未知几何和扫描上限失败会拒绝相关输出。iframe 内命中规则时遮住最外层宿主框架，以免局部坐标错误。
-- snapshot、semantic_snapshot、page.observe、page.parse、official.ready_state 和 frame_catalog 可跳过不可读取 iframe，继续返回可访问 DOM；结果带 `contentFilter.unreadFrames`，已有 `coverage.complete` 置为 false，page.parse 还返回 `status:partial` 与 `unread_frames` 警告。不会返回被跳过框架的内部正文，也不会因此获得框架动作权限。可见的不可检查框架仍阻止截图及控件操作。
+- snapshot、semantic_snapshot、page.observe、page.parse、official.ready_state 和 frame_catalog 可跳过不可读取 iframe，继续返回可访问 DOM；结果带 `contentFilter.unreadFrames`，已有 `coverage.complete` 置为 false，page.parse 还返回 `status:partial` 与 `unread_frames` 警告。不会返回被跳过框架的内部正文，也不会因此获得框架动作权限。截图、任意脚本、复杂控件和显式子框架操作仍保留不可检查框架的拒绝边界。
+- 顶层原生引用操作（ref_click、ref_fill、ref_press、ref_set_checked、ref_select_option）可使用宿主核实的真实节点范围。无关不可读 iframe 不再阻断该目标；包含或覆盖目标的框架仍拒绝，嵌套框架按最外层宿主坐标核验。范围检查覆盖派发前的高亮等待/滚动、操作后和结果交付，字段脱敏仍扫描所有可访问内容。目标证明只保存在扩展内部，模型传入的节点编号不能授权。此范围适用于原生链接、按钮、输入框、文本域、复选框及 select；ARIA 复合控件、选择器/坐标动作沿用严格检查。
 - 对固定格式的页面读取、控件操作和截图，若 iframe 本身或其真实祖先链明确为 `display:none`，可跳过该框架；不读取其正文，也不把它算作当前可见页面的覆盖缺口。截图前后会复查隐藏状态；框架变为可见或状态无法确认时拒绝输出。零尺寸、透明、`visibility:hidden` 或 `about:blank` 地址都不能替代这一检查；空 sandbox 框架也不能按地址推断为同源。任意脚本输出与显式 frameToken 读取仍拒绝不可检查框架。
 - semantic_snapshot 与 page.parse 显式指定 root 时，只统计该根内的不可读框架；根外的第三方框架不影响局部完整性。显式 frameToken 读取会返回目标框架正文，不能沿用顶层部分读取的跳过规则；该框架保护未确认时继续拒绝。
 - 固定语义角色与覆盖率字段保留协议含义，避免短屏蔽词损坏 listbox 等角色。任意脚本返回的同名字段仍作为页面值过滤。

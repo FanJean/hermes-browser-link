@@ -21,7 +21,12 @@ const copy=value=>structuredClone(value);
 function createFixture({pauseHighlight=false,captureError=false,overlayEvents=true}={}){
  const dom=new JSDOM(`<!doctype html><button id="save">Save</button><input id="query" type="text"><select id="country"><option value="us">US</option></select><div id="source">Source</div><div id="target">Target</div>`,
   {url:origin+'/',runScripts:'outside-only',pretendToBeVisual:true});
- const {window}=dom,document=window.document,events=[],calls=[],objects=new Map(),listeners=new Set();
+ const {window}=dom,document=window.document,events=[],calls=[],objects=new Map(),listeners=new Set(),backendNodes=new Map(),backendIds=new WeakMap();
+ // 中文注释：节点编号与远程句柄分开模拟，释放句柄后仍可用可信 backendNodeId 重新解析原节点。
+ let remoteId=0,nextBackend=100;
+ const backend=node=>{if(!backendIds.has(node)){backendIds.set(node,++nextBackend);backendNodes.set(nextBackend,node);}return backendIds.get(node);};
+ const remote=node=>{const id=`remote-${++remoteId}`;objects.set(id,node);return id;};
+ const argument=value=>value.objectId?objects.get(value.objectId):value.value;
  // Open the production overlay shadow root only in this synthetic fixture so its
  // rendered target box and screenshot visibility can be read back deterministically.
  const attachShadow=window.Element.prototype.attachShadow;
@@ -94,22 +99,23 @@ function createFixture({pauseHighlight=false,captureError=false,overlayEvents=tr
       const receiver=objects.get(params.objectId);
       if(!receiver)throw Error('synthetic object unavailable');
       const fn=window.eval(`(${params.functionDeclaration})`);
-      value=fn.apply(receiver,(params.arguments||[]).map(item=>item.value));
+      value=fn.apply(receiver,(params.arguments||[]).map(argument));
      }else{
       const fn=window.eval(`(${params.functionDeclaration})`);
-      value=fn(...(params.arguments||[]).map(item=>item.value));
+      value=fn(...(params.arguments||[]).map(argument));
      }
      await observeHighlight();
+     if(params.returnByValue===false&&value?.nodeType===1)return {result:{objectId:remote(value)}};
      return {result:{value:copy(value)}};
     }
     if(method==='Runtime.evaluate'){const value=window.eval(params.expression);await observeHighlight();return {result:{value:copy(value)}};}
     if(method==='DOM.getNodeForLocation'){
      const node=hitTest(params.x,params.y)||document.body;
-     const backendNodeId=100+objects.size;objects.set(`hit-${backendNodeId}`,node);
-     return {backendNodeId};
+     return {backendNodeId:backend(node)};
     }
-    if(method==='DOM.resolveNode')return {object:{objectId:`hit-${params.backendNodeId}`}};
-    if(method==='Runtime.releaseObject')return {};
+    if(method==='DOM.describeNode')return {node:{backendNodeId:backend(objects.get(params.objectId))}};
+    if(method==='DOM.resolveNode')return {object:{objectId:remote(backendNodes.get(params.backendNodeId))}};
+    if(method==='Runtime.releaseObject'){objects.delete(params.objectId);return {};}
     if(method==='Page.captureScreenshot'){
      const hosts=[...document.querySelectorAll('[data-hermes-automation-overlay]')];
      // Screenshots make the overlay transparent (still blocking input); record that as hidden.
@@ -143,6 +149,42 @@ async function authorizeFull(executor){
  executor.setMode({...task,activeMode:'full',modeGeneration:2});
 }
 async function snapshotFor(executor){return executor.execute(request('semantic_snapshot'));}
+// 中文注释：生产执行器与 Bridge 使用真实引用和节点范围，验证重放只交付原结果，不再次写入字段。
+test('目标级保护贯穿引用、输入和结果回放，伪造范围不能扩大权限',async()=>{
+ const f=createFixture();f.executor.onContentShield=async()=>({enabled:true,rules:{}});await authorizeFull(f.executor);
+ const iframe=f.document.createElement('iframe');f.document.body.append(iframe);Object.defineProperty(iframe,'contentDocument',{get:()=>null});
+ iframe.getBoundingClientRect=()=>({x:60,y:10,width:30,height:25});
+ try{
+  const snapshot=await snapshotFor(f.executor),input=snapshot.items.find(item=>item.role==='textbox');assert.ok(input);
+  const params=request('ref_fill',{binding:snapshot.binding,snapshotId:snapshot.snapshotId,ref:input.ref,text:'scope-fixture-value'});
+  let reply;const bridge=new Bridge({onMessage:{addListener(){}},postMessage:value=>reply(value)},f.executor,()=>{},{onContentFilter:async()=>true});
+  const call=()=>new Promise(resolve=>{reply=resolve;bridge.receive({id:'target-scope',method:'browser.execute',params});});
+  const first=await call();assert.equal(first.error,undefined,JSON.stringify(first));assert.equal(f.document.querySelector('#query').value,'scope-fixture-value');
+  const replay=await call();assert.deepEqual(replay,first);assert.equal(f.events.filter(e=>e.type==='side-effect'&&e.name==='fill').length,1);
+  assert.equal(JSON.stringify(first).includes('backendNodeId'),false);
+  await assert.rejects(f.executor.execute({...params,binding:{...params.binding,leaseId:'forged'},writeTarget:{backendNodeId:1}}),error=>error.message==='BINDING_MISMATCH'&&error.preDispatch===true);
+  assert.equal(f.events.filter(e=>e.type==='side-effect'&&e.name==='fill').length,1);
+ }finally{f.document.querySelector('[data-hermes-automation-overlay]')?.dispatchEvent(new f.window.Event('hermes-overlay-release'));f.dom.window.close();}
+});
+// 中文注释：从执行器真实语义回执绘制边框，验证效果不混入返回值、截图或下一次输入。
+test('语义解析回执显示真实元素边框，截图隐藏装饰，新动作清除解析反馈',async()=>{
+ const f=createFixture();await authorizeFull(f.executor);
+ try{
+  const result=await snapshotFor(f.executor),host=f.document.querySelector('[data-hermes-automation-overlay]');
+  const frames=host.shadowRoot.querySelector('[data-role="parsing-elements"]');
+  assert.ok(frames.children.length>0);assert.equal(frames.style.display,'block');
+  const save=[...frames.children].find(node=>node.style.left==='10px'&&node.style.top==='10px');
+  assert.equal(save.style.width,'24px');assert.equal(save.style.height,'16px');
+  assert.equal(JSON.stringify(result).includes('parsing-elements'),false);
+  await f.executor.execute(request('screenshot'));
+  assert.ok(f.events.some(event=>event.type==='capture'&&event.overlayDisplays.every(display=>display==='none')));
+  assert.equal(frames.children.length,0);
+  const parsedCall=f.calls.find(({method,params})=>method==='Runtime.callFunctionOn'&&params.arguments?.[0]?.value==='parsed');
+  assert.ok(parsedCall);assert.equal(typeof parsedCall.params.arguments[1].value.expectedActionToken,'string');
+  const entry=f.executor.tasks.get(task.id).overlays.get(7);
+  assert.equal(await f.executor.overlayCall(7,entry,'parsed',{expectedActionToken:'old-step',rects:[{x:1,y:2,width:30,height:40}]}),false);
+ }finally{f.document.querySelector('[data-hermes-automation-overlay]')?.dispatchEvent(new f.window.Event('hermes-overlay-release'));f.dom.window.close();}
+});
 function assertTargetShownBeforeEffect(fixture,effectName,expectedRects=[]){
  const effects=fixture.events.filter(event=>event.type==='side-effect'&&event.name===effectName);
  assert.ok(effects.length>0,`synthetic ${effectName} side effect was not observed`);

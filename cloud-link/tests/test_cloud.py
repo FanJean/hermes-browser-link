@@ -107,6 +107,41 @@ class CloudTests(unittest.TestCase):
         self.assertEqual(result['tabId'], 8)
         self.assertNotIn('secretToken', json.dumps(result))
         self.assertEqual(self.bridge.calls[-1][1]['requestId'], 'command-a')
+    # 中文注释：定位错误产生层；云端执行器和去重回执应保留本机错误分类，不重放失败的写入。
+    def test_native_error_origin_survives_cloud_executor_and_journal(self):
+        self.create()
+        original = self.bridge.call
+        runs = []
+        current = {}
+        class BrowserFailure(RuntimeError):
+            def __init__(self, code, unknown):
+                super().__init__('PRIVATE_BROWSER_EXCEPTION_CANARY')
+                self.code = code
+                self.data = {'outcomeUnknown': unknown, 'retryable': False}
+        def call(method, params):
+            if method == 'shared.run':
+                runs.append(params['requestId'])
+                raise BrowserFailure(current['code'], current['unknown'])
+            return original(method, params)
+        self.bridge.call = call
+        journal = client_module.Journal(self.path / 'error-origin.sqlite')
+        self.addCleanup(journal.close)
+        for index, (code, unknown) in enumerate([
+                ('content_shield_uninspectable', False), ('stale_reference', True),
+                ('target_occluded', False), ('invalid_target_state', True)]):
+            with self.subTest(code=code):
+                current.update(code=code, unknown=unknown)
+                command = self.command('run', {'task_id': 'cloud-task', 'action': 'ref_fill', 'tab_id': 8,
+                    'binding': {'taskId': 'cloud-task', 'documentId': 'doc', 'leaseId': 'lease'},
+                    'snapshot_id': 'snapshot', 'ref': 'field', 'text': 'fixture'}, id=f'error-origin-{index}')
+                result = journal.execute(command, self.executor)
+                self.assertEqual(result['bridgeCode'], code)
+                self.assertEqual(result['outcome_unknown'], unknown)
+                self.assertFalse(result['retryable'])
+                self.assertNotEqual(result['code'], 'outcome_unknown')
+                self.assertNotIn('PRIVATE_BROWSER_EXCEPTION_CANARY', json.dumps(result))
+                self.assertEqual(journal.execute(command, self.executor), result)
+                self.assertEqual(len(runs), index + 1)
     def test_approval_waits_for_confirmed_ledger_before_reading_receipt(self):
         self.create()
         original = self.bridge.call

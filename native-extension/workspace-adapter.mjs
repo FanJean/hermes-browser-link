@@ -27,9 +27,12 @@ export class NativeWorkspaces {
   await this.ready;
   if(task.instanceId!==this.authority.instance)throw Error('WORKSPACE_INSTANCE_MISMATCH');
   // 中文注释：原授权页不移动；新建任务组默认始终进入独立工作窗口。
-  const windowId=task.workWindowMode==='current'?(tabs[0]?.windowId??(await this.api.windows.getCurrent()).id):await this.workWindow.ensure();
-  const cap=this.authority.issue({owner:task.approvalScope,task:task.id,generation:task.generation,windowId});
-  await this.manager.start(cap);
+  const owner=JSON.stringify([task.instanceId,task.approvalScope,task.id,task.generation]);
+  const windowId=task.workWindowMode==='current'?(tabs[0]?.windowId??(await this.api.windows.getCurrent()).id):await this.workWindow.ensure(owner);
+  this.workWindow.retain(owner,windowId);
+  let cap;
+  try{cap=this.authority.issue({owner:task.approvalScope,task:task.id,generation:task.generation,windowId});await this.manager.start(cap);}
+  catch(error){await this.workWindow.closeIdle(owner,windowId);throw error;}
   return cap;
  }
  // 中文注释：只在本扩展工作窗口内切前台；用户拖走的工作页继续遵循既有所有权规则。
@@ -52,7 +55,16 @@ export class NativeWorkspaces {
  }
  spawned(cap,tab){return this.manager.spawned(cap,tab);}
  cleanupStatus(cap){return this.manager.status(cap);}
- cleanup(cap,options){return this.manager.cleanup(cap,options);}
+ // 中文注释：工作页清理成功后才释放窗口占用；失败和未知结果不触发空窗口删除。
+ async cleanup(cap,options={}){
+  const deadline=Date.now()+Math.max(1,Math.min(options.timeoutMs??2000,2000));
+  const result=await this.manager.cleanup(cap,options);
+  if(result.cleanupState==='succeeded'){
+   const id=this.authority.resolve(cap,{allowStale:true}),owner=JSON.stringify([id.instance,id.owner,id.task,id.generation]);
+   await this.workWindow.closeIdle(owner,id.windowId,{...options,timeoutMs:Math.max(0,deadline-Date.now())});
+  }
+  return result;
+ }
  // 中文注释：当前 worker 的能力与重载能力共用同一收组实现。
  ungroup(cap,options){return this.manager.ungroup(cap,options);}
  // 中文注释：终态收组只接受扩展 local 日志恢复的能力，daemon 传来的标题和组号不能生成能力。
@@ -64,7 +76,7 @@ export class NativeWorkspaces {
  }
  async cleanupRecovered(taskId,generation,options){
   await this.ready;
-  for(const [key,cap] of this.recovered){const [, ,task,gen]=JSON.parse(key);if(task===taskId&&gen===generation)await this.manager.cleanup(cap,options);}
+  for(const [key,cap] of this.recovered){const [, ,task,gen]=JSON.parse(key);if(task===taskId&&gen===generation)await this.cleanup(cap,options);}
  }
  async status(){
   await this.ready;

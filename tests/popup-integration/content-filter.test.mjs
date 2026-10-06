@@ -81,6 +81,8 @@ import {Executor,classifySensitiveField} from '../../native-extension/core.mjs';
 import {validateShieldRules,collectShield,redactShieldResult} from '../../native-extension/content-shield.mjs';
 // 中文注释：直调页面声明也注入同一生产分类器；不保留未注入分类器的旧调用方式。
 const shieldDeclaration=`function(options){const classifySensitiveField=(${classifySensitiveField.toString()});return (${collectShield.toString()})(options);}`;
+// 中文注释：目标来自受信宿主解析的真实 DOM 节点，不能用模型传入的 JSON 伪造范围。
+const targetedShieldDeclaration=`function(options,target){const classifySensitiveField=(${classifySensitiveField.toString()});return (${collectShield.toString()})(options,target);}`;
 const shieldOrigin='https://shield.test';
 const secret='区域私密正文';
 function shieldFixture({enabled=true,selectors=['#private']}={}){
@@ -524,6 +526,39 @@ test('跨源 iframe 不阻断顶层结构读取，但明确报告不完整',asyn
  // 中文注释：目标框架的正文尚未保护时，即使显式选择该框架也不能借部分读取规则输出。
  await assert.rejects(f.e.execute({...f.request('semantic_snapshot'),options:{frameToken:'frame-token',root:'#private'}}),/CONTENT_SHIELD_UNINSPECTABLE/);
  f.dom.window.close();
+});
+
+// 中文注释：无关不可读框架不阻断已核实原生目标，遮挡、包含关系和不可检查目标继续拒绝。
+test('保护检查允许无关跨源框架，但目标关联框架仍拒绝',()=>{
+ const f=shieldFixture(),input=f.w.document.createElement('input'),frame=f.w.document.createElement('iframe');
+ f.w.document.body.append(input,frame);Object.defineProperty(frame,'contentDocument',{get:()=>null});
+ input.getBoundingClientRect=()=>({x:10,y:10,width:100,height:30});frame.getBoundingClientRect=()=>({x:300,y:100,width:160,height:90});
+ const inspect=options=>f.w.eval(`(${targetedShieldDeclaration})`)({selectors:['#private'],restrictionSources:[],...options},input);
+ try{
+  const inventory=inspect({});assert.equal(inventory.writeTargetVerified,true);assert.equal(inventory.skippedFrames,1);assert.ok(inventory.tokens.includes(secret));
+  frame.getBoundingClientRect=()=>({x:20,y:15,width:80,height:20});assert.throws(()=>inspect({}),/CONTENT_SHIELD_UNINSPECTABLE/);
+  frame.getBoundingClientRect=()=>({x:300,y:100,width:160,height:90});input.remove();assert.throws(()=>inspect({}),/CONTENT_SHIELD_UNINSPECTABLE/);
+  f.w.document.body.append(input);assert.throws(()=>inspect({forCapture:true}),/CONTENT_SHIELD_UNINSPECTABLE/);
+  assert.throws(()=>f.w.eval(`(${targetedShieldDeclaration})`)({selectors:['#private'],restrictionSources:[]},{ownerDocument:f.w.document,isConnected:true}),/CONTENT_SHIELD_UNINSPECTABLE/);
+ }finally{f.dom.window.close();}
+});
+test('包含不可读框架的点击区域不能使用局部检查放行',()=>{
+ const f=shieldFixture(),button=f.w.document.createElement('button'),frame=f.w.document.createElement('iframe');
+ button.append(frame);f.w.document.body.append(button);Object.defineProperty(frame,'contentDocument',{get:()=>null});
+ button.getBoundingClientRect=()=>({x:10,y:10,width:100,height:30});frame.getBoundingClientRect=()=>({x:300,y:100,width:160,height:90});
+ try{assert.throws(()=>f.w.eval(`(${targetedShieldDeclaration})`)({selectors:['#private'],restrictionSources:[]},button),/CONTENT_SHIELD_UNINSPECTABLE/);}finally{f.dom.window.close();}
+});
+test('同源框架内的不可读框架按最外层宿主坐标核验，不混用子视口坐标',()=>{
+ const f=shieldFixture(),input=f.w.document.createElement('input'),outer=f.w.document.createElement('iframe');
+ f.w.document.body.append(input,outer);input.getBoundingClientRect=()=>({x:10,y:10,width:100,height:30});
+ outer.getBoundingClientRect=()=>({x:300,y:100,width:160,height:90});
+ const inner=outer.contentDocument.createElement('iframe');outer.contentDocument.body.append(inner);Object.defineProperty(inner,'contentDocument',{get:()=>null});
+ inner.getBoundingClientRect=()=>({x:0,y:0,width:5,height:5});
+ const inspect=()=>f.w.eval(`(${targetedShieldDeclaration})`)({selectors:['#private'],restrictionSources:[]},input);
+ try{
+  assert.equal(inspect().writeTargetVerified,true);
+  outer.getBoundingClientRect=()=>({x:10,y:10,width:100,height:40});assert.throws(inspect,/CONTENT_SHIELD_UNINSPECTABLE/);
+ }finally{f.dom.window.close();}
 });
 
 // 中文注释：CDP 提供的封闭组件必须进入与开放组件相同的文本屏蔽；页面代码无法创建该映射。

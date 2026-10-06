@@ -292,7 +292,8 @@ _RESULT_TASK = {
     'workTabs': [_scalar_fields('tabId windowId groupId state')],
     'pendingInteraction': _scalar_fields('kind count'),
     'resumeSummary': _scalar_fields('urlChanged documentReplaced referencesInvalid readPageFirst'),
-    'recentLog': [_scalar_fields('time action target durationMs result')],
+    # 中文注释：日志状态和固定错误码一起交付，云端读取不能把未知结果的原因再次裁掉。
+    'recentLog': [_scalar_fields('time action target durationMs result errorCode')],
 }
 _RESULT_SEMANTIC = {
     'contentFilter': _RESULT_CONTENT_FILTER,

@@ -25,6 +25,35 @@ class Element{
 }
 function fixture(){const body=new Element('body'),documentElement=new Element('html');documentElement.isConnected=true;const doc={location:{origin:'https://example.test'},documentElement,defaultView:{innerWidth:800,innerHeight:600,getComputedStyle:element=>({display:element.style.display||'block',opacity:element.style.opacity||'1'})},createElement:t=>new Element(t)};documentElement.append(body);return {doc,body};}
 const scope={taskId:'task-1',generation:2,tabId:7,origin:'https://example.test'};
+// 中文注释：解析反馈必须随真实步骤开始和结束，不能在接管、异常或输入时继续显示扫描。
+test('解析步骤显示扫描，切换状态立即收起，截图隐藏后可恢复',async()=>{
+ const {doc}=fixture(),overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ const scan=overlay.host.shadow.children.find(x=>x.dataset.role==='parsing-scan');
+ assert.equal(scan.style.display,'none');
+ for(const step of ['snapshot','semantic_snapshot','page.parse','page.observe','frame_catalog']){
+  overlay.update({state:'running',step});assert.equal(scan.style.display,'block',step);assert.equal(scan.style.pointerEvents,'none');
+  await overlay.withHidden(async()=>assert.equal(overlay.host.style.opacity,'0'));
+  assert.notEqual(overlay.host.style.opacity,'0');assert.equal(scan.style.display,'block');
+  for(const state of ['paused','pausing','unknown','disconnected','waiting']){overlay.update({state});assert.equal(scan.style.display,'none',state);overlay.update({state:'running',step});}
+ }
+ overlay.update({state:'running',step:'ref_click'});assert.equal(scan.style.display,'none');overlay.remove();
+});
+// 中文注释：只绘制实际解析回执中的可见矩形；完成后的短暂反馈不阻塞任务，旧定时器不能清掉新扫描。
+test('解析元素边框有数量和矩形限制，新步骤或异常清除旧完成反馈',context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
+ const {doc}=fixture(),overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ const frames=overlay.host.shadow.children.find(x=>x.dataset.role==='parsing-elements');
+ assert.equal(overlay.showParsedElements([{x:20,y:80,width:120,height:36}]),false);
+ overlay.update({state:'running',step:'semantic_snapshot'});
+ assert.equal(overlay.showParsedElements([{x:20,y:80,width:120,height:36},{x:NaN,y:0,width:50,height:10}]),true);
+ assert.equal(frames.children.length,1);assert.equal(frames.children[0].style.left,'20px');assert.equal(frames.children[0].style.pointerEvents,'none');
+ overlay.update({state:'waiting'});assert.equal(frames.style.opacity,'1');context.mock.timers.tick(600);assert.equal(frames.style.opacity,'0');
+ overlay.update({state:'running',step:'page.parse'});context.mock.timers.tick(220);assert.equal(frames.children.length,0);
+ overlay.showParsedElements(Array.from({length:40},()=>({x:20,y:80,width:120,height:36})));assert.equal(frames.children.length,24);
+ overlay.update({state:'unknown'});assert.equal(frames.children.length,0);assert.equal(frames.style.display,'none');
+ const style=overlay.host.shadow.children.find(x=>x.tagName==='style').textContent;
+ assert.match(style,/prefers-reduced-motion:reduce/);assert.match(style,/parsing-beam/);overlay.remove();
+});
 test('overlay is scoped, decorative surfaces ignore pointers and screenshot hide restores',async()=>{
  const {doc}=fixture();const overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
  assert.equal(doc.documentElement.children.length,2);const host=doc.documentElement.children[1];
@@ -176,6 +205,25 @@ test('步骤标签只显示控件名称，最近五步的错误码有固定说�
  overlay.setRecentSteps([{time:'2026-09-30T12:00:00Z',action:'ref_fill',target:'textbox · 产品名称',durationMs:12,result:'element_timeout'}]);
  const panel=overlay.host.shadow.children.find(x=>x.dataset.role==='status').children.find(x=>x.tagName==='details');
  assert.match(panel.children[1].children[0].textContent,/目标未在期限内出现/);
+ overlay.remove();
+});
+// 中文注释：云端错误沿用本机步骤协议，结果未知时保留错误原因，不把拒绝操作显示成连接异常。
+test('最近步骤说明内容保护拒绝、失效引用和缺失选项，保留未知结果状态',()=>{
+ const {doc}=fixture(),overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ overlay.setRecentSteps([
+  {action:'ref_fill',result:'content_shield_uninspectable'},
+  {action:'ref_set_checked',result:'unknown',errorCode:'stale_reference'},
+  {action:'ref_select_option',result:'select_option_missing'},
+  {action:'click',result:'execution_denied'},
+  {action:'ref_click',result:'unknown',errorCode:'PRIVATE_ERROR_CANARY https://private.invalid/?token=SECRET_CANARY'},
+ ]);
+ const panel=overlay.host.shadow.children.find(x=>x.dataset.role==='status').children.find(x=>x.tagName==='details');
+ const lines=panel.children[1].children.map(x=>x.textContent);
+ assert.match(lines[0],/失败.*content_shield_uninspectable.*无法检查/);
+ assert.match(lines[1],/结果不确定.*stale_reference.*引用已失效/);
+ assert.match(lines[2],/select_option_missing.*选项/);
+ assert.match(lines[3],/execution_denied.*安全检查/);
+ assert.doesNotMatch(lines.join(' '),/PRIVATE_ERROR_CANARY|SECRET_CANARY|private.invalid/);
  overlay.remove();
 });
 

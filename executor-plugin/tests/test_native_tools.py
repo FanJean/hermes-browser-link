@@ -105,6 +105,22 @@ class NativeTests(unittest.TestCase):
         self.assertTrue(result["outcome_unknown"])
         self.assertFalse(result["retryable"])
 
+    # 中文注释：控件的后置核验也可能失败；未知写入不能用“未派发”文案误导调用方重试。
+    def test_target_state_error_copy_does_not_claim_unknown_write_was_not_dispatched(self):
+        class Failure(Exception):
+            code = 'invalid_target_state'
+            data = {'outcomeUnknown': True, 'retryable': False}
+        def fail_call(_method, _params):
+            raise Failure('PRIVATE_ERROR_CANARY')
+        self.client.call = fail_call
+        result, _ = self.invoke('browser_shared_run', {'task_id': 'task-1', 'request_id': 'changed-checkbox',
+            'action': 'ref_set_checked', 'tab_id': 7, 'binding': {'taskId': 'task-1', 'documentId': 'doc', 'leaseId': 'lease'},
+            'snapshot_id': 'snapshot', 'ref': 'checkbox', 'checked': True})
+        self.assertTrue(result['outcome_unknown'])
+        self.assertFalse(result['retryable'])
+        self.assertNotIn('未派发', result['error'])
+        self.assertNotIn('PRIVATE_ERROR_CANARY', json.dumps(result))
+
     def test_explicit_cleanup_status_then_retry_routes_under_same_owner(self):
         for action, method in [('status', 'shared.cleanup_status'), ('retry', 'shared.cleanup_retry')]:
             result, _ = self.invoke('browser_shared_close', {'task_id': 'task-1', 'cleanup_action': action})
@@ -333,12 +349,18 @@ class NativeTests(unittest.TestCase):
                     'resumeSummary': {'urlChanged': True, 'documentReplaced': False,
                                       'referencesInvalid': True, 'readPageFirst': True},
                     'recentLog': [{'time': '2026-09-30T00:00:00Z', 'action': 'click',
-                                   'target': 'button · 提交', 'durationMs': 12, 'result': 'succeeded'}]}
+                                   'target': 'button · 提交', 'durationMs': 12, 'result': 'succeeded'},
+                                  {'action': 'ref_set_checked', 'result': 'unknown', 'errorCode': 'stale_reference',
+                                   'message': 'PRIVATE_ERROR_CANARY', 'input': 'PRIVATE_INPUT_CANARY'}]}
         self.client.call = call
         result, _ = self.invoke('browser_shared_get', {'task_id': 'task-1', 'until': 'resumed',
                                                        'timeout_s': 1, 'include_log': True, 'log_limit': 5})
         self.assertTrue(result['resumeSummary']['readPageFirst'])
         self.assertEqual(result['recentLog'][0]['target'], 'button · 提交')
+        # 中文注释：本机和云端复用的结果投影只保留固定错误码，异常正文和操作输入继续丢弃。
+        self.assertEqual(result['recentLog'][1]['errorCode'], 'stale_reference')
+        self.assertEqual(result['recentLog'][1]['result'], 'unknown')
+        self.assertNotIn('CANARY', json.dumps(result))
         self.assertEqual(self.client.calls[-1][1]['logLimit'], 5)
         self.assertNotIn('browser_shared_set_primary', self.tools.TOOL_SCHEMAS)
 

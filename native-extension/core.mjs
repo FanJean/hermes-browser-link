@@ -2,10 +2,13 @@
 import {DIRECTIVES,SITE_AUTOMATION_RESTRICTIONS,BLOCKER,filterPageResult} from './content-filter.mjs';
 import {validateShieldRules,collectShield,redactShieldResult} from './content-shield.mjs';
 const SHIELD_SETTINGS=Symbol('content shield settings');
+const SHIELD_WRITE_TARGET=Symbol('content shield write target');
 // 中文注释：这些结构读取只返回可访问 DOM；不可读取的子框架必须在覆盖率中明确报告。
 const STRUCTURED_PAGE_READS=new Set(['snapshot','semantic_snapshot','page.parse','page.observe','official.ready_state','frame_catalog']);
 // 中文注释：这些出口只返回固定 DOM/图像结果；隐藏框架不参与渲染，任意脚本与业务 JSON 不适用。
 const HIDDEN_FRAME_OUTPUTS=new Set([...STRUCTURED_PAGE_READS,'click','fill','press','ref_click','ref_fill','ref_press','ref_set_checked','ref_select_option','scroll','files.upload','screenshot','interaction.capture','interaction.bounds']);
+// 中文注释：仅原生引用动作可核实局部操作范围，脚本、截图、坐标和子框架入口不使用此豁免。
+const TARGETED_SHIELD_ACTIONS=new Set(['ref_click','ref_fill','ref_press','ref_set_checked','ref_select_option']);
 import {INPUT_ACTIONS} from './work-window.mjs';
 import {observeInputEffect} from './action-effects.mjs';
 import {DiagnosticEventBuffer,observeAction} from '../browser-diagnostics/js/diagnostics.mjs';
@@ -291,6 +294,13 @@ export const semanticWorldDeclaration=`function(op,p){
  // 中文注释：编辑区判断覆盖 HTML 空属性和 plaintext-only，填写及回读使用同一资格。
  const editable=()=>node.isContentEditable||node.matches('[contenteditable="true" i],[contenteditable=""],[contenteditable="plaintext-only" i]');
  const fillable=()=>!(!['INPUT','TEXTAREA'].includes(node.tagName)&&!editable()||node.type==='file'||node.type==='hidden'||node.readOnly);
+ if(op==='shield_write_target'){
+  // 中文注释：动作已由宿主限定为五类原生引用操作，此处只核实真实节点和所在文档。
+  const a=p.action.slice(4),tag=node.tagName;
+  const ok=a==='fill'?['INPUT','TEXTAREA'].includes(tag):a==='select_option'?tag==='SELECT':
+   a==='set_checked'?tag==='INPUT'&&['checkbox','radio'].includes(node.type):['A','BUTTON','INPUT','TEXTAREA','SELECT'].includes(tag);
+  return ok&&node.ownerDocument===document?(a==='click'||a==='set_checked'?controlVisual(node):node):null;
+ }
  // 中文注释：计划和指针定位共用选项查找，保留缺失、歧义及禁用检查，不缓存页面节点。
  const ariaList=ids=>node.getAttribute('role')==='listbox'?node:node.getRootNode().getElementById?.(ids[0])||node.ownerDocument.getElementById(ids[0]);
  const ariaOption=list=>{
@@ -1340,27 +1350,59 @@ export class Executor {
   try{const value=await this.onContentShield();if(typeof value?.enabled!=='boolean')throw Error();return {enabled:value.enabled,rules:validateShieldRules(value.rules)};}
   catch{throw Object.assign(Error('CONTENT_SHIELD_UNAVAILABLE'),{preDispatch:true});}
  }
- async shieldInventory(t,p,settings){
+ // 中文注释：原生目标复用可视标签；语义引用和 CDP 生成私有目标证明，模型不能传入 backendNodeId 授权。
+ async shieldWriteTarget(t,p,target,tree,guard){
+  if(!TARGETED_SHIELD_ACTIONS.has(p.action)||p.frameToken||p.options?.frameToken||!p.binding||typeof p.ref!=='string'||typeof p.snapshotId!=='string')return null;
+  const binding=this.semanticBinding(t,p.tabId,tree.frame.loaderId);
+  if(Object.keys(binding).some(key=>p.binding[key]!==binding[key]))throw Error('BINDING_MISMATCH');
+  const entry=t.overlays?.get(p.tabId);
+  const contextId=entry?.documentId===tree.frame.loaderId?entry.contextId:(await this.api.debugger.sendCommand(target,'Page.createIsolatedWorld',{frameId:tree.frame.id,worldName:'hermes-native-semantics-v2',grantUniveralAccess:false})).executionContextId;guard();
+  const payload={binding:p.binding,snapshotId:p.snapshotId,ref:p.ref,action:p.action};
+  // 中文注释：此时遮罩仍在拦截输入，只核实引用，不做点击命中测试；正式派发沿用既有遮挡复查。
+  await this.callSemanticWorld(target,tree.frame.id,'ref_relocation',payload,guard,contextId);
+  const response=await this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:contextId,
+   functionDeclaration:'function(p){return globalThis.__hermesSemanticLibrary.call("shield_write_target",p);}',arguments:[{value:payload}],returnByValue:false});
+  const objectId=response.result?.objectId;
+  try{
+   guard();if(response.exceptionDetails)throw Error('CONTENT_SHIELD_UNINSPECTABLE');
+   if(!objectId)return null;
+   const {node}=await this.api.debugger.sendCommand(target,'DOM.describeNode',{objectId});guard();
+   if(!Number.isSafeInteger(node?.backendNodeId))throw Error('CONTENT_SHIELD_UNINSPECTABLE');
+   return {backendNodeId:node.backendNodeId,documentId:tree.frame.loaderId};
+  }finally{if(objectId)await this.api.debugger.sendCommand(target,'Runtime.releaseObject',{objectId});}
+ }
+ async shieldInventory(t,p,settings,writeTarget=undefined){
   const guard=()=>{this.check(t,p);if(this.leases.get(p.tabId)!==t.id)throw Error('tab lease denied');};
   const tab=await this.api.tabs.get(p.tabId);guard();this.allowed(t,tab.url);
   if(tab.pendingUrl&&tab.pendingUrl!==tab.url)throw Error('CONTENT_SHIELD_CHANGED');
   const target={tabId:p.tabId};
   if(!this.attached.has(p.tabId)){await this.api.debugger.attach(target,'1.3');guard();this.attached.add(p.tabId);}
   const tree=await this.checkedFrameTree(target,t,guard,false);
+  if(writeTarget===undefined)writeTarget=await this.shieldWriteTarget(t,p,target,tree,guard);
+  if(writeTarget&&writeTarget.documentId!==tree.frame.loaderId)throw Error('CONTENT_SHIELD_CHANGED');
   const world=await this.api.debugger.sendCommand(target,'Page.createIsolatedWorld',{frameId:tree.frame.id,worldName:'hermes-content-shield',grantUniveralAccess:false});guard();
   // 中文注释：复用语义解析的 CDP 节点解析，保护探测也能读取封闭组件及同源框架中的组件。
   await this.exposeClosedShadowRoots(target,tree.frame.id,guard,world.executionContextId,true);
   // 中文注释：屏蔽探测同样注入生产分类器，禁止读取敏感控件值后再脱敏。
-  const response=await this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:world.executionContextId,functionDeclaration:withSensitiveClassifier(collectShield),
+  let targetObjectId=null;
+  if(writeTarget){const {object}=await this.api.debugger.sendCommand(target,'DOM.resolveNode',{backendNodeId:writeTarget.backendNodeId,executionContextId:world.executionContextId});targetObjectId=object?.objectId;}
+  let response;
+  try{
+   guard();if(writeTarget&&!targetObjectId)throw Error('CONTENT_SHIELD_UNINSPECTABLE');
+   response=await this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:world.executionContextId,functionDeclaration:withSensitiveClassifier(collectShield),
    // 中文注释：显式 frameToken 会返回目标框架正文，不能以顶层部分读取的规则跳过该框架保护。
-   arguments:[{value:{selectors:settings.rules[origin(tab.url)]||[],directiveSources:DIRECTIVES.map(rule=>rule.source),restrictionSources:SITE_AUTOMATION_RESTRICTIONS.map(rule=>rule.source),blockerSource:BLOCKER.source,forCapture:['screenshot','interaction.capture'].includes(p.action),allowHiddenFrames:HIDDEN_FRAME_OUTPUTS.has(p.action)&&!p.options?.frameToken,allowOpaqueFrames:STRUCTURED_PAGE_READS.has(p.action)&&!p.options?.frameToken,readRoot:['semantic_snapshot','page.parse'].includes(p.action)&&!p.options?.frameToken?p.options?.root??null:null}}],returnByValue:true});guard();
+   arguments:[{value:{selectors:settings.rules[origin(tab.url)]||[],directiveSources:DIRECTIVES.map(rule=>rule.source),restrictionSources:SITE_AUTOMATION_RESTRICTIONS.map(rule=>rule.source),blockerSource:BLOCKER.source,forCapture:['screenshot','interaction.capture'].includes(p.action),allowHiddenFrames:HIDDEN_FRAME_OUTPUTS.has(p.action)&&!p.options?.frameToken,allowOpaqueFrames:STRUCTURED_PAGE_READS.has(p.action)&&!p.options?.frameToken,readRoot:['semantic_snapshot','page.parse'].includes(p.action)&&!p.options?.frameToken?p.options?.root??null:null}},targetObjectId?{objectId:targetObjectId}:{value:null}],returnByValue:true});guard();
+  }finally{if(targetObjectId)await this.api.debugger.sendCommand(target,'Runtime.releaseObject',{objectId:targetObjectId});}
   if(response.exceptionDetails){
    const reason=String(response.exceptionDetails.exception?.description||'').split('\n',1)[0].replace(/^Error: /,'');
    throw Error(/^CONTENT_SHIELD_(?:UNAVAILABLE|UNINSPECTABLE|UNSUPPORTED_VIEWPORT|BLOCKER_OVERLAP|RENDER_UNSUPPORTED)$/.test(reason)?reason:'CONTENT_SHIELD_UNAVAILABLE');
   }
   if(!Array.isArray(response.result?.value?.tokens)||!Array.isArray(response.result?.value?.rects))throw Error('CONTENT_SHIELD_UNAVAILABLE');
   const inventory=response.result.value;
-  inventory.document=JSON.stringify(this.frameNodes(tree).map(({frame})=>[frame.id,frame.loaderId,frame.url]));
+  if(writeTarget&&inventory.writeTargetVerified!==true)throw Error('CONTENT_SHIELD_UNINSPECTABLE');
+  inventory.writeTarget=writeTarget;
+  // 中文注释：局部原生动作只绑定目标文档；无关框架换页不使已完成的输入变成未知，仍重新扫描可访问内容。
+  inventory.document=JSON.stringify(writeTarget?[[tree.frame.id,tree.frame.loaderId,tree.frame.url]]:this.frameNodes(tree).map(({frame})=>[frame.id,frame.loaderId,frame.url]));
   return inventory;
  }
  async performProtected(t,p){
@@ -1370,6 +1412,7 @@ export class Executor {
   const inspect=settings.enabled&&Number.isInteger(p.tabId)&&!['navigate','back','official.goto_url'].includes(p.action);
   let before=null;
   try{if(inspect)before=await this.shieldInventory(t,p,settings);}catch(error){error.preDispatch=true;throw error;}
+  scoped[SHIELD_WRITE_TARGET]=before?.writeTarget;
   let result;
   try{result=await (Number.isInteger(p.tabId)?this.performSettled(t,scoped):this.perform(t,scoped));}
   catch(error){
@@ -1386,7 +1429,7 @@ export class Executor {
   const image=['screenshot','interaction.capture'].includes(p.action);
   const capture=this.shieldResults.get(result);
   if(inspect){
-   after=await this.shieldInventory(t,p,settings);
+   after=await this.shieldInventory(t,p,settings,before.writeTarget);
    if(before.document!==after.document||image&&capture?.inventory!==JSON.stringify(after))throw Error('CONTENT_SHIELD_CHANGED');
    const inventory={tokens:[...new Set([...before.tokens,...after.tokens])],siteAutomationRestricted:before.siteAutomationRestricted||after.siteAutomationRestricted,image};
    // 中文注释：DOM 输出使用实际文本块判定，不能再对父汇总拼接文字重新匹配；脚本自建返回值单独过滤。
@@ -1404,7 +1447,7 @@ export class Executor {
    if(p.action==='tabs')result=result.map(({title:_title,...row})=>row);
    else result=filterPageResult(p.action,result);
   }
-  if(result&&typeof result==='object')this.shieldResults.set(result,{settings:JSON.stringify(settings),tabId:p.tabId,document:before?.document,...(before?{inventory:JSON.stringify(after)}: {})});
+  if(result&&typeof result==='object')this.shieldResults.set(result,{settings:JSON.stringify(settings),tabId:p.tabId,document:before?.document,writeTarget:before?.writeTarget,...(before&&!before.writeTarget?{inventory:JSON.stringify(after)}: {})});
   return result;
   }catch(error){
    // 中文注释：发送前保护失败也作废交互截图身份，不留下未交付图片的可操作坐标。
@@ -1419,7 +1462,7 @@ export class Executor {
   // 中文注释：回放不得重新执行操作；设置变更、文档变更或未经过保护的旧结果要求读取新请求。
   if(settings.enabled&&(!prior||prior.settings!==JSON.stringify(settings)))throw Error('CONTENT_SHIELD_STALE');
   if(settings.enabled&&prior?.document){
-   const t=this.tasks.get(request.params.taskId),inventory=await this.shieldInventory(t,request.params,settings);
+   const t=this.tasks.get(request.params.taskId),inventory=await this.shieldInventory(t,request.params,settings,prior.writeTarget);
    if(prior.document!==inventory.document)throw Error('CONTENT_SHIELD_STALE');
    // 中文注释：已处理截图仍含旧像素；DOM、位置或文本变化不能回放旧图。
    if(prior.inventory&&prior.inventory!==JSON.stringify(inventory))throw Error('CONTENT_SHIELD_STALE');
@@ -1805,6 +1848,8 @@ export class Executor {
     if(op==='hide'){if(typeof state.overlay.withHidden!=='function')return false;return state.overlay.hide()===true&&state.overlay.isHidden()===true;}
     if(op==='restore'){const ok=state.overlay.restore()===true&&state.overlay.isVisible()===true;if(!ok){if(binding.operationToken)state.highlight?.clear(binding);state.overlay.reblock();}return ok;}
     if(op==='update'){if(!state.active&&scope.update?.state==='running')return false;state.overlay.update(scope.update);return true;}
+    // 中文注释：解析回执沿用动作令牌核验，迟到的矩形不能覆盖新步骤。
+    if(op==='parsed')return state.active&&state.overlay.showParsedElements(scope.rects);
     if(op==='log'){state.overlay.setRecentSteps(scope.steps);return true;}
     if(op==='reblock'){state.overlay.reblock();return true;}
     if(op==='scope'||op==='scope-running'){if(scope.taskId!==state.taskId||scope.generation!==state.generation||scope.documentId!==state.documentId||!state.active&&scope.modeGeneration<=state.modeGeneration)return false;state.modeGeneration=scope.modeGeneration;state.active=true;if(op==='scope-running')state.overlay.update(scope.update);return true;}
@@ -2087,7 +2132,7 @@ export class Executor {
     functionDeclaration:`function(scope){
      const states={waiting:'Hermes 正在工作',running:'Hermes 正在工作',pausing:'正在暂停…',paused:'已暂停 · 你可以操作页面',resuming:'正在恢复…',stopping:'正在停止…',stopped:'已停止',disconnected:'与扩展的连接已断开',unknown:'状态待核查'};
      const interactionLabels={click:'准备点击',input:'正在输入',select:'正在选择',drag:'正在拖动'};
-     const stepLabels={tabs:'读取标签页',new_tab:'打开新标签页',navigate:'打开网页',snapshot:'读取页面',click:'点击页面',fill:'填写内容',press:'按键',screenshot:'截取页面','page.parse':'解析页面',semantic_snapshot:'理解页面',frame_catalog:'读取页面结构',ref_click:'点击元素',ref_fill:'填写元素',ref_press:'按键操作',ref_set_checked:'设置选项',ref_select_option:'选择选项','files.upload':'选择网站文件',scroll:'滚动页面',back:'返回上一页'};
+     const stepLabels={tabs:'读取标签页',new_tab:'打开新标签页',navigate:'打开网页',snapshot:'解析页面元素',click:'点击页面',fill:'填写内容',press:'按键',screenshot:'截取页面','page.parse':'解析页面结构','page.observe':'读取页面结构',semantic_snapshot:'解析页面元素',frame_catalog:'读取页面结构',ref_click:'点击元素',ref_fill:'填写元素',ref_press:'按键操作',ref_set_checked:'设置选项',ref_select_option:'选择选项','files.upload':'选择网站文件',scroll:'滚动页面',back:'返回上一页'};
      const rectOk=r=>r&&[r.x,r.y,r.width,r.height].every(Number.isFinite)&&r.x>=0&&r.y>=0&&r.width>0&&r.height>0&&r.width<=100000&&r.height<=100000;
      const highlightRectOk=r=>r&&[r.left,r.top,r.width,r.height].every(Number.isFinite)&&r.width>0&&r.height>0&&r.width<=100000&&r.height<=100000;
      const labels=Object.freeze({click:'准备点击',input:'正在输入',select:'正在选择',drag:'正在拖动'});
@@ -2912,7 +2957,12 @@ export class Executor {
       if(p.action==='ref_select_option')selectPlan=await this.callSemanticWorld(frameTarget,frame.id,'plan_ref_select_option',{...targetPayload,by:p.by,values:p.values},guard,entry?.contextId);
       return this.callSemanticWorld(frameTarget,frame.id,`prepare_${p.action}`,{...targetPayload,highlightBinding},guard,entry?.contextId);
      },
-     verify:()=>this.callSemanticWorld(frameTarget,frame.id,'confirm_ref',targetPayload,guard,entry?.contextId).then(()=>({ok:true})),
+     verify:async()=>{
+      // 中文注释：滚动和高亮等待之后重新检查实际范围，框架移到目标上方时必须在派发前拒绝。
+      if(p[SHIELD_WRITE_TARGET])await this.shieldInventory(t,p,p[SHIELD_SETTINGS],p[SHIELD_WRITE_TARGET]);
+      await this.callSemanticWorld(frameTarget,frame.id,'confirm_ref',targetPayload,guard,entry?.contextId);
+      return {ok:true};
+     },
      dispatch:highlightBinding=>['ref_click','ref_set_checked','ref_select_option'].includes(p.action)?this.withSpawnScope(t,p.tabId,()=>dispatch(highlightBinding)):dispatch(highlightBinding),
     });
     if(relocated&&result&&typeof result==='object')result={...result,relocated:true};
@@ -3058,6 +3108,17 @@ export class Executor {
   }
   if(doc!==(this.docs.get(p.tabId)||0))throw Error('document changed');
   await this.timed(p,'post_check',()=>get(p.tabId));
+  // 中文注释：复用截图标注的引用矩形读取，只标出本次顶层快照实际返回的元素；装饰失败不改变解析结果。
+  if(overlay&&p.action==='semantic_snapshot'&&!p.options?.frameToken&&result?.items?.length){
+   try{
+    const rectangles=await this.callSemanticWorld(target,initialTree.frame.id,'annotation_rects',{
+     binding:result.binding,snapshotId:result.snapshotId,labels:result.items.slice(0,24).map((item,index)=>({ref:item.ref,label:String(index+1)}))
+    },guard,executionContextId);
+    guard();
+    await this.overlayCall(p.tabId,overlay,'parsed',{expectedActionToken:p[OVERLAY_ACTION_TOKEN],rects:rectangles.rows});
+   }catch{/* 中文注释：高亮属于可选视觉反馈，不补发、不重试解析动作。 */}
+   guard();
+  }
   if(captureCache.shieldFingerprint&&result&&typeof result==='object')this.shieldResults.set(result,{inventory:captureCache.shieldFingerprint});
   return result;
  }

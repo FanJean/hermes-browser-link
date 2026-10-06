@@ -54,6 +54,28 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 BridgeDaemon(Path(self.temp.name))
 
+    # 中文注释：未知结果也保留固定错误码，日志不写异常正文或输入；成功步骤不带残留错误。
+    def test_recent_log_retains_error_code_without_changing_unknown_state(self):
+        task = self.task()
+        for state, code in [('unknown', 'stale_reference'), ('failed', 'content_shield_uninspectable')]:
+            self.daemon._append_task_log(task['id'], {'action': 'ref_fill', 'startedAt': 1,
+                'durationMs': 50, 'state': state, 'errorCode': code, 'message': 'PRIVATE_ERROR_CANARY', 'text': 'PRIVATE_INPUT_CANARY'})
+        self.daemon._append_task_log(task['id'], {'action': 'semantic_snapshot', 'startedAt': 2,
+            'durationMs': 20, 'state': 'succeeded', 'errorCode': 'stale_reference'})
+        self.daemon._append_task_log(task['id'], {'action': 'ref_fill', 'startedAt': 3,
+            'durationMs': 10, 'state': 'failed', 'errorCode': 'PRIVATE_ERROR_CANARY https://private.invalid/?token=SECRET_CANARY'})
+        rows = self.daemon._read_task_log(task['id'], 20)
+        self.assertEqual(rows[0]['result'], 'unknown')
+        self.assertEqual(rows[0]['errorCode'], 'stale_reference')
+        self.assertEqual(rows[1]['result'], 'content_shield_uninspectable')
+        self.assertEqual(rows[1]['errorCode'], 'content_shield_uninspectable')
+        self.assertNotIn('errorCode', rows[2])
+        self.assertEqual(rows[3]['result'], 'error')
+        self.assertNotIn('errorCode', rows[3])
+        raw = self.daemon._task_log_path(task['id']).read_text()
+        self.assertNotIn('CANARY', raw)
+        self.assertNotIn('private.invalid', raw)
+
     def test_hourly_cleanup_revokes_empty_old_needs_sync_only(self):
         old = self.task()
         fresh = self.task(); fresh['lastActivityAt'] = 100000

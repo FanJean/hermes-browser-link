@@ -17,8 +17,21 @@ export function validateShieldRules(rules){
 }
 
 // 中文注释：页面探测不写 DOM；同源子框架整块遮罩，结构读取报告未知框架，其余入口拒绝。
-export function collectShield(options){
+export function collectShield(options,writeTarget=null){
  const {selectors=[],directiveSources=[],restrictionSources,blockerSource='',forCapture=false,allowOpaqueFrames=false,allowHiddenFrames=false,readRoot=null}=options;
+ // 中文注释：局部操作范围只能来自宿主解析的真实顶层节点；截图不能借用该范围放行不可读像素。
+ if(writeTarget&&(forCapture||!(writeTarget instanceof document.defaultView.Element)||!writeTarget.isConnected||writeTarget.ownerDocument!==document))throw Error('CONTENT_SHIELD_UNINSPECTABLE');
+ const contains=(parent,child)=>{
+  for(let node=child;node;node=node.parentElement||node.getRootNode().host||node.ownerDocument.defaultView?.frameElement)if(node===parent)return true;
+  return false;
+ };
+ const unrelatedFrame=(element,frameCover)=>{
+  if(!writeTarget||contains(writeTarget,element)||contains(element,writeTarget))return false;
+  // 中文注释：同源嵌套框架的内部坐标属于子视口，沿用现有最外层宿主框架的覆盖矩形。
+  const a=writeTarget.getBoundingClientRect(),b=frameCover||element.getBoundingClientRect();
+  if(![a.x,a.y,a.width,a.height,b.x,b.y,b.width,b.height].every(Number.isFinite))throw Error('CONTENT_SHIELD_UNINSPECTABLE');
+  return !(a.x<b.x+b.width&&b.x<a.x+a.width&&a.y<b.y+b.height&&b.y<a.y+a.height);
+ };
  // 中文注释：保护仍扫描全页，覆盖率缺口只计选定解析根内的不可读框架。
  const readScope=readRoot?document.querySelector(readRoot):document.body;
  const inReadScope=element=>{
@@ -187,7 +200,7 @@ export function collectShield(options){
     // 中文注释：隐藏 sandbox iframe 不进入固定 DOM/截图输出；任意 JS 输出仍拒绝不可检查区域。
     if(allowHiddenFrames&&unrendered){/* 中文注释：不计入当前可见页面的覆盖缺口。 */}
     else if(!doc?.documentElement){
-     if(forCapture||!allowOpaqueFrames)throw Error('CONTENT_SHIELD_UNINSPECTABLE');
+     if(forCapture||!allowOpaqueFrames&&!unrelatedFrame(element,frameCover))throw Error('CONTENT_SHIELD_UNINSPECTABLE');
      if(inReadScope(element))skippedFrames++;
     }else{
      const r=frameCover||element.getBoundingClientRect();
@@ -201,7 +214,7 @@ export function collectShield(options){
  walk(document);
  const v=window.visualViewport;
  if(v&&(v.scale!==1||v.offsetLeft||v.offsetTop))throw Error('CONTENT_SHIELD_UNSUPPORTED_VIEWPORT');
- return {tokens:[...tokens].sort((a,b)=>b.length-a.length),rects,siteAutomationRestricted,skippedFrames,
+ return {tokens:[...tokens].sort((a,b)=>b.length-a.length),rects,siteAutomationRestricted,skippedFrames,writeTargetVerified:writeTarget!==null,
   state:{url:location.href,width:window.innerWidth,height:window.innerHeight,scrollX:window.scrollX,scrollY:window.scrollY,dpr:window.devicePixelRatio,scale:v?.scale||1}};
 }
 

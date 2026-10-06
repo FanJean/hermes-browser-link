@@ -91,6 +91,26 @@ test('超时不重排、撤销不再领取、结果到期不返回正文', async
   await assert.rejects(store.device(deviceRequest('/device/poll')), /device_denied/);
 });
 
+// 中文注释：云端完成状态仅代表回执已产生；本机动作失败的分类和未知结果标记必须原样交付。
+test('云端中转保留本机动作错误分类，读取错误回执不重排任务', async () => {
+  const {store,device,id}=await fixture();
+  const created=await store.enqueue('owner-a','create',{device_id:id,request_id:rid('error-create'),title:'错误来源验证',allowed_origins:['https://example.com']});
+  await store.poll(device);
+  await store.complete(device,{command_id:created.command_id,result:{id:'native-error-task',state:'ready'}});
+  await store.result('owner-a',created.command_id);
+  for(const [code,unknown] of [['content_shield_uninspectable',false],['stale_reference',true],['target_occluded',false],['invalid_target_state',true]]){
+    const queued=await store.enqueue('owner-a','run',{device_id:id,session_id:created.session_id,task_id:'native-error-task',request_id:rid(code),
+      action:'ref_fill',tab_id:8,binding:{taskId:'native-error-task',documentId:'doc',leaseId:'lease'},snapshot_id:'snapshot',ref:'field',text:'fixture'});
+    assert.equal((await store.poll(device)).command.id,queued.command_id);
+    const nativeResult={error:'本机动作未完成',code:'bridge_error',bridgeCode:code,outcome_unknown:unknown,retryable:false};
+    await store.complete(device,{command_id:queued.command_id,result:nativeResult});
+    const received=await store.result('owner-a',queued.command_id);
+    assert.equal(received.state,'completed');assert.deepEqual(received.result,nativeResult);
+    assert.equal((await store.result('owner-a',queued.command_id)).result,null);
+    assert.equal((await store.poll(device)).command,null);
+  }
+});
+
 test('HTTP 管理入口拒绝跨站及无身份请求，MCP 发现不泄露配对数据', async () => {
   const { db } = await fixture();
   const denied = await worker.fetch(new Request('https://relay.test/api/devices'), { DB: db });

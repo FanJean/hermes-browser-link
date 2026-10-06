@@ -7,17 +7,78 @@ import {WorkWindow} from '../../native-extension/work-window.mjs';
 import {NativeWorkspaces} from '../../native-extension/workspace-adapter.mjs';
 import {effectProbe,observeInputEffect,NO_EFFECT_HINT} from '../../native-extension/action-effects.mjs';
 function fixture(){
- let stored={},next=10;const tabs=new Map(),windows=new Map(),calls=[];
- const api={runtime:{getURL:p=>`chrome-extension://fixture/${p}`},storage:{local:{get:async()=>stored,set:async v=>{stored={...stored,...v}}}},
-  tabs:{get:async id=>{if(!tabs.has(id))throw Error(`No tab with id: ${id}.`);return {...tabs.get(id)}},update:async(id,p)=>{calls.push(['tabs.update',id,p]);for(const t of tabs.values())if(t.windowId===tabs.get(id).windowId)t.active=t.id===id;return tabs.get(id)}},
-  windows:{get:async id=>{if(!windows.has(id))throw Error('No window');return windows.get(id)},create:async p=>{calls.push(['windows.create',p]);const id=next++,tab={id:next++,windowId:id,url:p.url,active:true};tabs.set(tab.id,tab);const win={id,tabs:[tab]};windows.set(id,win);return win}}};
+ // 中文注释：模拟查询、分组及最后一页关闭后窗口消失，覆盖适配器的真实清理入口。
+ let stored={},next=10,nextGroup=100;const tabs=new Map(),windows=new Map(),groups=new Map(),calls=[];
+ const api={runtime:{getURL:p=>`chrome-extension://fixture/${p}`,onStartup:{addListener:()=>{}}},storage:{local:{get:async()=>structuredClone(stored),set:async v=>{stored={...stored,...structuredClone(v)}}}},
+  tabs:{query:async p=>[...tabs.values()].filter(t=>(p.url===undefined||t.url===p.url)&&(p.windowId===undefined||t.windowId===p.windowId)).map(t=>({...t})),
+   get:async id=>{if(!tabs.has(id))throw Error(`No tab with id: ${id}.`);return {...tabs.get(id)}},
+   create:async p=>{const tab={id:next++,groupId:-1,...p};tabs.set(tab.id,tab);return {...tab}},
+   group:async p=>{const id=p.groupId??nextGroup++;for(const tabId of [p.tabIds].flat())tabs.get(tabId).groupId=id;if(!groups.has(id))groups.set(id,{id,windowId:tabs.get([p.tabIds].flat()[0]).windowId});return id},
+   remove:async id=>{calls.push(['tabs.remove',id]);const tab=tabs.get(id);tabs.delete(id);if(![...tabs.values()].some(t=>t.windowId===tab.windowId))windows.delete(tab.windowId)},
+   update:async(id,p)=>{calls.push(['tabs.update',id,p]);for(const t of tabs.values())if(t.windowId===tabs.get(id).windowId)t.active=t.id===id;return tabs.get(id)}},
+  tabGroups:{get:async id=>({...groups.get(id)}),update:async(id,p)=>groups.set(id,{...groups.get(id),...p})},
+  windows:{get:async id=>{if(!windows.has(id))throw Error('No window');return windows.get(id)},create:async p=>{calls.push(['windows.create',p]);const id=next++,tab={id:next++,windowId:id,url:p.url,groupId:-1,active:true};tabs.set(tab.id,tab);const win={id,type:'normal',tabs:[tab]};windows.set(id,win);return win}}};
  return {api,tabs,windows,calls};
 }
 test('并发任务只创建一个独立窗口，不聚焦、不最小化，关闭后重建',async()=>{
  const f=fixture(),w=new WorkWindow(f.api);const ids=await Promise.all([w.ensure(),w.ensure(),w.ensure()]);
  assert.equal(new Set(ids).size,1);assert.deepEqual(f.calls,[['windows.create',{url:'chrome-extension://fixture/work-window.html',type:'normal',focused:false,state:'normal'}]]);
  const restored=new WorkWindow(f.api);assert.equal(await restored.ensure(),ids[0]);
- f.windows.delete(ids[0]);assert.notEqual(await w.ensure(),ids[0]);assert.equal(f.calls.length,2);
+ f.windows.delete(ids[0]);f.tabs.clear();assert.notEqual(await w.ensure(),ids[0]);assert.equal(f.calls.length,2);
+});
+test('保存编号丢失或浏览器恢复编号变化时复用已有首页，不新增窗口',async()=>{
+ for(const reset of ['storage','ids']){
+  const f=fixture(),first=new WorkWindow(f.api),id=await first.ensure();
+  if(reset==='storage')await f.api.storage.local.set({'hermes.workWindow.v1':null});
+  else{const tab=[...f.tabs.values()][0];f.tabs.delete(tab.id);f.windows.delete(id);tab.id+=100;tab.windowId+=100;f.tabs.set(tab.id,tab);f.windows.set(tab.windowId,{id:tab.windowId,type:'normal'});}
+  const restored=new WorkWindow(f.api),expected=[...f.tabs.values()][0].windowId;
+  assert.equal(await restored.ensure(),expected);assert.equal(f.calls.length,1);
+  assert.equal((await f.api.storage.local.get())['hermes.workWindow.v1'].windowId,expected);
+ }
+});
+test('最后一个任务完成才关闭空工作窗口，下一任务可以重建',async()=>{
+ const f=fixture(),w=new WorkWindow(f.api),id=await w.ensure('a');await w.ensure('b');
+ await w.closeIdle('a',id);assert.ok(f.windows.has(id));
+ await w.closeIdle('b',id);assert.ok(!f.windows.has(id));assert.equal(w.windowId,null);
+ assert.equal((await f.api.storage.local.get())['hermes.workWindow.v1'],null);
+ assert.notEqual(await w.ensure('c'),id);
+});
+test('保留结果页、用户页、被改写或拖走的首页都不自动关闭',async()=>{
+ for(const kind of ['result','user','navigated','moved','kept','leased']){
+  const f=fixture(),w=new WorkWindow(f.api),id=await w.ensure('a'),marker=[...f.tabs.values()][0];
+  if(kind==='result'||kind==='user')f.tabs.set(1,{id:1,windowId:id,url:`https://fixture.test/${kind}`});
+  if(kind==='navigated')marker.url='https://fixture.test';
+  if(kind==='moved')marker.windowId=99;
+  await w.closeIdle('a',id,{keepTabIds:kind==='kept'?[marker.id]:[],canDelete:()=>kind!=='leased'});
+  assert.ok(f.tabs.has(marker.id));assert.equal(f.calls.filter(c=>c[0]==='tabs.remove').length,0);
+ }
+});
+test('空窗口查询期间开始新任务，保留同一窗口供新任务使用',async()=>{
+ const f=fixture(),w=new WorkWindow(f.api),id=await w.ensure('a'),query=f.api.tabs.query;
+ let resume,started;const gate=new Promise(r=>resume=r),ready=new Promise(r=>started=r);
+ f.api.tabs.query=async p=>{if(p.windowId===id){started();await gate;}return query(p)};
+ const cleanup=w.closeIdle('a',id);await ready;const install=w.ensure('b');resume();await cleanup;
+ assert.equal(await install,id);assert.equal(f.calls.filter(c=>c[0]==='tabs.remove').length,0);
+});
+test('空窗口查询超过期限，不补做迟到的删除',async()=>{
+ const f=fixture(),w=new WorkWindow(f.api),id=await w.ensure('a'),query=f.api.tabs.query;
+ f.api.tabs.query=async p=>{await new Promise(r=>setTimeout(r,20));return query(p)};
+ await w.closeIdle('a',id,{timeoutMs:5});assert.ok(f.windows.has(id));
+});
+test('适配器在工作页关闭后回收首页；保留页及恢复清理沿用相同规则',async()=>{
+ for(const preserve of [false,true]){
+  const f=fixture(),native=new NativeWorkspaces(f.api,'instance');
+  const cap=await native.install({instanceId:'instance',approvalScope:'owner',id:'a',generation:1},[]);
+  const id=native.authority.resolve(cap).windowId,work=await native.open(cap,{requestId:'page',url:'https://fixture.test'});
+  assert.equal((await native.cleanup(cap,{closeTabs:!preserve})).cleanupState,'succeeded');
+  assert.equal(f.windows.has(id),preserve);assert.equal(f.tabs.has(work.tabId),preserve);
+  if(preserve){const restored=new NativeWorkspaces(f.api,'instance');await restored.cleanupRecovered('a',1,{closeTabs:true});assert.ok(!f.windows.has(id));}
+ }
+});
+test('只有授权而未建工作页的任务结束后不留下首页',async()=>{
+ const f=fixture(),native=new NativeWorkspaces(f.api,'instance');
+ const cap=await native.install({instanceId:'instance',approvalScope:'owner',id:'read',generation:1},[]);
+ await native.cleanup(cap);assert.equal(f.windows.size,0);
 });
 test('持久编号指向用户页面时不采用该窗口',async()=>{
  const f=fixture(),w=new WorkWindow(f.api),id=await w.ensure();const tab=[...f.tabs.values()][0];tab.url='https://fixture.test';

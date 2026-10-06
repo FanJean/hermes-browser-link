@@ -52,4 +52,23 @@ try{
  const rebuilt=await openTask(session,{owner:'rebuilt160',origins:[origin],url:`${origin}/rebuilt`,title:'重建'});
  const rebuiltWindow=await session.ui.evaluate(`chrome.tabs.get(${rebuilt.tabId}).then(t=>t.windowId)`);assert.notEqual(rebuiltWindow,windows[0]);
  assert.equal((await rebuilt.act('ref_click',await rebuilt.ref('Trusted click',['button']))).effect,'observed');console.log('PASS 用户关闭后工作窗口自动重建');
+ // 中文注释：丢失保存编号时仍复用真实首页；并发任务全部结束后才关闭空窗口。
+ await session.ui.evaluate(`chrome.storage.local.remove('hermes.workWindow.v1').then(()=>true)`);
+ const peer=await openTask(session,{owner:'peer160',origins:[origin],url:`${origin}/peer`,title:'复用'});
+ assert.equal(await session.ui.evaluate(`chrome.tabs.get(${peer.tabId}).then(t=>t.windowId)`),rebuiltWindow);
+ const closed=await session.rpc(rebuilt.owner,'close',{task_id:rebuilt.task.id});assert.equal(closed.state,'closed',JSON.stringify(closed));
+ assert.ok(await session.ui.evaluate(`chrome.windows.getAll().then(ws=>ws.some(w=>w.id===${rebuiltWindow}))`));
+ const peerClosed=await session.rpc(peer.owner,'close',{task_id:peer.task.id});assert.equal(peerClosed.state,'closed',JSON.stringify(peerClosed));
+ assert.equal(await session.ui.evaluate(`chrome.windows.getAll().then(ws=>ws.some(w=>w.id===${rebuiltWindow}))`),false);
+ assert.ok(await session.ui.evaluate(`chrome.tabs.get(${user.tabId}).then(t=>t.windowId===${user.windowId})`));
+ console.log('PASS 丢失编号复用工作窗口，最后任务关闭后回收空首页，用户页保留');
+ // 中文注释：明确保留结果页时窗口继续存在，后续任务复用同一窗口。
+ const kept=await openTask(session,{owner:'kept160',origins:[origin],url:`${origin}/kept`,title:'保留结果'});
+ const keptWindow=await session.ui.evaluate(`chrome.tabs.get(${kept.tabId}).then(t=>t.windowId)`);
+ const keptClosed=await session.rpc(kept.owner,'close',{task_id:kept.task.id,keep_tabs:true});assert.equal(keptClosed.state,'closed',JSON.stringify(keptClosed));
+ const next=await openTask(session,{owner:'next160',origins:[origin],url:`${origin}/next`,title:'继续复用'});
+ assert.equal(await session.ui.evaluate(`chrome.tabs.get(${next.tabId}).then(t=>t.windowId)`),keptWindow);
+ await session.rpc(next.owner,'close',{task_id:next.task.id});
+ assert.ok(await session.ui.evaluate(`chrome.tabs.get(${kept.tabId}).then(t=>t.windowId===${keptWindow})`));
+ console.log('PASS 保留结果页不关闭窗口，后续任务继续复用');
 }finally{await session?.close();await new Promise(r=>server.close(r));}

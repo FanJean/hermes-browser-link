@@ -380,9 +380,15 @@ class BridgeDaemon:
             role = target_summary['role'][:32]
             name = target_summary['name'][:48]
             target = '敏感字段' if name == '敏感字段' else f'{role} · {name or "名称未提供"}'
+        # 中文注释：错误码与结果状态分别保存；未知结果不能丢失原因，也不能保存任意异常正文。
+        error_code = operation.get('errorCode')
+        if not isinstance(error_code, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', error_code):
+            error_code = None
         row = {'time': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(operation['startedAt'])) + 'Z',
                'action': action, 'target': target, 'durationMs': operation.get('durationMs', 0),
-               'result': operation['state'] if operation['state'] != 'failed' else operation.get('errorCode', 'error')}
+               'result': operation['state'] if operation['state'] != 'failed' else error_code or 'error'}
+        if operation['state'] in {'failed', 'unknown'} and error_code:
+            row['errorCode'] = error_code
         encoded = (json.dumps(row, ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8')
         with self.task_log_lock:
             if self.task_log_dir.is_symlink():

@@ -588,7 +588,8 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 'parse_budget_too_small': '解析结果超过预算；请增大 budget 或缩小 sections。未返回结果。',
                 'permission_denied': '操作未获授权。',
                 'target_unavailable': '目标不可用；请重新读取页面，若位于 iframe 则使用 frame token。',
-                'invalid_target_state': '控件状态无法按要求改变（状态未知或参数无效）；未派发。',
+                # 中文注释：此错误也可能来自点击后的核验，是否已派发由 outcome_unknown 回执说明。
+                'invalid_target_state': '控件状态无法按要求核验或改变；请核对页面实际状态，不要直接重试。',
                 'radio_cannot_uncheck': '单选框不能直接取消选中；请选择同组的另一项。未派发。',
                 'invalid_select_option': '选项参数对该控件无效；未派发。',
                 'select_option_missing': '指定的选项不存在；请重新读取可选项。未派发。',

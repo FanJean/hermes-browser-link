@@ -54,7 +54,8 @@ test('queued cleanup retains its own immutable allowlist across another retry',a
 test('retry preserves a tab leased by another task while ownership lookup is pending',async()=>{
  const f=fixture(),cap=f.grant(),a=await f.manager.open(cap,{requestId:'a',url:'https://example.test'});
  const e=new (await import('../native-extension/core.mjs')).Executor(f.api),native=new NativeWorkspaces(f.api,'instance');await native.ready;
- native.manager=f.manager;e.workspaces=native;e.tasks.set('a',{id:'a',generation:1,revoked:true,workspaceCapability:cap});
+ // 中文注释：替换管理器时同步使用其能力签发器，保持清理和窗口占用的身份一致。
+ native.manager=f.manager;native.authority=f.authority;e.workspaces=native;e.tasks.set('a',{id:'a',generation:1,revoked:true,workspaceCapability:cap});
  const cleanup=native.cleanup.bind(native);native.cleanup=(cap,options)=>{e.leases.set(a.tabId,'other');return cleanup(cap,options);};
  await e.cleanupRetry({taskId:'a',generation:1,tabIds:[a.tabId]});assert.ok(f.tabs.has(a.tabId));
 });

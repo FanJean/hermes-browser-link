@@ -1,6 +1,6 @@
 const states={waiting:'Hermes 正在工作',running:'Hermes 正在工作',pausing:'正在暂停…',paused:'已暂停 · 你可以操作页面',resuming:'正在恢复…',stopping:'正在停止…',stopped:'已停止',disconnected:'与扩展的连接已断开',unknown:'状态待核查'};
 const interactionLabels={click:'准备点击',input:'正在输入',select:'正在选择',drag:'正在拖动'};
-const stepLabels={tabs:'读取标签页',new_tab:'打开新标签页',navigate:'打开网页',snapshot:'读取页面',click:'点击页面',fill:'填写内容',press:'按键',screenshot:'截取页面',semantic_snapshot:'理解页面',frame_catalog:'读取页面结构',ref_click:'点击元素',ref_fill:'填写元素',ref_press:'按键',ref_set_checked:'设置选项',ref_select_option:'选择选项',scroll:'滚动页面',back:'返回上一页'};
+const stepLabels={tabs:'读取标签页',new_tab:'打开新标签页',navigate:'打开网页',snapshot:'解析页面元素','page.parse':'解析页面结构','page.observe':'读取页面结构',click:'点击页面',fill:'填写内容',press:'按键',screenshot:'截取页面',semantic_snapshot:'解析页面元素',frame_catalog:'读取页面结构',ref_click:'点击元素',ref_fill:'填写元素',ref_press:'按键',ref_set_checked:'设置选项',ref_select_option:'选择选项',scroll:'滚动页面',back:'返回上一页'};
 const rectOk=r=>r&&[r.x,r.y,r.width,r.height].every(Number.isFinite)&&r.x>=0&&r.y>=0&&r.width>0&&r.height>0&&r.width<=100000&&r.height<=100000;
 const highlightRectOk=r=>r&&[r.left,r.top,r.width,r.height].every(Number.isFinite)&&r.width>0&&r.height>0&&r.width<=100000&&r.height<=100000;
 
@@ -19,6 +19,17 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  // 中文注释：交互高亮加粗、外发光并脉冲闪烁，标签贴在目标旁边，便于实时看清正在操作的模块。
  const pulse=doc.createElement('style');
  pulse.textContent='@keyframes hermes-pulse{0%{box-shadow:0 0 0 0 rgba(255,138,0,.65),0 0 14px rgba(255,138,0,.55)}100%{box-shadow:0 0 0 12px rgba(255,138,0,0),0 0 14px rgba(255,138,0,.55)}}@media(prefers-reduced-motion:reduce){[data-role="virtual-cursor"],[data-role="cursor-hint"]{transition:none!important}[data-role="cursor-ripple"]{transition:opacity 180ms cubic-bezier(.23,1,.32,1)!important;transform:none!important}[data-role="target"],[data-role="drag-start"],[data-role="drag-end"]{animation:none!important}}';
+ // 中文注释：扫描只动画 transform 和 opacity；减少动态效果时保留静态边框，取消大幅扫屏位移。
+ pulse.textContent+=`@keyframes hermes-scan{from{transform:translateY(-100%)}to{transform:translateY(calc(100vh + 100%))}}
+ [data-role="parsing-beam"]{animation:hermes-scan 1400ms linear infinite}
+ [data-role="parsing-elements"]{transition:opacity 220ms cubic-bezier(.23,1,.32,1)}
+ @media(prefers-reduced-motion:reduce){[data-role="parsing-beam"]{animation:none;opacity:.35;transform:none}[data-role="parsing-elements"]{transition:none}}`;
+ const parsingScan=doc.createElement('div');parsingScan.dataset.role='parsing-scan';parsingScan.setAttribute('aria-hidden','true');
+ Object.assign(parsingScan.style,{position:'fixed',inset:'0',display:'none',overflow:'hidden',pointerEvents:'none',boxShadow:'inset 0 0 28px rgba(75,210,145,.16)'});
+ const parsingBeam=doc.createElement('div');parsingBeam.dataset.role='parsing-beam';
+ Object.assign(parsingBeam.style,{position:'absolute',top:'0',left:'0',width:'100%',height:'96px',background:'linear-gradient(180deg,transparent,rgba(75,210,145,.05) 65%,rgba(75,210,145,.18))',borderBottom:'1px solid rgba(108,238,173,.8)',boxSizing:'border-box',pointerEvents:'none'});parsingScan.append(parsingBeam);
+ const parsingElements=doc.createElement('div');parsingElements.dataset.role='parsing-elements';parsingElements.setAttribute('aria-hidden','true');
+ Object.assign(parsingElements.style,{position:'fixed',inset:'0',display:'none',opacity:'0',pointerEvents:'none'});
  const highlightStyle=color=>({position:'fixed',display:'none',border:`3px solid ${color}`,borderRadius:'4px',background:color==='#ff8a00'?'rgba(255,138,0,.16)':'rgba(56,136,232,.16)',boxSizing:'border-box',pointerEvents:'none',animation:'hermes-pulse 0.9s ease-out infinite'});
  const interactionTarget=doc.createElement('div');interactionTarget.dataset.role='target';interactionTarget.setAttribute('aria-hidden','true');
  Object.assign(interactionTarget.style,highlightStyle('#ff8a00'));
@@ -37,7 +48,8 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  const ripple=doc.createElement('div');ripple.dataset.role='cursor-ripple';ripple.setAttribute('aria-hidden','true');
  Object.assign(ripple.style,{position:'fixed',display:'none',width:'26px',height:'26px',border:'2px solid #ff8a00',borderRadius:'50%',pointerEvents:'none',zIndex:'2',opacity:'0',transition:'opacity 180ms cubic-bezier(.23,1,.32,1),transform 180ms cubic-bezier(.23,1,.32,1)'});
  const bar=doc.createElement('div');bar.dataset.role='status';
- Object.assign(bar.style,{position:'fixed',top:'16px',right:'16px',width:'min(342px,calc(100vw - 32px))',padding:'14px 16px',border:'1px solid rgba(255,255,255,.16)',borderRadius:'14px',background:'#172a20',color:'#fff',font:'13px/1.45 system-ui,sans-serif',boxShadow:'0 12px 35px rgba(0,0,0,.22)',pointerEvents:'auto'});
+ // 中文注释：窄窗口下将内边距计入现有宽度限制，避免解析状态栏超出视口。
+ Object.assign(bar.style,{position:'fixed',top:'16px',right:'16px',width:'min(342px,calc(100vw - 32px))',boxSizing:'border-box',padding:'14px 16px',border:'1px solid rgba(255,255,255,.16)',borderRadius:'14px',background:'#172a20',color:'#fff',font:'13px/1.45 system-ui,sans-serif',boxShadow:'0 12px 35px rgba(0,0,0,.22)',pointerEvents:'auto'});
  const eyebrow=doc.createElement('div');eyebrow.textContent='HERMES · 浏览器任务';Object.assign(eyebrow.style,{fontSize:'10px',letterSpacing:'.09em',color:'#a9c9b6',marginBottom:'6px'});bar.append(eyebrow);
  const label=doc.createElement('div');label.textContent=states.waiting;Object.assign(label.style,{fontSize:'15px',fontWeight:'650'});bar.append(label);
  const detail=doc.createElement('div');detail.textContent='页面暂不可点击 · Ctrl+Alt+Shift+F12 接管';Object.assign(detail.style,{fontSize:'12px',color:'#bfd0c4',marginTop:'3px'});bar.append(detail);
@@ -81,7 +93,27 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  const release=button('放开页面','release',remove,true);
  const retry=button('重试','retry',()=>{if(lastCommand)return invoke(lastCommand.action,lastCommand.el,lastCommand.callback);},true);
  release.style.display=retry.style.display=resume.style.display='none';actions.append(takeover,resume,stop,release,retry);
- shadow.append(veil,border,target,interactionTarget,dragStart,dragEnd,interactionStatus,cursor,cursorHint,ripple,bar,pulse);doc.documentElement.append(host);
+ shadow.append(veil,border,target,parsingScan,parsingElements,interactionTarget,dragStart,dragEnd,interactionStatus,cursor,cursorHint,ripple,bar,pulse);doc.documentElement.append(host);
+ const parsingSteps=new Set(['snapshot','semantic_snapshot','page.parse','page.observe','frame_catalog']);
+ let parsingStep=null,parsingTimer=null,parsingFadeTimer=null;
+ // 中文注释：解析反馈定时器独立于页面动作，不等待动画；新步骤开始前取消旧反馈，防止迟到清理。
+ function clearParsing(){
+  clearTimeout(parsingTimer);clearTimeout(parsingFadeTimer);parsingTimer=parsingFadeTimer=null;parsingStep=null;
+  parsingScan.style.display='none';parsingElements.style.display='none';parsingElements.style.opacity='0';parsingElements.replaceChildren();
+ }
+ function syncParsing(state,step){
+  if(state==='running'&&parsingSteps.has(step)){
+   if(parsingStep!==step){clearParsing();parsingStep=step;}
+   parsingScan.style.display='block';return;
+  }
+  if(state==='waiting'&&parsingStep){
+   parsingStep=null;parsingScan.style.display='none';
+   if(parsingElements.children.length){
+    parsingTimer=setTimeout(()=>{parsingTimer=null;parsingElements.style.opacity='0';parsingFadeTimer=setTimeout(clearParsing,220);},600);return;
+   }
+  }
+  clearParsing();
+ }
  // 中文注释：在窗口捕获阶段阻断输入，覆盖 z-index 之上的 dialog/popover；派发窗口和用户接管时放行。
  // 中文注释：是否拦截只由私有任务状态决定，网页修改 host 样式不能授予接管权限。
  const isBlocking=()=>!removed&&currentState!=='paused'&&!inputWindowOpen;
@@ -217,23 +249,51 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  function remove(){
   if(removed)return;
   if(activeHighlightToken)interactionSurface.clear({taskId,generation,...(documentId===null?{}:{documentId}),operationToken:activeHighlightToken});
-  removed=true;cancelCursorMotion();cursor.style.display='none';clearTimeout(commandTimer);commandTimer=null;commandAbort?.abort();commandAbort=null;observer?.disconnect();doc.defaultView?.removeEventListener?.('pageshow',recover);doc.defaultView?.removeEventListener?.('blur',checkFrameFocus,true);doc.removeEventListener?.('focusin',checkFrameFocus,true);doc.removeEventListener?.('visibilitychange',syncCursor);doc.defaultView?.removeEventListener?.('resize',resizeCursor);hiddenHosts=null;hideDepth=0;clearTimeout(inputWindowTimer);inputWindowTimer=null;host.remove();
+  removed=true;clearParsing();cancelCursorMotion();cursor.style.display='none';clearTimeout(commandTimer);commandTimer=null;commandAbort?.abort();commandAbort=null;observer?.disconnect();doc.defaultView?.removeEventListener?.('pageshow',recover);doc.defaultView?.removeEventListener?.('blur',checkFrameFocus,true);doc.removeEventListener?.('focusin',checkFrameFocus,true);doc.removeEventListener?.('visibilitychange',syncCursor);doc.defaultView?.removeEventListener?.('resize',resizeCursor);hiddenHosts=null;hideDepth=0;clearTimeout(inputWindowTimer);inputWindowTimer=null;host.remove();
   for(const type of keyEvents)doc.defaultView?.removeEventListener?.(type,blockKeys,true);
  }
  // 中文注释：清理事件只能本地卸载浮层；即使网页主动触发，也不能授予任务权限或伪造暂停。
  host.addEventListener('hermes-overlay-release',remove);
  const overlay=Object.freeze({
   host,interactionSurface,hide,restore,
+  // 中文注释：只接收语义解析回执的矩形，不读取字段值、不展示网页文字，最多标出 24 个视口内元素。
+  showParsedElements(rects){
+   if(removed||currentState!=='running'||!parsingStep||!Array.isArray(rects))return false;
+   const view=doc.defaultView;
+   const visible=rects.filter(r=>r&&[r.x,r.y,r.width,r.height].every(Number.isFinite)&&r.width>0&&r.height>0&&r.x+r.width>0&&r.y+r.height>0&&r.x<view.innerWidth&&r.y<view.innerHeight).slice(0,24);
+   parsingElements.replaceChildren(...visible.map(r=>{
+    const box=doc.createElement('div');box.dataset.role='parsed-element';
+    const left=Math.max(0,r.x),top=Math.max(0,r.y);
+    Object.assign(box.style,{position:'fixed',left:`${left}px`,top:`${top}px`,width:`${Math.min(view.innerWidth,r.x+r.width)-left}px`,height:`${Math.min(view.innerHeight,r.y+r.height)-top}px`,border:'1px solid rgba(93,225,158,.9)',borderRadius:'4px',background:'rgba(75,210,145,.045)',boxShadow:'0 0 8px rgba(75,210,145,.14)',boxSizing:'border-box',pointerEvents:'none'});
+    return box;
+   }));
+   parsingElements.style.display=visible.length?'block':'none';parsingElements.style.opacity='1';return true;
+  },
   setRecentSteps(steps){
    // 中文注释：只接收守护进程的脱敏步骤字段，错误码映射为固定说明。
    if(removed||!Array.isArray(steps))return;
    const explanations={task_paused:'用户已接管页面',element_timeout:'目标未在期限内出现',target_occluded:'目标被其他元素遮挡',
     scroll_timeout:'滚动结果尚未确认',stale_ref:'页面引用已失效',document_changed:'文档已变化',
+    stale_reference:'页面引用已失效，请重新解析并核对当前状态',select_option_missing:'未找到指定选项，请重新读取选项列表',
+    invalid_target_state:'控件状态无法核验，请核对实际状态，不要直接重试',
+    execution_denied:'安全检查未通过，请核对目标和授权',
+    content_shield_uninspectable:'页面有无法检查的框架或封闭组件，本次操作已拒绝，请人工核对',
+    content_shield_changed:'操作期间页面保护状态发生变化，请核对实际结果，不要重复提交',
+    content_shield_unavailable:'页面内容保护状态无法确认，请检查扩展连接和设置',
+    content_shield_unsupported:'此操作不支持当前内容保护模式',
     origin_denied:'目标网站不在任务授权范围',permission_denied:'浏览器权限不足',instance_unavailable:'浏览器已断开'};
    recentList.replaceChildren(...steps.slice(-5).map(row=>{
-    const item=doc.createElement('li');const code=typeof row.result==='string'?row.result:'';
-    item.textContent=`${String(row.time||'').slice(11,19)} ${String(row.action||'').slice(0,40)} · ${String(row.target||'').slice(0,80)} · ${Number(row.durationMs)||0}ms · ${code==='succeeded'?'成功':code==='unknown'?'结果不确定':code==='failed'?'失败':code}`;
-    if(code!=='succeeded'&&code!=='pending'){item.style.color='#ffaaa2';item.textContent+=`（${explanations[code]||'请核查当前页面状态'}）`;}
+    const item=doc.createElement('li');const state=typeof row.result==='string'?row.result:'';
+    // 中文注释：结果未知仍显示未知；原因独立展示，任意页面异常文字不作为错误码输出。
+    const reason=state==='unknown'||state==='failed'?row.errorCode:state;
+    const code=typeof reason==='string'&&/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(reason)?reason:'';
+    const failed=state!=='succeeded'&&state!=='pending';
+    item.textContent=`${String(row.time||'').slice(11,19)} ${String(row.action||'').slice(0,40)} · ${String(row.target||'').slice(0,80)} · ${Number(row.durationMs)||0}ms · ${state==='succeeded'?'成功':state==='pending'?'等待确认':state==='unknown'?'结果不确定':'失败'}`;
+    if(failed){
+     item.style.color='#ffaaa2';
+     const explanation=Object.hasOwn(explanations,code)?explanations[code]:'请核对页面状态，不要重复提交';
+     item.textContent+=`${code?` [${code}]`:''}（${explanation}）`;
+    }
     return item;
    }));
   },
@@ -241,6 +301,7 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
    if(removed)return;
    if(state==='stopped'){remove();return;}
    clearTimeout(inputWindowTimer);inputWindowTimer=null;currentState=state;
+   syncParsing(state,step);
    const recovery=state==='disconnected'||state==='unknown';
    release.style.display=retry.style.display=recovery?'inline-block':'none';retry.disabled=!lastCommand;
    stop.style.display=recovery?'none':'inline-block';
@@ -282,6 +343,7 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
   // 中文注释：授权撤销等不能写回状态的场合，只把派发放行收回为拦截；用户已接管时保持放开。
   reblock(){
    if(removed||currentState==='paused')return;
+   clearParsing();
    clearTimeout(inputWindowTimer);inputWindowTimer=null;
    inputWindowOpen=false;host.style.pointerEvents='auto';for(const node of [bar,...controls])node.style.pointerEvents='auto';checkFrameFocus();
   },
