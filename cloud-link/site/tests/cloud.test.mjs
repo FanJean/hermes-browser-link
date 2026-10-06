@@ -151,7 +151,7 @@ test('Sites 转发保留身份校验并恢复现代 MCP 发现和工具路由头
   assert.equal(discover.status, 200); const discovered=(await discover.json()).result;
   assert.equal(discovered.resultType, 'complete');
   // 中文注释：核对真正 MCP 发现响应的版本与收尾指令，不只检查源码常量。
-  assert.equal(discovered._meta['io.modelcontextprotocol/serverInfo'].version,'1.8.1');
+  assert.equal(discovered._meta['io.modelcontextprotocol/serverInfo'].version,JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version);
   assert.match(discovered.instructions,/cloud_browser_close/);
   const tools = await invoke('tools/list', {});
   assert.equal(tools.status, 200); assert.equal((await tools.json()).result.tools.length, 9);
