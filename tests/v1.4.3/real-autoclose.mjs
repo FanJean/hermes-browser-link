@@ -63,7 +63,7 @@ try{
  });
  await check('keep_tabs=true：任务撤权，页面保留，任务组收掉',async()=>{
   const task=await open('keep-owner'),before=await tab(task.tabId);
-  const result=await session.rpc(task.owner,'close',{task_id:task.task.id,keep_tabs:true});
+  const result=await session.rpc(task.owner,'close',{task_id:task.task.id,keep_tabs:true,handoff_reason:'user_requested'});
   assert.equal(result.state,'closed');await waitFor(async()=>(await tab(task.tabId))?.groupId===-1,12000);
   assert.equal(await group(before.groupId),null);assert.ok(await tab(task.tabId));
   const denied=await task.run('snapshot');assert.ok(denied.error,'终态仍有操作权');

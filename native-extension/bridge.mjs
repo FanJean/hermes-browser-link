@@ -17,7 +17,7 @@ function executionError(error,message){
  else if(reason==='CLICK_NO_EFFECT'){code='click_no_effect';text='输入已派发，但在观察期限内没有效果；请先读取页面核对。';}
  else if(reason==='TASK_PAUSED'||reason==='task paused'){code='task_paused';text='用户已接管，任务已暂停；请等待用户继续，不会自动重试。';}
  else if(error?.code==='workspace_unknown'){code='workspace_unknown';text='Workspace ownership or operation outcome is uncertain.';}
- else if(/^CONTENT_SHIELD_/.test(reason)){code=reason.toLowerCase();text='页面内容保护未能确认，本次输出已拒绝。';}
+ else if(/^CONTENT_SHIELD_(?:UNAVAILABLE|INVALID_RULES|UNSUPPORTED|STALE|CHANGED|UNINSPECTABLE|UNSUPPORTED_VIEWPORT|BLOCKER_OVERLAP|RENDER_UNSUPPORTED)$/.test(reason)){code=reason.toLowerCase();text='页面内容保护未能确认，本次输出已拒绝；请核对保护状态后重新读取，写入结果未知时不要重试。';}
  else if(reason==='SCREENSHOT_TIMEOUT'){code='screenshot_timeout';text='截图超时，未返回截图；请核对页面状态。';}
  else if(reason==='SCREENSHOT_TARGET_MISSING'){code='element_timeout';text='截图目标未唯一找到；请重新读取页面并缩小名称或选择器范围。';}
  else if(reason==='CAPTURE_SENSITIVE_BLOCKED'){code='capture_sensitive_blocked';text='敏感字段遮罩无法确认；请隐藏该字段或让用户手动截图后重试。';}
@@ -47,8 +47,13 @@ function executionError(error,message){
  else if(reason==='SELECT_OPTION_AMBIGUOUS'){code='select_option_ambiguous';text='More than one option matches; use a unique value.';}
  else if(reason==='SELECT_OPTION_DISABLED'){code='select_option_disabled';text='The requested option is disabled.';}
  else if(reason==='INVALID_SELECT_OPTIONS'){code='invalid_select_option';text='The requested options are invalid for this control.';}
+ else if(reason==='CUSTOM_SELECT_UNSUPPORTED'){code='custom_select_unsupported';text='先点击展开自定义下拉，读取新的 option 引用后逐项点击；未派发选择。';}
+ else if(reason==='SEMANTIC_LIBRARY_UNAVAILABLE'){code='semantic_library_unavailable';text='页面解析器未就绪；请等导航完成后重新读取。';}
+ else if(reason==='INPUT_EFFECT_PROBE_FAILED'){code='input_effect_probe_failed';text='无法确认点击效果；请读取页面核实，不要重放点击。';}
+ else if(reason==='ADAPTER_DETACHED'){code='debugger_detached';text='页面调试连接已失效；请核对任务状态后重新读取。';}
  else if(['TARGET_CHANGED','POINTER_FRAME_UNSUPPORTED'].includes(reason)){code='target_unavailable';text='The pointer target changed or is outside the supported document.';}
  else if(reason==='TARGET_UNAVAILABLE'){code='target_unavailable';text='The browser target changed; read the page again.';}
+ else if(reason==='TAB_DISCARDED'){code='tab_discarded';text='浏览器已丢弃此标签页；请确认 URL 和此前写入结果后由用户恢复页面，再重新读取。';}
  else if(reason==='DOWNLOAD_NOT_OWNED'||reason==='DOWNLOADS_UNAVAILABLE'){code='download_not_owned';text='The download is not attributed to this task.';}
  // 中文注释：文件上传的前置拒绝使用固定错误码，既不泄露路径，也不把未派发误报为结果未知。
  else if(reason==='ARTIFACT_PATH_DENIED'){code='artifact_path_denied';text='The selected task file path is invalid.';}
@@ -115,11 +120,13 @@ function executionError(error,message){
   }}catch{}
  }
  // 中文注释：目标几何或状态在派发前已拒绝，回执明确可重新读取后重试。
- const refusedBeforeDispatch=['target_out_of_viewport','target_hidden','target_disabled','target_zero_size','target_unavailable','target_occluded'].includes(code);
+ const refusedBeforeDispatch=error?.preDispatch!==false&&['target_out_of_viewport','target_hidden','target_disabled','target_zero_size','target_unavailable','target_occluded','custom_select_unsupported'].includes(code);
  // 中文注释：仅附固定阶段码与合法 origin，任何路径、查询和网页异常文本都不转发。
  let currentOrigin;try{const url=new URL(error?.currentOrigin);if(['http:','https:'].includes(url.protocol)&&!url.username&&!url.password)currentOrigin=url.origin;}catch{}
  const stage = code==='document_changed'||code==='overlay_frame_changed'?{stage:'document',reasonCode:'document_changed'}:code==='overlay_injection_failed'&&error?.stage==='overlay'&&['initialization_exception','return_type_invalid'].includes(error?.reasonCode)?{stage:'overlay',reasonCode:error.reasonCode}:{};
- return {code,message:text,data:{outcomeUnknown:code!=='cdp_error'&&!readOnly&&!filePreDispatch&&!refusedBeforeDispatch&&error?.preDispatch!==true,retryable:readOnly&&['document_changed','stale_reference','stale_screenshot','screenshot_expired','page_not_ready','overlay_frame_changed','overlay_injection_failed'].includes(code),
+ const actionConfirmed=error?.actionConfirmed===true&&code.startsWith('content_shield_');
+ return {code,message:text,data:{outcomeUnknown:!actionConfirmed&&code!=='cdp_error'&&!readOnly&&!filePreDispatch&&!refusedBeforeDispatch&&error?.preDispatch!==true,retryable:readOnly&&['document_changed','stale_reference','stale_screenshot','screenshot_expired','page_not_ready','overlay_frame_changed','overlay_injection_failed'].includes(code),
+  ...(actionConfirmed?{actionConfirmed:true}:{}),
   ...stage,
   ...(code==='click_no_effect'?{effect:'unobserved',suggestion:'输入已派发但未观察到效果；请读取目标页核对，检查按钮状态或改用页面支持的操作，不要反复重试。'}:{}),
   ...(['origin_denied','tab_out_of_scope'].includes(code)&&currentOrigin?{currentOrigin,scopeHint:'同站用 goto_url，新站用 browser_shared_open。'}:{}),

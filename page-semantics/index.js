@@ -43,11 +43,11 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   function stats(){return {activeRefs:active.size,baselineItems:baseline?.items.length||0,cursors:cursorState?1:0,maxItems,maxScan,maxText};}
   // 中文注释：复用合法 HTML 编辑属性形式，空值和纯文本模式与 true 使用相同解析链路。
   const editable='[contenteditable="true" i],[contenteditable=""],[contenteditable="plaintext-only" i]';
-  const interactiveRoles=new Set(['button','link','textbox','searchbox','checkbox','radio','combobox','listbox','option','menuitem','menuitemcheckbox','menuitemradio','switch','slider','spinbutton','tab','treeitem']);
-  // 中文注释：按 WAI-ARIA 1.2 采用首个有效非抽象角色，未知 token 不覆盖原生语义。
-  const ariaRoles=new Set('alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox complementary contentinfo definition deletion dialog directory document emphasis feed figure form generic grid gridcell group heading img insertion link list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox menuitemradio meter navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status strong subscript suggestion superscript switch tab table tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem'.split(' '));
   const checkRoles=new Set(['checkbox','radio','switch','menuitemcheckbox','menuitemradio']);
-  const selectors={interactive:`button,a[href],input,select,textarea,summary,${editable},[role],[tabindex],div,span`,content:'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,[role="heading"]',table:'tr,[role="row"],[data-ui-name="Body.Row"]'};
+  const interactiveRoles=new Set([...checkRoles,...'button link textbox searchbox combobox listbox option menuitem slider spinbutton tab treeitem'.split(' ')]);
+  // 中文注释：按 WAI-ARIA 1.2 采用首个有效非抽象角色，未知 token 不覆盖原生语义。
+  const ariaRoles=new Set([...interactiveRoles,...'alert alertdialog application article banner blockquote caption cell code columnheader complementary contentinfo definition deletion dialog directory document emphasis feed figure form generic grid gridcell group heading img insertion list listitem log main marquee math menu menubar meter navigation none note paragraph presentation progressbar radiogroup region row rowgroup rowheader scrollbar search separator status strong subscript suggestion superscript table tablist tabpanel term time timer toolbar tooltip tree treegrid'.split(' ')]);
+  const selectors={interactive:`button,a[href],input,select,textarea,summary,${editable},[role],[tabindex],div,span`,content:'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,[role=heading]',table:'tr,[role=row],[data-ui-name="Body.Row"]'};
   function ref(node){if(!refs.has(node))refs.set(node,`${instance}:e${++sequence}`);return refs.get(node);}
   function quotedValueEnd(text,start,quote){
     for(let i=start+1;i<text.length;i++){
@@ -287,10 +287,10 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   function rowCells(row){
     if(row.getAttribute('data-ui-name')==='Body.Row')return Array.from(row.children);
     const cells=[],walker=row.ownerDocument.createTreeWalker(row,1,{acceptNode:node=>
-      node.matches('tr,[role="row"],table,[role="table"],[role="grid"],[role="treegrid"]')?2:1});
+      node.matches('tr,[role=row],table,[role=table],[role=grid],[role=treegrid]')?2:1});
     let node,scanned=0;
     while((node=walker.nextNode())&&scanned++<maxScan){
-      if(node.matches('th,td,[role="cell"],[role="gridcell"],[role="columnheader"],[role="rowheader"]')&&visible(node,false))cells.push(node);
+      if(node.matches('th,td,[role=cell],[role=gridcell],[role=columnheader],[role=rowheader]')&&visible(node,false))cells.push(node);
     }
     return cells;
   }
@@ -353,14 +353,23 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       if(node.type==='image')name=node.getAttribute('alt')||'';
       else if(['submit','reset','button'].includes(node.type))name=node.getAttribute('value')||({submit:'Submit',reset:'Reset'}[node.type]||'');
     }
-    let content=name||(inferred?readText(node,false,maxFullText,true):text(node)),nameSource=null;
+    let content=name||(inferred?readText(node,false,maxFullText,true):text(node)),source=null;
+    // 中文注释：只有符号的按钮优先采用已有 tooltip；业务正文和显式 ARIA 名称保持原优先级。
+    if(!name&&r==='button'&&node.getAttribute('title')&&content&&!/[\p{L}\p{N}]/u.test(content)){content=node.getAttribute('title');source='title';}
     // 中文注释：图标按钮的名称可来自图片 alt、SVG title 或 tooltip，仍使用既有脱敏和截断。
     if(!content){
       const icons=node.querySelectorAll('img[alt],svg title');
       content=Array.from(icons).slice(0,100).filter(icon=>visible(icon.localName==='title'?icon.parentElement:icon,false)&&!icon.closest('[hidden],[aria-hidden="true"],[data-private]')).map(icon=>icon.localName==='img'?clip(icon.getAttribute('alt')||''):bounded(icon.textContent||'',1024)).join(' ');
-      if(content)nameSource='descendant';
+      if(content)source='descendant';
     }
-    if(!content&&node.getAttribute('title')){content=node.getAttribute('title');nameSource='title';}
+    if(!content&&node.getAttribute('title')){content=node.getAttribute('title');source='title';}
+    // 中文注释：单控件包装的可见邻文由原文本读取过滤私密/隐藏内容；多个控件不猜名称。
+    if(!content&&r==='button'){
+      const parent=node.parentElement;
+      if(parent?.matches('span,div,label')&&parent.querySelectorAll('button,a,input,select,textarea,[role]').length===1){
+        content=readText(parent,true,80,true);if(content)source='nearby';
+      }
+    }
     const placeholder=!content && node.matches('input,textarea')?node.getAttribute('placeholder'):null;
     const result={ref:ref(node),role:r,name:clip(content||placeholder||'')};
     const ax=accessibilityNames.get(node);
@@ -368,11 +377,11 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     // 中文注释：上下文只保留有语义的区域和记录，不给容器创建可操作引用。
     const context=[];
     for(let parent=node===scope?null:node.assignedSlot||node.parentElement||node.getRootNode().host;parent&&context.length<6;parent=parent.parentElement||parent.getRootNode().host){
-      if(!parent.matches('main,nav,section,article,li,fieldset,dialog,[role="region"],[role="dialog"],[role="row"],[role="listitem"],[role="group"],[role="listbox"],[role="tablist"],[role="menu"]')){if(parent===scope)break;continue;}
+      if(!parent.matches('main,nav,section,article,li,fieldset,dialog,[role=region],[role=dialog],[role=row],[role=listitem],[role=group],[role=listbox],[role=tablist],[role=menu]')){if(parent===scope)break;continue;}
       if(!contextNames.has(parent)){
         // 中文注释：区域只采用自己的直接标题，避免拿内部另一条记录的标题命名整个区域。
         const heading=Array.from(parent.children).find(child=>child.matches('legend,h1,h2,h3,h4,h5,h6'));
-        const label=parent.getAttribute('aria-label')|| (heading&&visible(heading,false)?text(heading):parent.matches('li,article,[role="row"],[role="listitem"]')?text(parent):'');
+        const label=parent.getAttribute('aria-label')|| (heading&&visible(heading,false)?text(heading):parent.matches('li,article,[role=row],[role=listitem]')?text(parent):'');
         const rowIndex=Number(parent.getAttribute('aria-rowindex')||parent.getAttribute('aria-posinset'));
         contextNames.set(parent,{ref:ref(parent),role:parent.getAttribute('role')||parent.localName,name:clip(label).slice(0,120),...(Number.isSafeInteger(rowIndex)&&rowIndex>0?{index:rowIndex}:{})});
       }
@@ -396,7 +405,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     }
     if(path.length)result.targetPath=path;
     if(placeholder)result.nameSource='placeholder';
-    else if(nameSource&&result.nameSource!=='accessibility')result.nameSource=nameSource;
+    else if(source&&result.nameSource!=='accessibility')result.nameSource=source;
     const cells=r==='row'?rowCells(node):[];
     if(r==='row')result.cells=cells.slice(0,40).map(text);
     if(inferred)result.inferred=true;
@@ -435,7 +444,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   function accessibilityNode(token){
     const node=resolve(token);
     // 中文注释：AX 响应可能附带 value，带值控件不进入 AX 查询，继续使用已有 DOM 名称和状态。
-    if(node.matches('input,textarea,select,[contenteditable],[role="textbox"],[role="combobox"],[role="listbox"],[role="slider"],[role="spinbutton"]'))return null;
+    if(node.matches('input,textarea,select,[contenteditable],[role=textbox],[role=combobox],[role=listbox],[role=slider],[role=spinbutton]'))return null;
     if(node.querySelector('[data-private],[hidden],[aria-hidden="true"],input,textarea,select'))return null;
     // 中文注释：AX 计算名称会展开 slot，分配节点的隐私检查不能只靠 Shadow 内的 querySelector。
     for(const slot of node.querySelectorAll('slot'))for(const assigned of slot.assignedNodes({flatten:true})){
@@ -563,7 +572,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     const identity=value=>JSON.stringify({...value,context:value.context?.map(({name:_name,...entry})=>entry)});
     if(node.isConnected&&within(node)&&visible(node,false)&&(JSON.stringify(current)===JSON.stringify(saved)||savedSnapshot.mode==='interactive'&&saved.nameSource!=='accessibility'&&stableKey(node,current)===record.key&&identity(current)===identity(saved)))return node;
     // 中文注释：只遍历原作用域的普通子树，不进入其他 frame 或 Shadow 树。
-    const matches=[],scope=root===doc?savedSnapshot.root:root.host?root:owner.body;
+    const matches=[],candidates=[],scope=root===doc?savedSnapshot.root:root.host?root:owner.body;
     const walker=owner.createTreeWalker(scope,1);
     let scanned=0;
     for(let candidate=scope;candidate;candidate=walker.nextNode()){
@@ -571,12 +580,12 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       if(matches.length>5)break;
       if(!within(candidate)||!candidate.matches?.(selectors[savedSnapshot.mode])||!visible(candidate,false))continue;
       const description=savedSnapshot.mode==='interactive'?item(candidate,savedSnapshot.root):fullItem(candidate);
+      if(description.role===saved.role&&candidates.length<5)candidates.push({role:description.role,name:description.name.slice(0,80)});
       if(stableKey(candidate,description)===record.key)matches.push(candidate);
     }
     if(matches.length!==1){
       const code=matches.length?'REF_TARGET_AMBIGUOUS':'REF_TARGET_MISSING';
       // 中文注释：错误仅含经过快照脱敏的角色和名称，不含属性值或输入框当前值。
-      const candidates=matches.slice(0,5).map(candidate=>{const description=savedSnapshot.mode==='interactive'?item(candidate,savedSnapshot.root):fullItem(candidate);return {role:description.role,name:description.name.slice(0,80)};});
       throw new Error(`${code}|${encodeURIComponent(JSON.stringify(candidates))}`);
     }
     node=matches[0];record.node=node;record.relocated=true;lastRelocated=true;

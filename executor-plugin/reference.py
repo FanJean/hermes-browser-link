@@ -44,7 +44,7 @@ def render():
              '## Task lifecycle', '',
              '每轮 `on_session_end(completed=True)` 默认立即关闭工作页；显式设置宽限时，同会话再次调用任意 `browser_shared_*` 取消计时。失败、中断和成功映射 owner 的 `agent_loop_stopped(session_key)` 立即按 handoff 结束。', '',
              '`HERMES_BROWSER_IDLE_CLOSE_SECONDS` 设置完成宽限（0 为立即关闭）；`HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS` 设置 ready 任务空闲上限（默认 1200 秒）。计时由常驻 daemon 管理并持久化，CLI 退出不丢失。', '',
-             '暂停或仍等待人工批准/敏感填写的任务免于空闲扫描。需要用户继续操作的页面必须 `keep_tabs=true`；任务结束撤权并收组，保留这些页面和用户页面。浏览器重启后无法验证的旧创建记录不授予清理权限。', '',
+             '暂停或仍等待人工批准/敏感填写的任务免于空闲扫描。`keep_tabs=true` 仅用于本轮回复明确请用户现在去该页完成验证码、登录、核验或最终提交，或用户明确要求保留；必须传 `handoff_reason`（captcha/login/verification/final_submit/user_requested）。遇阻、结果未知、读不到或被遮挡，记录 URL 和停点后普通关闭；任务结束撤权并收组，保留这些页面和用户页面。浏览器重启后无法验证的旧创建记录不授予清理权限。', '',
              '## Python helpers', '']
     for helper in helper_catalog():
         lines += ['### `' + helper['signature'] + '`', '', helper['description'].replace('\n', ' '), '', '扩展能力：`' + helper['requires'] + '`。', '']

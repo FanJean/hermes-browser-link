@@ -114,7 +114,7 @@ export async function maskCapturePng(base64,rects,viewport,format='png'){
 const PRE_DISPATCH_PAGE_REASONS=new Set(['TARGET_OCCLUDED','TARGET_NOT_ACTIONABLE','TARGET_UNSTABLE','SENSITIVE_TARGET','STALE_REF','STALE_SNAPSHOT',
  'TARGET_DISABLED','TARGET_HIDDEN','TARGET_ZERO_SIZE','TARGET_OUT_OF_VIEWPORT','REF_TARGET_MISSING','REF_TARGET_AMBIGUOUS',
  'BINDING_MISMATCH','DOCUMENT_REPLACED','UNSUPPORTED_FRAME_TRANSFORM','POINTER_FRAME_UNSUPPORTED','TARGET_STATE_UNKNOWN','RADIO_CANNOT_UNCHECK',
- 'INVALID_CHECKED_STATE','INVALID_SELECT_OPTIONS','SELECT_OPTION_AMBIGUOUS','SELECT_OPTION_DISABLED','SELECT_OPTION_MISSING','PRESS_TARGET_CHANGED']);
+ 'INVALID_CHECKED_STATE','INVALID_SELECT_OPTIONS','CUSTOM_SELECT_UNSUPPORTED','SELECT_OPTION_AMBIGUOUS','SELECT_OPTION_DISABLED','SELECT_OPTION_MISSING','PRESS_TARGET_CHANGED']);
 
 // 中文注释：只检查控件直接关联的字段语义；注入页面时序列化此纯函数，三个入口共用同一实现。
 export function classifySensitiveField(e){
@@ -197,7 +197,7 @@ export const semanticWorldDeclaration=`function(op,p){
   let current=e;
   while(current){
    const doc=current.ownerDocument,view=doc.defaultView,root=current.getRootNode();
-   if(state.semantics.interaction(current).disabled)throw Error('TARGET_DISABLED');
+   if(semantics.interaction(current).disabled)throw Error('TARGET_DISABLED');
    if(current.closest('[inert],[aria-hidden="true"]'))throw Error('TARGET_HIDDEN');
    const style=view.getComputedStyle(current),r=current.getBoundingClientRect();
    if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||!current.getClientRects().length||r.width<=0||r.height<=0)throw Error('TARGET_ZERO_SIZE');
@@ -210,10 +210,16 @@ export const semanticWorldDeclaration=`function(op,p){
     if(hit?.ownerDocument===document&&state?.semantics){
      try{
       const blocker=hit.closest('[role="dialog"],[role="alertdialog"],[role="banner"],dialog')||hit;
-      const snap=state.semantics.snapshot({root:blocker,mode:'interactive',budget:1800});
-      const close=snap.items.find(item=>item.role==='button'&&/close|dismiss|关闭|取消/i.test(item.name));
-      obstruction={role:blocker.getAttribute('role')||blocker.localName,name:snap.items.find(item=>item.ref!==close?.ref)?.name?.slice(0,80)||'',
-       closeButton:close?{binding:snap.binding,snapshotId:snap.snapshotId,ref:close.ref,role:close.role,name:close.name}:null};
+      const prior=state.occlusion;
+      if(prior?.[0]===blocker&&prior[1]===p.ref)obstruction=prior[2];
+      else{
+       // 中文注释：等待同一个遮挡层期间只生成一次内部快照，避免淘汰动作原引用。
+       const snap=semantics.snapshot({root:blocker,mode:'interactive',budget:1800});
+       const close=snap.items.find(item=>item.role==='button'&&/close|dismiss|关闭|取消/i.test(item.name));
+       obstruction={role:blocker.getAttribute('role')||blocker.localName,name:semantics.parsingContext().describe(blocker).name.slice(0,80),
+        closeButton:close?{binding:snap.binding,snapshotId:snap.snapshotId,ref:close.ref,role:close.role,name:close.name}:null};
+       state.occlusion=[blocker,p.ref,obstruction];
+      }
      }catch{}
     }
     throw Error('TARGET_OCCLUDED|'+encodeURIComponent(JSON.stringify(obstruction)));
@@ -231,7 +237,7 @@ export const semanticWorldDeclaration=`function(op,p){
   const overlay=globalThis.__hermesAutomationOverlay,highlight=overlay?.highlight;
   if(!highlight||!p.highlightBinding)return {ok:false,code:'HIGHLIGHT_UNAVAILABLE'};
   // 中文注释：只用控件可访问名称，绝不读取输入值作为可视化标签。
-  const name=sensitive(target)?'敏感字段':(target.getAttribute?.('aria-label')||target.labels?.[0]?.textContent||target.innerText||'').trim().slice(0,48);
+  const name=sensitive(target)?'敏感字段':semantics.parsingContext().describe(target).name.slice(0,48);
   const result=highlight.prepare({...p.highlightBinding,kind,target,label:name});
   if(result?.ok!==true)return result;
   const token=p.highlightBinding.operationToken;overlay.operationToken=token;overlay.paintedToken=null;
@@ -253,11 +259,12 @@ export const semanticWorldDeclaration=`function(op,p){
   }
  }
  if(!state||state.version!==7||!same(state.binding,p.binding))throw Error('BINDING_MISMATCH');
+ const semantics=state.semantics,token={...p.binding,snapshotId:p.snapshotId,ref:p.ref},highlightBinding=p.highlightBinding;
  // 中文注释：只有宿主内部 CDP 查询使用节点对象，模型工具不会公开这两个操作。
- if(op==='accessibility_node')return state.semantics.accessibilityNode({...p.binding,snapshotId:p.snapshotId,ref:p.ref});
- if(op==='apply_accessibility'){state.semantics.applyAccessibility({...p.binding,snapshotId:p.snapshotId},p.values);return true;}
+ if(op==='accessibility_node')return semantics.accessibilityNode(token);
+ if(op==='apply_accessibility'){semantics.applyAccessibility({...p.binding,snapshotId:p.snapshotId},p.values);return true;}
  const delivery=state.deliveryProbe;
- const deliveryMatches=()=>delivery&&delivery.snapshotId===p.snapshotId&&delivery.ref===p.ref&&delivery.token===p.highlightBinding?.operationToken;
+ const deliveryMatches=()=>delivery&&delivery.snapshotId===p.snapshotId&&delivery.ref===p.ref&&delivery.token===highlightBinding?.operationToken;
  const clearDelivery=()=>{
   if(!state.deliveryProbe)return;
   for(const type of ['pointerdown','mousedown','click']){
@@ -276,7 +283,7 @@ export const semanticWorldDeclaration=`function(op,p){
   // 中文注释：只为本文档内仍可解析、在视口中的引用返回 CSS 视口矩形；子 frame 不标注。
   const rows=[];
   for(const entry of (Array.isArray(p.labels)?p.labels:[]).slice(0,200)){
-   let node;try{node=state.semantics.resolve({...p.binding,snapshotId:p.snapshotId,ref:entry.ref});}catch{continue;}
+   let node;try{node=semantics.resolve({...p.binding,snapshotId:p.snapshotId,ref:entry.ref});}catch{continue;}
    if(node.ownerDocument!==document)continue;
    const r=node.getBoundingClientRect();
    if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||r.top>=innerHeight||r.left>=innerWidth)continue;
@@ -290,10 +297,11 @@ export const semanticWorldDeclaration=`function(op,p){
  const usingSelection=op==='synthetic_ref_select_option'||op==='pointer_target'&&p.selectionTarget===true;
  const pending=(reading||usingSelection)&&state.pendingTarget?.snapshotId===p.snapshotId&&state.pendingTarget?.ref===p.ref?state.pendingTarget:null;
  if((reading||usingSelection)&&!pending||usingDelivery&&!deliveryMatches())throw Error('STALE_REF');
- const node=(usingDelivery?delivery.node:pending?.node)||state.semantics.resolve({...p.binding,snapshotId:p.snapshotId,ref:p.ref});
+ const node=(usingDelivery?delivery.node:pending?.node)||semantics.resolve(token);
+ const attr=key=>node.getAttribute(key),doc=node.ownerDocument;
  // 中文注释：预审、准备和填写复用同一资格判断；disabled 仍由各阶段原有检查拒绝。
  // 中文注释：编辑区判断覆盖 HTML 空属性和 plaintext-only，填写及回读使用同一资格。
- const interaction=()=>state.semantics.interaction(node);
+ const interaction=()=>semantics.interaction(node);
  const editable=()=>interaction().editable;
  const fillable=()=>interaction().actions.includes('fill');
  if(op==='shield_write_target'){
@@ -301,19 +309,23 @@ export const semanticWorldDeclaration=`function(op,p){
   const a=p.action.slice(4),tag=node.tagName;
   const ok=a==='fill'?['INPUT','TEXTAREA'].includes(tag):a==='select_option'?tag==='SELECT':
    a==='set_checked'?tag==='INPUT'&&['checkbox','radio'].includes(node.type):['A','BUTTON','INPUT','TEXTAREA','SELECT'].includes(tag);
-  return ok&&node.ownerDocument===document?(a==='click'||a==='set_checked'?controlVisual(node):node):null;
+  return ok&&doc===document?(a==='click'||a==='set_checked'?controlVisual(node):node):null;
  }
  // 中文注释：计划和指针定位共用选项查找，保留缺失、歧义及禁用检查，不缓存页面节点。
- const ariaList=ids=>interaction().role==='listbox'?node:node.getRootNode().getElementById?.(ids[0])||node.ownerDocument.getElementById(ids[0]);
+ const applySelect=op==='apply_native_ref_select_option';
+ const planSelect=op==='plan_ref_select_option';
+ const ariaIds=()=>(attr('aria-controls')||'').trim().split(/\\s+/).filter(Boolean);
+ const ariaList=ids=>interaction().role==='listbox'?node:node.getRootNode().getElementById?.(ids[0])||doc.getElementById(ids[0]);
+ const normalizeOption=value=>String(value||'').normalize('NFC').replace(/\\s+/g,' ').trim();
  const ariaOption=list=>{
-  const matches=[...(list?.querySelectorAll('[role]')||[])].filter(option=>state.semantics.interaction(option).role==='option'&&(p.by==='label'?(option.getAttribute('aria-label')||option.textContent||'').trim():option.getAttribute('data-value')??option.getAttribute('value'))===p.values[0]);
+  const matches=[...(list?.querySelectorAll('[role]')||[])].filter(option=>semantics.interaction(option).role==='option'&&(p.by==='label'?normalizeOption(option.getAttribute('aria-label')||option.textContent||'')===normalizeOption(p.values[0]):(option.getAttribute('data-value')??option.getAttribute('value'))===p.values[0]));
   if(matches.length!==1)throw Error(matches.length?'SELECT_OPTION_AMBIGUOUS':'SELECT_OPTION_MISSING');
-  if(state.semantics.interaction(matches[0]).disabled)throw Error('SELECT_OPTION_DISABLED');
+  if(semantics.interaction(matches[0]).disabled)throw Error('SELECT_OPTION_DISABLED');
   return matches[0];
  };
  if(reading)state.pendingTarget=null;
  if(op==='input_visibility')return {visibility:document.visibilityState};
- if(op==='ref_relocation')return {relocated:state.semantics.relocation()};
+ if(op==='ref_relocation')return {relocated:semantics.relocation()};
  if(op==='scroll_ref'){
   // 中文注释：只滚动目标所在的最近可滚动容器一屏的 80%，由调用方有上限地循环查找虚拟列表中未挂载的项。
   if(!['up','down'].includes(p.direction))throw Error('INVALID_SCROLL');
@@ -341,13 +353,13 @@ export const semanticWorldDeclaration=`function(op,p){
   const reveal=(block,target)=>{
    scrolled=true;
    target.scrollIntoView({behavior:'instant',block,inline:'nearest'});
-   if(state.semantics.resolve({...p.binding,snapshotId:p.snapshotId,ref:p.ref})!==node)throw Error('STALE_REF');
+   if(semantics.resolve(token)!==node)throw Error('STALE_REF');
   };
   const visual=p.checked!==undefined?controlVisual(node):node;
   try{actionable(visual);}catch(error){
    if(!['TARGET_OUT_OF_VIEWPORT','TARGET_OCCLUDED'].includes(String(error?.message||'').split('|',1)[0])||sensitive(node)||typeof node.scrollIntoView!=='function')throw error;
    // 中文注释：固定定位且在视口外的目标无法靠滚动移入；直接返回可恢复的视口错误。
-   if(String(error?.message||'').startsWith('TARGET_OUT_OF_VIEWPORT')&&node.ownerDocument.defaultView.getComputedStyle(node).position==='fixed')throw error;
+   if(String(error?.message||'').startsWith('TARGET_OUT_OF_VIEWPORT')&&doc.defaultView.getComputedStyle(node).position==='fixed')throw error;
    reveal('center',visual);
    actionable(visual);
   }
@@ -359,7 +371,7 @@ export const semanticWorldDeclaration=`function(op,p){
   // 中文注释：分别记录目标和整页事件。
 
   clearDelivery();
-  const probe={node,snapshotId:p.snapshotId,ref:p.ref,token:p.highlightBinding.operationToken,
+  const probe={node,snapshotId:p.snapshotId,ref:p.ref,token:highlightBinding.operationToken,
    global:{pointerdown:0,mousedown:0,click:0},target:{pointerdown:0,mousedown:0,click:0,trustedClick:0}};
   probe.globalListener=event=>{if(Object.hasOwn(probe.global,event.type))probe.global[event.type]++;};
   probe.targetListener=event=>{if(Object.hasOwn(probe.target,event.type))probe.target[event.type]++;if(event.type==='click'&&event.isTrusted)probe.target.trustedClick++;};
@@ -401,7 +413,7 @@ export const semanticWorldDeclaration=`function(op,p){
   // 中文注释：派发前复核指针命中。
   let target=p.checked!==undefined?controlVisual(node):node;
   if(p.optionTarget){
-   const ids=(node.getAttribute('aria-controls')||'').trim().split(/\\s+/).filter(Boolean);
+   const ids=ariaIds();
    target=ariaOption(ariaList(ids));
    target.scrollIntoView({behavior:'instant',block:'nearest',inline:'nearest'});
   }
@@ -425,7 +437,7 @@ export const semanticWorldDeclaration=`function(op,p){
   if(!native&&!aria)throw Error('TARGET_NOT_ACTIONABLE');
   if(descriptor.disabled)throw Error('TARGET_DISABLED');
   if(descriptor.readonly)throw Error('TARGET_NOT_ACTIONABLE');
-  const read=()=>native?(node.type==='checkbox'&&node.indeterminate?'mixed':node.checked):node.getAttribute('aria-checked');
+  const read=()=>native?(node.type==='checkbox'&&node.indeterminate?'mixed':node.checked):attr('aria-checked');
   const before=read();
   if(aria&&!['true','false','mixed'].includes(before))throw Error('TARGET_STATE_UNKNOWN');
   if((native&&node.type==='radio'||['radio','menuitemradio'].includes(role))&&!p.checked)throw Error('RADIO_CANNOT_UNCHECK');
@@ -445,7 +457,7 @@ export const semanticWorldDeclaration=`function(op,p){
   const verified=node.isConnected&&matches;
   return {checked:before===true||before==='true',changed:true,verified,kind:'trusted-input',...(verified?{}:{outcomeUnknown:true})};
  }
- if(op==='plan_ref_select_option'||op==='read_ref_select_option'||op==='apply_native_ref_select_option'||op==='synthetic_ref_select_option'){
+ if(planSelect||op==='read_ref_select_option'||applySelect||op==='synthetic_ref_select_option'){
   if(!interaction().actions.includes('select_option'))throw Error('TARGET_NOT_ACTIONABLE');
   // 中文注释：原生控件按 value、去首尾空白的 Unicode 标签或零基 index 精确定位，校验全部选项后才写入。
   if(!Array.isArray(p.values)||p.values.length>100||!['value','label','index'].includes(p.by)||
@@ -454,15 +466,15 @@ export const semanticWorldDeclaration=`function(op,p){
    if(node.disabled)throw Error('TARGET_NOT_ACTIONABLE');
    if(!node.multiple&&p.values.length!==1)throw Error('INVALID_SELECT_OPTIONS');
    const options=[...node.options],selected=p.values.map(value=>{
-    const matches=options.filter((option,index)=>p.by==='index'?index===value:p.by==='label'?option.label.trim()===value.trim():option.value===value);
+    const matches=options.filter((option,index)=>p.by==='index'?index===value:p.by==='label'?normalizeOption(option.label)===normalizeOption(value):option.value===value);
     if(matches.length!==1)throw Error(matches.length?'SELECT_OPTION_AMBIGUOUS':'SELECT_OPTION_MISSING');
     if(matches[0].disabled||matches[0].parentElement?.disabled)throw Error('SELECT_OPTION_DISABLED');
     return matches[0];
    });
    if(new Set(selected).size!==selected.length)throw Error('INVALID_SELECT_OPTIONS');
    const wanted=new Set(selected),changed=options.some(option=>option.selected!==wanted.has(option));
-   if(op==='plan_ref_select_option')return {kind:'native',needsChange:changed};
-   if(op==='apply_native_ref_select_option'){
+   if(planSelect)return {kind:'native',needsChange:changed};
+   if(applySelect){
 
     // 中文注释：浏览器原生下拉弹层不能可靠按网页坐标操作；与 selectOption 相同，设置 selected 后派发两个冒泡事件。
     for(const option of options)option.selected=wanted.has(option);
@@ -475,18 +487,18 @@ export const semanticWorldDeclaration=`function(op,p){
    }
    throw Error('INVALID_SELECT_OPTIONS');
   }
-  if(op==='apply_native_ref_select_option')throw Error('INVALID_SELECT_OPTIONS');
+  if(applySelect)throw Error('INVALID_SELECT_OPTIONS');
   // 中文注释：自定义 listbox/combobox 仍只支持单选，并由宿主派发可信指针点击。
   if(p.by==='index'||p.values.length!==1)throw Error('INVALID_SELECT_OPTIONS');
-  const role=interaction().role,ids=(node.getAttribute('aria-controls')||'').trim().split(/\\s+/).filter(Boolean);
-  if(!['combobox','listbox'].includes(role)||role==='combobox'&&ids.length!==1)throw Error('INVALID_SELECT_OPTIONS');
+  const role=interaction().role,ids=ariaIds();
+  if(!['combobox','listbox'].includes(role)||role==='combobox'&&ids.length!==1)throw Error('CUSTOM_SELECT_UNSUPPORTED');
   const list=ariaList(ids);
-  if(op==='plan_ref_select_option'&&role==='combobox'&&node.getAttribute('aria-expanded')!=='true'&&!list){
-   state.pendingTarget={snapshotId:p.snapshotId,ref:p.ref,node};
-   return {kind:'aria',needsChange:true,needsOpen:true};
+  if(planSelect&&role==='combobox'&&attr('aria-expanded')!=='true'&&!list){
+   // 中文注释：无法预检选项的懒加载自定义列表不先展开，避免展开后失败被误报未知结果。
+   throw Error('CUSTOM_SELECT_UNSUPPORTED');
   }
   const option=ariaOption(list),selected=option.getAttribute('aria-selected')==='true';
-  if(op==='plan_ref_select_option'){state.pendingTarget={snapshotId:p.snapshotId,ref:p.ref,node};return {kind:'aria',needsChange:!selected,needsOpen:role==='combobox'&&node.getAttribute('aria-expanded')!=='true'};}
+  if(planSelect){state.pendingTarget={snapshotId:p.snapshotId,ref:p.ref,node};return {kind:'aria',needsChange:!selected,needsOpen:role==='combobox'&&attr('aria-expanded')!=='true'};}
   if(op==='synthetic_ref_select_option'){
 
    if(p.needsOpen)node.click();
@@ -1005,7 +1017,7 @@ export class Executor {
     await this.workspaces.ready;
     const cap=t?.workspaceCapability||[...this.workspaces.recovered].find(([key])=>{const id=JSON.parse(key);return id[2]===taskId&&id[3]===generation;})?.[1];
     status=cap?await this.workspaces.cleanupStatus(cap):unknown;
-   }catch{status=unknown;}
+   }catch{status={...unknown,cleanupReason:'workspace_unknown'};}
   }
   const disposition=t?.cleanupUncertainty;
   if(disposition?.taskId===taskId&&disposition.generation===generation){
@@ -1421,10 +1433,11 @@ export class Executor {
    try{return await this.performProtectedAttempt(t,p,settings);}
    catch(error){
     // 中文注释：仅重新执行无副作用的新结构读取，丢弃旧结果；设置变化、写入和截图继续拒绝。
-    if(attempt||!refreshable||!error[SHIELD_DOCUMENT_CHANGED])throw error;
+    if(attempt||!refreshable||(!error[SHIELD_DOCUMENT_CHANGED]&&!isTransientLoadError(error)))throw error;
     this.check(t,p);
     if(t.paused||t.pauseRequested)throw Object.assign(Error('task paused'),{code:'TASK_PAUSED',preDispatch:true});
     if(JSON.stringify(settings)!==JSON.stringify(await this.shieldSettings()))throw error;
+    await new Promise(resolve=>setTimeout(resolve,80));
    }
   }
  }
@@ -1439,10 +1452,18 @@ export class Executor {
   try{result=await (Number.isInteger(p.tabId)?this.performSettled(t,scoped):this.perform(t,scoped));}
   catch(error){
    // 中文注释：页面错误附带的候选与遮挡名称未经脱敏；保留错误码，移除网页名称载荷。
-   if(settings.enabled&&typeof error.message==='string')error.message=error.message.split('|',1)[0];
+   if(settings.enabled&&typeof error.message==='string'){
+    // 中文注释：候选与遮挡摘要也先按派发前保护库存脱敏，再由 Bridge 的固定字段投影；不返回异常堆栈。
+    const [reason,encoded]=error.message.split('|');
+    if(encoded&&['TARGET_OCCLUDED','REF_TARGET_MISSING','REF_TARGET_AMBIGUOUS'].includes(reason)){
+     try{const safe=redactShieldResult(JSON.parse(decodeURIComponent(encoded)),before||{tokens:[]});error.message=reason+'|'+encodeURIComponent(JSON.stringify(safe));}
+     catch{error.message=reason;}
+    }else error.message=reason;
+   }
    if(p.action==='interaction.capture')t.interactions.get(p.tabId)?.interactions.discardCapture();
    throw error;
   }
+  const confirmedClick=p.action==='ref_click'&&result?.clicked===true&&result?.delivery==='confirmed'&&result?.effect==='observed';
   try{
   let currentSettings;
   try{currentSettings=await this.shieldSettings();}catch(error){error.preDispatch=false;throw error;}
@@ -1451,6 +1472,11 @@ export class Executor {
   const image=['screenshot','interaction.capture'].includes(p.action);
   const capture=this.shieldResults.get(result);
   if(inspect){
+   // 中文注释：已确认点击只返回动作证据，不再沿旧节点扫描新文档；新的正文必须走新读取及保护。
+   if(confirmedClick&&result.navigation){
+    const receipt={clicked:true,delivery:'confirmed',effect:'observed',outcomeUnknown:false,navigation:result.navigation,postCheck:{status:'new_read_required'},...(result.relocated?{relocated:true}:{})};
+    this.shieldResults.set(receipt,{settings:JSON.stringify(settings),tabId:p.tabId,actionConfirmed:true});return receipt;
+   }
    after=await this.shieldInventory(t,p,settings,before.writeTarget);
    if(before.document!==after.document)throw Object.assign(Error('CONTENT_SHIELD_CHANGED'),{[SHIELD_DOCUMENT_CHANGED]:true});
    if(image&&capture?.inventory!==JSON.stringify(after))throw Error('CONTENT_SHIELD_CHANGED');
@@ -1470,25 +1496,34 @@ export class Executor {
    if(p.action==='tabs')result=result.map(({title:_title,...row})=>row);
    else result=filterPageResult(p.action,result);
   }
-  if(result&&typeof result==='object')this.shieldResults.set(result,{settings:JSON.stringify(settings),tabId:p.tabId,document:before?.document,writeTarget:before?.writeTarget,...(before&&!before.writeTarget?{inventory:JSON.stringify(after)}: {})});
+  if(result&&typeof result==='object')this.shieldResults.set(result,{settings:JSON.stringify(settings),tabId:p.tabId,document:before?.document,writeTarget:before?.writeTarget,actionConfirmed:confirmedClick,...(before&&!before.writeTarget?{inventory:JSON.stringify(after)}: {})});
   return result;
   }catch(error){
    // 中文注释：发送前保护失败也作废交互截图身份，不留下未交付图片的可操作坐标。
    if(p.action==='interaction.capture')t.interactions.get(p.tabId)?.interactions.discardCapture();
+   if(confirmedClick&&/^CONTENT_SHIELD_(?:CHANGED|UNINSPECTABLE|UNAVAILABLE)$/.test(error?.message)){
+    // 中文注释：保护仍拒绝全部页面输出，仅确认已完成点击；不会重放动作或交付旧正文/名称。
+    const receipt={clicked:true,delivery:'confirmed',effect:'observed',outcomeUnknown:false,postCheck:{status:'refused',code:error.message.toLowerCase(),nextStep:'重新读取当前页面核对；不要重放点击。'}};
+    this.shieldResults.set(receipt,{settings:JSON.stringify(settings),tabId:p.tabId,actionConfirmed:true});return receipt;
+   }
    throw error;
   }
  }
  async shieldResponse(request,result){
   const settings=await this.shieldSettings(),prior=result&&typeof result==='object'?this.shieldResults.get(result):null;
+  // 中文注释：输出仍拒绝；确认事实只来自执行器自己的动作元数据，不从页面返回值推断。
+  const rejected=code=>Object.assign(Error(code),prior?.actionConfirmed?{actionConfirmed:true,preDispatch:false}:{});
   // 中文注释：状态页标题是未经页面探测的汇总字段；当前过滤同样适用于旧缓存。
   if(request.method==='browser.status')return settings.enabled?{...result,pages:(result.pages||[]).map(({title:_title,...page})=>page)}:result;
   // 中文注释：回放不得重新执行操作；设置变更、文档变更或未经过保护的旧结果要求读取新请求。
-  if(settings.enabled&&(!prior||prior.settings!==JSON.stringify(settings)))throw Error('CONTENT_SHIELD_STALE');
+  if(settings.enabled&&(!prior||prior.settings!==JSON.stringify(settings)))throw rejected('CONTENT_SHIELD_STALE');
   if(settings.enabled&&prior?.document){
-   const t=this.tasks.get(request.params.taskId),inventory=await this.shieldInventory(t,request.params,settings,prior.writeTarget);
-   if(prior.document!==inventory.document)throw Error('CONTENT_SHIELD_STALE');
+   const t=this.tasks.get(request.params.taskId);let inventory;
+   try{inventory=await this.shieldInventory(t,request.params,settings,prior.writeTarget);}
+   catch(error){if(/^CONTENT_SHIELD_(?:UNINSPECTABLE|UNAVAILABLE|CHANGED)$/.test(error?.message))throw rejected(error.message);throw error;}
+   if(prior.document!==inventory.document)throw rejected('CONTENT_SHIELD_STALE');
    // 中文注释：已处理截图仍含旧像素；DOM、位置或文本变化不能回放旧图。
-   if(prior.inventory&&prior.inventory!==JSON.stringify(inventory))throw Error('CONTENT_SHIELD_STALE');
+   if(prior.inventory&&prior.inventory!==JSON.stringify(inventory))throw rejected('CONTENT_SHIELD_STALE');
    return redactShieldResult(result,{...inventory,image:['screenshot','interaction.capture'].includes(request.params.action)});
   }
   return result;
@@ -2376,10 +2411,18 @@ export class Executor {
  async settleSemanticTarget(target,frameId,payload,guard,executionContextId=null){
   // 中文注释：未滚动的目标也可能在动画中，稳定检查不能省。由扩展按 60ms 间隔采样：逐帧采样会把缓动末段的
   // 亚像素移动误判为静止，页面内定时器在后台页又会被节流；语义库已缓存，每次采样只发小调用桩。
-  const revealed=await this.callSemanticWorld(target,frameId,'reveal_ref',payload,guard,executionContextId);
-  let last=revealed?.rect,stable=0;
+  let last,stable=0;
   const deadline=Date.now()+2500;
   while(stable<2){
+   try{
+    const revealed=await this.callSemanticWorld(target,frameId,'reveal_ref',payload,guard,executionContextId);
+    if(!last)last=revealed?.rect;
+   }catch(error){
+    const reason=String(error?.message||'').split(/\r?\n/,1)[0].replace(/^Error: /,'').split('|',1)[0];
+    // 中文注释：只在派发前等待可恢复的动画、禁用或遮挡，不重试引用身份或任何保护拒绝。
+    if(!['TARGET_DISABLED','TARGET_OCCLUDED','TARGET_HIDDEN','TARGET_ZERO_SIZE'].includes(reason)||Date.now()>=deadline)throw error;
+    last=null;stable=0;await new Promise(resolve=>setTimeout(resolve,60));guard();continue;
+   }
    await new Promise(resolve=>setTimeout(resolve,60));guard();
    const current=await this.callSemanticWorld(target,frameId,'rect_ref',payload,guard,executionContextId);
    if(Array.isArray(current)&&Array.isArray(last)&&current.every((value,index)=>Math.abs(value-last[index])<=0.5))stable++;
@@ -2493,6 +2536,8 @@ export class Executor {
  async domReadyTab(t,p,guard){
   const target={tabId:p.tabId},deadline=Date.now()+1500;
   let tab=await this.api.tabs.get(p.tabId);guard();try{this.allowed(t,tab.url);}catch{throw Object.assign(Error('TAB_OUT_OF_SCOPE'),{preDispatch:true,currentOrigin:origin(tab.url)});}
+  // 中文注释：丢弃页不能自动重载（可能重发页面业务请求），只返回明确停点。
+  if(tab.discarded)throw Object.assign(Error('TAB_DISCARDED'),{preDispatch:true});
   if(tab.status==='complete')return {tab,ready:true};
   if(!this.attached.has(p.tabId)){await this.api.debugger.attach(target,'1.3');guard();this.attached.add(p.tabId);}
   while(Date.now()<deadline){
@@ -2879,9 +2924,9 @@ export class Executor {
     const visibility=['ref_click','ref_set_checked','ref_select_option'].includes(p.action)?
      await this.callSemanticWorld(frameTarget,frame.id,'input_visibility',basePayload,guard,entry?.contextId):null;
     const targetPayload={...basePayload,syntheticHidden:visibility?.visibility==='hidden',...(p.action==='ref_set_checked'?{checked:p.checked}:{})};
-    const effectWork=work=>observeInputEffect({api:this.api,target:frameTarget,contextId:entry?.contextId,guard,work});
+    const effectWork=work=>observeInputEffect({api:this.api,target:frameTarget,contextId:entry?.contextId,frameId:frame.id,guard,work});
     let checkedPlan,selectPlan,relocated=false;
-    const deliverSemanticPointer=async(highlightBinding,syntheticOp)=>{
+    const deliverSemanticPointer=async(highlightBinding,syntheticOp,onDispatch)=>{
      const payload={...targetPayload,highlightBinding};
      const arm=await this.callSemanticWorld(frameTarget,frame.id,'arm_ref_delivery',payload,guard,entry?.contextId);
      const synthetic=reason=>this.callSemanticWorld(frameTarget,frame.id,syntheticOp,{...payload,checked:p.checked,syntheticHidden:true,fallbackReason:reason},guard,entry?.contextId);
@@ -2889,7 +2934,7 @@ export class Executor {
       // 中文注释：Chrome/Edge 本地实验确认后台 CDP 可送达，先走真实输入，再核实送达。
       const interactions=this.interactionsFor(t,p.tabId,guard,resolved?.record||null);
       const readTarget=()=>this.callSemanticWorld(frameTarget,frame.id,'pointer_target',payload,guard,entry?.contextId);
-      try{await interactions.clickBoundTarget({taskId:t.id,generation:t.generation},{readTarget,guard});}
+      try{await interactions.clickBoundTarget({taskId:t.id,generation:t.generation},{readTarget,guard,onDispatch});}
       catch(error){
        // 中文注释：按下前转后台则合成点击。
        if(error?.preDispatch===true){
@@ -2913,9 +2958,9 @@ export class Executor {
       await this.callSemanticWorld(frameTarget,frame.id,'clear_ref_delivery',payload,guard,entry?.contextId).catch(()=>{});
      }
     };
-    const dispatch=highlightBinding=>effectWork(async()=>{
+    const dispatch=highlightBinding=>effectWork(async onDispatch=>{
      if(p.action==='ref_click'){
-      const delivered=await deliverSemanticPointer(highlightBinding,'synthetic_ref_click');
+      const delivered=await deliverSemanticPointer(highlightBinding,'synthetic_ref_click',onDispatch);
       if(delivered.mode==='synthetic')return delivered.result;
       if(delivered.mode==='partial')return {clicked:false,kind:'trusted-input',delivery:'partial',effect:'unverified',outcomeUnknown:true};
       return {clicked:true,kind:'trusted-input',delivery:'confirmed',effect:'unverified'};

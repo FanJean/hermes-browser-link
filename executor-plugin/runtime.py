@@ -347,6 +347,7 @@ _RESULT_ACTIONS = {
                       'coverage': _scalar_fields('found ready complete depthLimited scope')},
     'scroll': _scalar_fields('tabId scrolled direction'), 'back': _scalar_fields('tabId url ready'),
     'ref_click': {**_scalar_fields('clicked kind delivery fallbackReason effect tabId url ready groupId windowId openedVia unsupported code popupOwnership documentChanged outOfScope outcomeUnknown relocated'),
+                  'navigation': _scalar_fields('kind origin'), 'postCheck': _scalar_fields('status code nextStep'),
                   'dialogOpened': _scalar_fields('type message')}, 'ref_fill': _scalar_fields('filled kind relocated'),
     # 中文注释：只公开按键交付状态；网页效果仍由下一次页面读取核实。
     'ref_press': {**_scalar_fields('pressed key delivery effect dispatched documentChanged outOfScope outcomeUnknown relocated'),

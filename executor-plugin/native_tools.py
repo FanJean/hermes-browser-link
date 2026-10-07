@@ -185,12 +185,13 @@ for suffix, description in (
     ('get', '读取当前可信会话拥有的任务。'),
     ('cancel', '取消当前会话任务并释放其控制权，不影响其他任务或关闭用户标签页。'),
     ('resume', '恢复已取消或需同步的任务（新代次）；新任务使用当前浏览器的智能审批或全部访问模式。不会重放结果不确定的动作。'),
-    ('close', '关闭任务并关掉它新建的工作页；结果看 cleanupState。每轮成功完成默认立即关闭工作页并收组；显式设置完成宽限时，同会话 browser_shared_* 调用取消计时；失败或中断立即按 handoff 结束。keep_tabs=true 表示把工作页交给用户（如需用户完成验证码后提交）：撤销任务权限、移除遮罩并收组，但不关页面，cleanupReason 为 handed_to_user。cleanup_action=status 只读核实；仅当状态为 pending 且 cleanupRemainingCount 大于 0 时可用 retry。unknown 或 failed 不满足重试门禁，不能重试删页。不会关闭用户自己的页面。'),
+    ('close', '关闭任务并关掉它新建的工作页；结果看 cleanupState。每轮成功完成默认立即关闭工作页并收组；显式设置完成宽限时，同会话 browser_shared_* 调用取消计时；失败或中断立即按 handoff 结束。keep_tabs=true 仅用于本轮回复明确请用户现在去该页完成一步，必须同时传 handoff_reason（captcha/login/verification/final_submit/user_requested）。遇阻、结果未知、读不到或遮挡时记录 URL 和停点后普通关闭；真正交接时：撤销任务权限、移除遮罩并收组，但不关页面，cleanupReason 为 handed_to_user。cleanup_action=status 只读核实；仅当状态为 pending 且 cleanupRemainingCount 大于 0 时可用 retry。unknown 或 failed 不满足重试门禁，不能重试删页。不会关闭用户自己的页面。'),
 ):
     properties = {'task_id': _text()}
     if suffix == 'close':
         properties['cleanup_action'] = {'type': 'string', 'enum': ['status', 'retry']}
         properties['keep_tabs'] = {'type': 'boolean'}
+        properties['handoff_reason'] = {'type': 'string', 'enum': ['captcha', 'login', 'verification', 'final_submit', 'user_requested']}
     TOOL_SCHEMAS['browser_shared_' + suffix] = {'description': description, 'parameters': _object(properties, ('task_id',))}
 TOOL_SCHEMAS['browser_shared_get']['description'] += ' 任务就绪时把本会话绑定到它（同一会话只绑定一个任务），供脚本与官方 browser_* 工具使用；结果见 sessionBinding。'
 TOOL_SCHEMAS['browser_shared_get']['parameters']['properties'].update({
@@ -236,6 +237,8 @@ def _public(value, raw=None):
             reason = source.get('cleanupReason')
             if isinstance(reason, str) and reason in _CLEANUP_REASONS:
                 row['cleanupReason'] = reason
+            if isinstance(source.get('handoffReason'), str) and source['handoffReason'] in {'captcha', 'login', 'verification', 'final_submit', 'user_requested', 'pending_human'}:
+                row['handoffReason'] = source['handoffReason']
             error = source.get('cleanupError')
             if isinstance(error, dict) and isinstance(error.get('code'), str) and error['code'] in _CLEANUP_REASONS:
                 row['cleanupError'] = {'code': error['code']}
@@ -361,6 +364,11 @@ def _validate(tool_name, args):
             _validate_field(key, value, schema['properties'][key], public)
         except (ValueError, TypeError, OverflowError):
             raise ArgumentFieldsError('invalid_fields', [key]) from None
+    if tool_name == 'browser_shared_close':
+        if public.get('keep_tabs') is True and ('handoff_reason' not in public or 'cleanup_action' in public):
+            raise ArgumentFieldsError('invalid_fields', ['handoff_reason', *(['cleanup_action'] if 'cleanup_action' in public else [])])
+        if 'handoff_reason' in public and public.get('keep_tabs') is not True:
+            raise ArgumentFieldsError('invalid_fields', ['handoff_reason'])
     if tool_name == 'browser_shared_get' and 'timeout_s' in public and public.get('until') != 'resumed':
         raise ArgumentFieldsError('invalid_fields', ['timeout_s'])
     if tool_name == 'browser_shared_get' and 'log_limit' in public and public.get('include_log') is not True:
@@ -443,7 +451,9 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
             try:
                 _validate(tool_name, args)
             except ArgumentFieldsError as exc:
-                return json.dumps({'error': '浏览器动作参数不符合契约', 'code': exc.code,
+                message = ('keep_tabs=true 必须补 handoff_reason（captcha/login/verification/final_submit/user_requested），或不传 keep_tabs 普通关闭。'
+                           if tool_name == 'browser_shared_close' and 'handoff_reason' in exc.fields else '浏览器动作参数不符合契约')
+                return json.dumps({'error': message, 'code': exc.code,
                                    'fields': exc.fields, 'retryable': False, 'outcome_unknown': False}, ensure_ascii=False)
             params = {'owner': lease.owner}
             if tool_name in ('browser_shared_health', 'browser_shared_browsers'):
@@ -501,6 +511,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
             elif tool_name == 'browser_shared_close' and args.get('keep_tabs') is True:
                 method = 'shared.handoff'
                 params['keepTabs'] = True
+                params['handoffReason'] = args['handoff_reason']
             if host_bridge and (tool_name in ('browser_shared_cancel', 'browser_shared_close', 'browser_shared_resume')
                                 and method not in ('shared.cleanup_status', 'shared.cleanup_retry')):
                 _revoke_bound_task(host_bridge, session_id, args['task_id'])
@@ -509,6 +520,11 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
             public = _public(projected, raw=result if tool_name in {
                 'browser_shared_create', 'browser_shared_get', 'browser_shared_list',
                 'browser_shared_cancel', 'browser_shared_close', 'browser_shared_resume'} else None)
+            # 中文注释：部分送达也是失败；任意 JS/API/CDP 的业务 JSON 不作为动作状态解释。
+            if (tool_name == 'browser_shared_run' and args.get('action') not in {'js.evaluate', 'api_request', 'cdp.send'}
+                    and isinstance(result, dict) and result.get('outcomeUnknown') is True):
+                public.update(error='动作结果不确定；请先读取页面核实，不要重放。', code='operation_outcome_unknown',
+                              retryable=False, outcome_unknown=True)
             if (tool_name == 'browser_shared_run' and args.get('action') == 'navigate'
                     and args.get('summary') is not False and isinstance(public, dict)
                     and type(public.get('tabId')) is int):
@@ -537,7 +553,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                     public['sessionBinding'] = 'awaiting_authorization'
             return json.dumps(public, ensure_ascii=False)
         except _runtime.OwnerLeaseError:
-            return json.dumps({'error': '浏览器任务身份验证失败，已拒绝操作', 'code': 'owner_denied', 'retryable': False}, ensure_ascii=False)
+            return json.dumps({'error': '浏览器任务身份验证失败，已拒绝操作；请重新读取任务状态。', 'code': 'owner_denied', 'retryable': False, 'outcome_unknown': False}, ensure_ascii=False)
         except Exception as exc:
             # Keep the established error/code envelope; expose only allowlisted
             # classifications, never extension text that may contain page data.
@@ -592,6 +608,11 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 'invalid_target_state': '控件状态无法按要求核验或改变；请核对页面实际状态，不要直接重试。',
                 'radio_cannot_uncheck': '单选框不能直接取消选中；请选择同组的另一项。未派发。',
                 'invalid_select_option': '选项参数对该控件无效；未派发。',
+                'custom_select_unsupported': '先点击展开自定义下拉，读取新的 option 引用后逐项点击；未派发选择。',
+                'semantic_library_unavailable': '页面解析器未就绪；等导航完成后重新读取。',
+                'input_effect_probe_failed': '无法确认点击效果；先读取页面核对，不要重放点击。',
+                'debugger_detached': '页面调试连接已失效；核对任务状态后重新读取。',
+                'tab_discarded': '浏览器已丢弃此标签页；确认 URL 和此前写入结果后由用户恢复页面，再重新读取。',
                 'select_option_missing': '指定的选项不存在；请重新读取可选项。未派发。',
                 'select_option_ambiguous': '有多个选项同名；请改用唯一的 value。未派发。',
                 'select_option_disabled': '指定的选项已禁用；未派发。',
@@ -663,9 +684,10 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 'target_occluded', 'target_hit_unverified', 'target_unstable', 'unsupported_frame_transform', 'background_pointer_unavailable', 'radio_cannot_uncheck',
                 'target_disabled', 'target_hidden', 'target_zero_size', 'target_out_of_viewport',
                 'reference_target_missing', 'reference_target_ambiguous', 'closed_shadow_unavailable', 'cross_origin_frame_unavailable',
-                'select_option_missing', 'select_option_ambiguous', 'select_option_disabled'} or (
+                'select_option_missing', 'select_option_ambiguous', 'select_option_disabled', 'custom_select_unsupported', 'semantic_library_unavailable'} or (
                 data.get('outcomeUnknown') is False and (code.startswith('interaction_highlight_') or code in _CONTENT_SHIELD_CODES))
-            known_safe = code in {'forbidden', 'request_id_conflict', 'reconcile_required', 'user_input_declined', 'task_paused',
+            action_confirmed = code in _CONTENT_SHIELD_CODES and data.get('actionConfirmed') is True
+            known_safe = action_confirmed or code in {'forbidden', 'request_id_conflict', 'reconcile_required', 'user_input_declined', 'task_paused',
                                   'tab_out_of_scope', 'redirected_out_of_scope', 'origin_denied', 'invalid_url', 'download_not_found', 'download_not_owned', 'browser_access_required',
                                   'frame_not_supported', 'credential_mode_conflict',
                                   'artifact_unavailable',
@@ -676,10 +698,13 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
             if not read_only and not known_safe:
                 unknown = True
             result = {'error': messages.get(code, '共享浏览器操作失败；请检查浏览器连接和用户批准状态。结果不确定时不要自动重试。'),
-                      'code': 'bridge_error', 'retryable': bool(data.get('retryable') is True and code != 'task_paused' and (read_only or code == 'task_preparing') and not unknown),
+                      'code': code if code in messages else 'execution_denied', 'retryable': bool(data.get('retryable') is True and code != 'task_paused' and (read_only or code == 'task_preparing') and not unknown),
                       'outcome_unknown': unknown}
             # 中文注释：协议层固定码必须始终传给模型，未知码仍有稳定的分类入口。
             result['bridgeCode'] = code or 'bridge_error'
+            if action_confirmed:
+                result.update(action_confirmed=True, outcome_unknown=False, retryable=False,
+                              error='点击已确认，当前页面输出被保护拒绝；请重新读取核对，不要重放点击。')
             if code in {'click_no_effect', 'accessibility_unavailable'} or code in _CONTENT_SHIELD_CODES:
                 result['code'] = code
             # 中文注释：只转发 client 已校验的固定诊断字段。
@@ -695,7 +720,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                                         'target_out_of_viewport', 'reference_target_missing', 'reference_target_ambiguous',
                                         'closed_shadow_unavailable', 'cross_origin_frame_unavailable',
                                         'capture_sensitive_blocked', 'capture_frame_uninspectable', 'element_timeout'}:
-                result['code'] = code
+                result['code'] = 'stale_reference' if code.startswith('reference_target_') else code
                 if code in {'reference_target_missing', 'reference_target_ambiguous', 'element_timeout'} and isinstance(data.get('candidates'), list):
                     result['candidates'] = [{'role': row['role'][:40], 'name': row['name'][:80]}
                                             for row in data['candidates'][:5] if isinstance(row, dict)

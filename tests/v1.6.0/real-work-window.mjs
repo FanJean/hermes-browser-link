@@ -65,7 +65,7 @@ try{
  // 中文注释：明确保留结果页时窗口继续存在，后续任务复用同一窗口。
  const kept=await openTask(session,{owner:'kept160',origins:[origin],url:`${origin}/kept`,title:'保留结果'});
  const keptWindow=await session.ui.evaluate(`chrome.tabs.get(${kept.tabId}).then(t=>t.windowId)`);
- const keptClosed=await session.rpc(kept.owner,'close',{task_id:kept.task.id,keep_tabs:true});assert.equal(keptClosed.state,'closed',JSON.stringify(keptClosed));
+ const keptClosed=await session.rpc(kept.owner,'close',{task_id:kept.task.id,keep_tabs:true,handoff_reason:'user_requested'});assert.equal(keptClosed.state,'closed',JSON.stringify(keptClosed));
  const next=await openTask(session,{owner:'next160',origins:[origin],url:`${origin}/next`,title:'继续复用'});
  assert.equal(await session.ui.evaluate(`chrome.tabs.get(${next.tabId}).then(t=>t.windowId)`),keptWindow);
  await session.rpc(next.owner,'close',{task_id:next.task.id});

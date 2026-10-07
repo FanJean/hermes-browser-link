@@ -320,11 +320,23 @@ class NativeTests(unittest.TestCase):
         self.assertRaises(self.runtime.OwnerLeaseError, reloaded.authority.consume, 'browser_shared_list', issued['args'], session_id='a')
 
     def test_close_keep_tabs_maps_to_handoff(self):
-        result, _ = self.invoke('browser_shared_close', {'task_id': 'task-1', 'keep_tabs': True})
+        result, _ = self.invoke('browser_shared_close', {'task_id': 'task-1', 'keep_tabs': True, 'handoff_reason': 'captcha'})
         self.assertNotIn('error', result)
         method, params = self.client.calls[-1]
         self.assertEqual(method, 'shared.handoff')
         self.assertIs(params['keepTabs'], True)
+        self.assertEqual(params['handoffReason'], 'captcha')
+
+    def test_close_handoff_requires_reason_before_rpc(self):
+        for reason in (None, 'blocked'):
+            args = {'task_id': 'task-1', 'keep_tabs': True}
+            if reason is not None:
+                args['handoff_reason'] = reason
+            result, _ = self.invoke('browser_shared_close', args)
+            self.assertEqual(result['code'], 'invalid_fields')
+            self.assertIn('handoff_reason', result['fields'])
+            self.assertIn('普通关闭', result['error'])
+        self.assertEqual(self.client.calls, [])
 
     def test_metadata_and_control_rpc_mappings(self):
         for suffix, expected in [('health', 'health'), ('browsers', 'browser.list'), ('list', 'shared.list'),

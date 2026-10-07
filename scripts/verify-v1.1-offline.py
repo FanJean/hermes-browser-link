@@ -100,6 +100,7 @@ NODE_TESTS = (
     'page-semantics/interaction-contract.test.mjs',
     'tests/complex-ui/semantics.test.mjs',
     'tests/complex-ui/actions.test.mjs',
+    'tests/complex-ui/tabs-interaction.test.mjs',
     # 中文注释：局部无障碍查询验证真实引用、隐私、上限和句柄释放，不启动浏览器。
     'tests/complex-ui/accessibility.test.mjs',
     'tests/native-extension/sensitive-fields.test.mjs',

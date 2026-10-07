@@ -1,5 +1,5 @@
 name: browser-link
-version: 1.8.4
+version: 1.8.5
 manifest_version: 2
 api_version: 1
 # 中文注释：按宿主钩子能力注册，不用版本号阻止加载。

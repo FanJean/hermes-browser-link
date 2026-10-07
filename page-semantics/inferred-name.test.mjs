@@ -18,7 +18,7 @@ test('悬停显示独立操作按钮不改变推断点击行的名称和引用',
   assert.equal(f.semantics.resolve({...first.binding,snapshotId:first.snapshotId,ref:row.ref}),f.row);
   const after=f.semantics.snapshot();
   assert.equal(after.items.find(item=>item.ref===row.ref).name,row.name);
-  assert.deepEqual(after.items.filter(item=>item.ref!==row.ref).map(item=>item.name),['☆','✎','×']);
+  assert.deepEqual(after.items.filter(item=>item.ref!==row.ref).map(item=>item.name),['置顶','改名','删除']);
  }finally{f.close();}
 });
 
@@ -45,7 +45,7 @@ test('显式 ARIA 名称仍优先，嵌套操作按钮独立定位',()=>{
   for(const button of f.row.querySelectorAll('button'))button.style.display='block';
   const page=f.semantics.snapshot(),row=page.items.find(item=>item.inferred);
   assert.equal(row.name,'已命名的会话');
-  assert.equal(page.items.filter(item=>item.name==='×').length,1);
+  assert.equal(page.items.filter(item=>item.name==='删除').length,1);
  }finally{f.close();}
 });
 
@@ -55,5 +55,15 @@ test('表格各列中的链接文字保持完整，不受 map 回调索引影响
   f.document.body.insertAdjacentHTML('beforeend','<table><tr><td>第一列</td><td><a href="/">第二列链接</a></td></tr></table>');
   const row=f.semantics.parsingContext().describe(f.document.querySelector('tr'));
   assert.deepEqual(row.cells,['第一列','第二列链接']);
+ }finally{f.close();}
+});
+
+test('图标按钮采用 title，单控件包装的邻近文本经过脱敏且不跨兄弟控件',()=>{
+ const f=fixture();try{
+  f.document.body.innerHTML='<button title="设置">⚙</button><span>下载报告 <button><svg></svg></button></span><span>共享名称 <button></button><button></button></span><span data-private>PRIVATE_TOKEN <button></button></span>';
+  const buttons=f.semantics.snapshot().items.filter(item=>item.role==='button');
+  assert.equal(buttons[0].name,'设置');assert.equal(buttons[1].name,'下载报告');
+  assert.equal(buttons[2].name,'');assert.equal(buttons[3].name,'');
+  assert.doesNotMatch(JSON.stringify(buttons),/PRIVATE_TOKEN/);
  }finally{f.close();}
 });

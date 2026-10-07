@@ -1,6 +1,6 @@
 # Hermes Browser Link
 
-**1.8.4 — macOS stable release.** Authorized browser tasks, automatic text and screenshot shielding, a persistent task cursor, Desktop Cookie mirroring, independent cloud browser access and stable-release updates.
+**1.8.5 — macOS stable release.** Authorized browser tasks, automatic text and screenshot shielding, a persistent task cursor, Desktop Cookie mirroring, independent cloud browser access and stable-release updates.
 
 ![Hermes Browser Link](docs/assets/readme-banner.png)
 
@@ -39,7 +39,7 @@ Shielding protects Browser Link outputs, leaves your visible webpage intact, and
 1. Download a [Release package](https://github.com/fanjing188/hermes-browser-link/releases) and install (no Node.js needed); **Program installed and enabled** confirms success:
 
    ```sh
-   curl -fL https://github.com/fanjing188/hermes-browser-link/releases/download/v1.8.4/hermes-browser-link-1.8.4.zip -o hermes-browser-link-1.8.4.zip && unzip hermes-browser-link-1.8.4.zip && cd hermes-browser-link-1.8.4 && ./install.sh
+   curl -fL https://github.com/fanjing188/hermes-browser-link/releases/download/v1.8.5/hermes-browser-link-1.8.5.zip -o hermes-browser-link-1.8.5.zip && unzip hermes-browser-link-1.8.5.zip && cd hermes-browser-link-1.8.5 && ./install.sh
    ```
 
 2. Open `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** → paste the absolute path printed and copied by the installer. It waits up to 3 minutes and shows ✅ when connected; Ctrl+C skips the wait.
@@ -47,7 +47,7 @@ Shielding protects Browser Link outputs, leaves your visible webpage intact, and
 
 Upgrade: run `./install.sh --upgrade` from the new package (automatic backup and rollback), then reload the extension and restart Desktop. Uninstall: `./install.sh --uninstall` keeps task-private data; add `--purge` to delete it.
 
-Automatic updates accept stable releases; 1.8.4 is eligible. Upgrade an older installation manually once to install the current update source. After installing the update component, run `./install.sh --auto-update install`. It checks stable releases hourly and installs after browsers and Hermes exit. Reload the extension before starting Hermes again. Use `--auto-update check` for checks only, `--auto-update off` to disable, or `--update` to update now. See [automatic updates](docs/installation.md#automatic-updates--自动更新).
+Automatic updates accept stable releases; 1.8.5 is eligible. Upgrade an older installation manually once to install the current update source. After installing the update component, run `./install.sh --auto-update install`. It checks stable releases hourly and installs after browsers and Hermes exit. Reload the extension before starting Hermes again. Use `--auto-update check` for checks only, `--auto-update off` to disable, or `--update` to update now. See [automatic updates](docs/installation.md#automatic-updates--自动更新).
 
 [Source/manual installation, profiles and troubleshooting](docs/installation.md) · [Agent installation prompt](docs/agent-install-prompt.md).
 

@@ -25,28 +25,42 @@ export function effectProbe(op,token){
  document.addEventListener('submit',state.submit,true);globalThis[key]=state;return true;
 }
 export const NO_EFFECT_HINT='输入已派发但未观察到效果；请读取目标页核对，检查按钮状态或改用页面支持的操作，不要反复重试。';
-export async function observeInputEffect({api,target,contextId,guard,work,timeoutMs=1500}){
+export async function observeInputEffect({api,target,contextId,frameId,guard,work,timeoutMs=1500}){
  const token=crypto.randomUUID();
  const probe=async op=>{
   const reply=await api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:contextId,functionDeclaration:effectProbe.toString(),arguments:[{value:op},{value:token}],returnByValue:true});
   if(reply.exceptionDetails)throw Error('INPUT_EFFECT_PROBE_FAILED');
   return reply.result?.value;
  };
- let changed=false;
- const event=(source,method)=>{if(source?.tabId===target.tabId&&(!target.sessionId||source.sessionId===target.sessionId)&&['Network.requestWillBeSent','Page.frameNavigated','Page.javascriptDialogOpening'].includes(method))changed=true;};
+ let changed=false,dispatched=false,navigation=null;
+ const markDispatched=()=>{if(!dispatched){dispatched=true;navigation=null;}};
+ const event=(source,method,params={})=>{
+  if(source?.tabId!==target.tabId||(source.sessionId||null)!==(target.sessionId||null))return;
+  if(['Network.requestWillBeSent','Page.frameNavigated','Page.navigatedWithinDocument','Page.javascriptDialogOpening'].includes(method))changed=true;
+  if(!dispatched)return;
+  if(method==='Page.frameNavigated'&&!params.frame?.parentId&&(!frameId||params.frame?.id===frameId))navigation={kind:'document'};
+  if(method==='Page.navigatedWithinDocument'&&(!frameId||params.frameId===frameId))navigation={kind:'same_document'};
+  if(navigation){try{const url=new URL(params.frame?.url||params.url);if(['http:','https:'].includes(url.protocol))navigation.origin=url.origin;}catch{}}
+ };
  await api.debugger.sendCommand(target,'Network.enable');guard();
  api.debugger.onEvent.addListener(event);
  let armed=false;
  try{
   await probe('arm');armed=true;guard();
-  const result=await work();guard();
+  let result;
+  try{result=await work(markDispatched);guard();}
+  catch(error){
+   // 中文注释：只有本次指针已开始派发且对应框架出现导航事件，才用导航确认；绝不重新点击。
+   if(!navigation||error?.preDispatch===true)throw error;
+   guard();return {clicked:true,kind:'trusted-input',delivery:'confirmed',effect:'observed',outcomeUnknown:false,navigation};
+  }
   // 中文注释：填写值有独立回读；这里只观察合成点击或明确未核实的动作。
   const requires=result?.effect==='unverified'||(String(result?.kind||'').includes('synthetic')&&result?.filled!==true);
   if(requires&&result?.verified===true)return {...result,effect:'observed'};
   if(!requires)return result;
   const deadline=Date.now()+timeoutMs;
   do{
-   if(result?.dialogOpened||changed||await probe('read'))return {...result,effect:'observed'};
+   if(result?.dialogOpened||changed||await probe('read'))return {...result,effect:'observed',...(navigation?{navigation}:{})};
    guard();if(Date.now()>=deadline)break;
    await new Promise(resolve=>setTimeout(resolve,60));
   }while(Date.now()<=deadline);

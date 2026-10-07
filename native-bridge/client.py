@@ -83,6 +83,12 @@ class BridgeError(RuntimeError):
         self.message = message
         self.data = {key: data[key] for key in ("outcomeUnknown", "retryable")
                      if isinstance(data, dict) and type(data.get(key)) is bool}
+        # 中文注释：保护仍拒绝输出，仅转发扩展已确认的点击事实，不接受页面字段或异常原文。
+        if (isinstance(data, dict) and data.get('actionConfirmed') is True and code in {
+                'content_shield_stale', 'content_shield_changed', 'content_shield_unavailable',
+                'content_shield_uninspectable', 'content_shield_unsupported', 'content_shield_invalid_rules',
+                'content_shield_unsupported_viewport', 'content_shield_blocker_overlap', 'content_shield_render_unsupported'}):
+            self.data['actionConfirmed'] = True
         # 中文注释：点击错误只保留固定效果和提示，脚本与工具共用该边界。
         if isinstance(data, dict) and code == 'click_no_effect':
             self.data['effect'] = 'unobserved'

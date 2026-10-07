@@ -159,7 +159,7 @@ export class Interactions {
   discardCapture() {this.#shots.clear();this.#refs.clear();}
   bounds(r) {return this.#exclusive(()=>this.#bounds(r));}
   clickCoordinates(r) {return this.#exclusive(()=>this.#clickCoordinates(r));}
-  clickBoundTarget(r,{readTarget,guard=()=>{}}={}) {return this.#exclusive(()=>this.#clickBoundTarget(r,readTarget,guard));}
+  clickBoundTarget(r,{readTarget,guard=()=>{},onDispatch=()=>{}}={}) {return this.#exclusive(()=>this.#clickBoundTarget(r,readTarget,guard,onDispatch));}
   dragCoordinates(r) {return this.#exclusive(()=>this.#dragCoordinates(r));}
   dragElements(r) {return this.#exclusive(()=>this.#dragElements(r));}
   #scope(r) {if(r.taskId!==this.#binding.taskId||r.generation!==this.#binding.generation) fail('SCOPE_MISMATCH');}
@@ -229,13 +229,14 @@ export class Interactions {
       return {ok:false,kind:'coordinate-click',delivery:'partial',outcomeUnknown:true};
     }finally{await this.#adapter.evaluate('clear-probe').catch(()=>{});}
   }
-  async #clickBoundTarget(r,readTarget,guard) {
+  async #clickBoundTarget(r,readTarget,guard,onDispatch) {
     this.#scope(r);
     if(typeof readTarget!=='function'||typeof guard!=='function')fail('INVALID_TARGET_READER');
     let point;
     try{point=await this.#boundTargetPoint(readTarget,guard);}
     // 中文注释：按下鼠标前的所有核实失败都未派发点击（仅可能已有悬停移动）。
     catch(error){if(error&&typeof error==='object')error.preDispatch=true;throw error;}
+    onDispatch();
     try {await this.#adapter.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...point});}
     finally {await this.#adapter.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,...point});}
     return {ok:true,kind:'pointer-click'};

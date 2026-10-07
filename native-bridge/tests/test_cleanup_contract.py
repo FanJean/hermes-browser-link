@@ -11,6 +11,44 @@ from daemon import BridgeDaemon, ProtocolError, _encode_line
 
 
 class CleanupContractTests(unittest.TestCase):
+    def test_partial_delivery_result_is_logged_unknown_with_code(self):
+        import hashlib
+        row = self.daemon.tasks[self.task['id']]
+        row['currentOperation'] = {'action': 'ref_click', 'state': 'running', 'startedAt': 1,
+            'requestIdHash': hashlib.sha256(b'partial').hexdigest()}
+        self.daemon._run_task_impl = lambda *args: {'clicked': False, 'delivery': 'partial', 'outcomeUnknown': True}
+        self.daemon._run_task({**self.params, 'requestId': 'partial', 'action': 'ref_click'})
+        record = json.loads(self.daemon._task_log_path(row['id']).read_text())
+        self.assertEqual(record['result'], 'unknown'); self.assertEqual(record['errorCode'], 'operation_outcome_unknown')
+        request_hash = hashlib.sha256(b'partial-ledger').hexdigest()
+        self.daemon._record_request_locked(row, request_hash, 'a' * 64,
+            {'outcomeUnknown': True, 'delivery': 'partial'}, 'result')
+        self.assertEqual(self.daemon._operation_status({**self.params, 'requestId': 'partial-ledger'})['state'], 'unknown')
+        self.assertEqual(self.daemon.dedupe[row['id']][request_hash][1], 'result')
+        request_hash = hashlib.sha256(b'unknown-error-ledger').hexdigest()
+        self.daemon._record_request_locked(row, request_hash, 'b' * 64,
+            {'code': 'extension_timeout', 'data': {'outcomeUnknown': True}}, 'error')
+        self.assertEqual(self.daemon._operation_status({**self.params, 'requestId': 'unknown-error-ledger'})['state'], 'unknown')
+
+    def test_explicit_handoff_reason_is_required_and_public(self):
+        self.daemon.tasks[self.task['id']]['state'] = 'ready'
+        for reason in (None, 'blocked'):
+            args = {**self.params, 'keepTabs': True}
+            if reason is not None:
+                args['handoffReason'] = reason
+            with self.assertRaises(ProtocolError) as caught:
+                self.daemon._dispatch_client('shared.handoff', args)
+            self.assertEqual(caught.exception.code, 'invalid_fields')
+            self.assertEqual(self.daemon.tasks[self.task['id']]['state'], 'ready')
+        self.daemon._extension_call = lambda *a, **kw: {'released': True, 'cleanupState': 'succeeded', 'remainingTabIds': [], 'preservedTabIds': [], 'unknownTabIds': []}
+        result = self.daemon._dispatch_client('shared.handoff', {**self.params, 'keepTabs': True, 'handoffReason': 'captcha'})
+        self.assertEqual(result['handoffReason'], 'captcha')
+        self.assertEqual(result['cleanupReason'], 'handed_to_user')
+
+    def test_failed_operation_log_never_loses_error_code(self):
+        self.daemon._append_task_log(self.task['id'], {'action': 'ref_click', 'state': 'unknown', 'startedAt': 1})
+        row = json.loads(self.daemon._task_log_path(self.task['id']).read_text())
+        self.assertEqual(row['errorCode'], 'operation_outcome_unknown')
     def setUp(self):
         scratch = Path(tempfile.gettempdir())
         scratch.mkdir(parents=True, exist_ok=True)
@@ -116,7 +154,7 @@ class CleanupContractTests(unittest.TestCase):
         self.daemon._extension_call = lambda ext, method, params, **kwargs: (
             calls.append(params) or {'released': True, 'cleanupState': 'succeeded',
             'remainingTabIds': [], 'preservedTabIds': [], 'unknownTabIds': [], 'cleanupReason': 'preserved'})
-        result = self.daemon._dispatch_client('shared.handoff', {**self.params, 'keepTabs': True})
+        result = self.daemon._dispatch_client('shared.handoff', {**self.params, 'keepTabs': True, 'handoffReason': 'user_requested'})
         self.assertEqual(result['state'], 'closed')
         self.assertEqual(result['cleanupReason'], 'handed_to_user')
         self.assertFalse(calls[0]['closeAgentTabs'])

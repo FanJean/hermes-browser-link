@@ -25,6 +25,37 @@ def load(name):
 
 
 class ResultPrivacyTests(unittest.TestCase):
+    def test_click_navigation_receipt_survives_without_extra_page_content(self):
+        raw = {'clicked': True, 'delivery': 'confirmed', 'navigation': {'kind': 'document', 'origin': 'https://fixture.test', 'private': CANARY},
+               'postCheck': {'status': 'new_read_required', 'private': CANARY}, 'private': CANARY}
+        output, _ = self.invoke(True, 'run', {'action': 'ref_click', 'task_id': 't', 'tab_id': 1,
+            'binding': {'taskId': 't', 'documentId': 'd', 'leaseId': 'l'}, 'snapshot_id': 's', 'ref': 'r'}, raw)
+        self.assertEqual(output['navigation'], {'kind': 'document', 'origin': 'https://fixture.test'})
+        self.assertEqual(output['postCheck'], {'status': 'new_read_required'})
+        self.assertNotIn(CANARY, json.dumps(output))
+
+    def test_confirmed_click_protection_rejection_keeps_fact_without_page_data(self):
+        spec = importlib.util.spec_from_file_location('receipt_bridge_client', ROOT.parent / 'native-bridge/client.py')
+        client = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(client)
+        error = client.BridgeError('content_shield_stale', CANARY, {'outcomeUnknown': False, 'actionConfirmed': True, 'private': CANARY})
+        module = load('native_tools')
+        profile = SimpleNamespace(authority=SimpleNamespace(consume=lambda *a, **kw: SimpleNamespace(owner='tool:synthetic', tool_call_id='c')),
+            call=lambda *a, **kw: (_ for _ in ()).throw(error))
+        result = json.loads(module.make_tool_handler('browser_shared_run', profile)({'task_id': 't', 'tab_id': 1, 'action': 'ref_click',
+            'binding': {'taskId': 't', 'documentId': 'd', 'leaseId': 'l'}, 'snapshot_id': 's', 'ref': 'r'}, session_id='test'))
+        self.assertEqual(result['code'], 'content_shield_stale'); self.assertIs(result['action_confirmed'], True)
+        self.assertIs(result['outcome_unknown'], False); self.assertIs(result['retryable'], False)
+        self.assertNotIn(CANARY, json.dumps(result))
+
+    def test_partial_delivery_result_becomes_explicit_unknown_error_without_replay(self):
+        output, calls = self.invoke(True, 'run', {'action': 'ref_click', 'task_id': 't', 'tab_id': 1,
+            'binding': {'taskId': 't', 'documentId': 'd', 'leaseId': 'l'}, 'snapshot_id': 's', 'ref': 'r'},
+            {'clicked': False, 'delivery': 'partial', 'outcomeUnknown': True, 'private': CANARY})
+        self.assertEqual(output['code'], 'operation_outcome_unknown')
+        self.assertIs(output['outcome_unknown'], True); self.assertIs(output['retryable'], False)
+        self.assertNotIn(CANARY, json.dumps(output)); self.assertEqual(len(calls), 1)
+
     def test_cookie_mirror_metadata_tool_projection_and_fixed_errors(self):
         # 中文注释：恶意附加值、载荷、错误文本和原因字段不能越过新工具结果边界。
         secret = '_'.join(('SECRET', 'COOKIE', 'VALUE', 'xyz'))
@@ -114,7 +145,7 @@ class ResultPrivacyTests(unittest.TestCase):
                 result = json.loads(module.make_tool_handler('browser_shared_run', profile)(
                     {'task_id': 't', 'tab_id': 1, 'action': 'ref_click',
                      'binding': binding, 'snapshot_id': 's', 'ref': 'r'}, session_id='test'))
-                self.assertEqual(result['code'], code)
+                self.assertEqual(result['code'], 'stale_reference' if code.startswith('reference_target_') else code)
                 self.assertFalse(result['outcome_unknown'])
                 self.assertNotIn(CANARY, json.dumps(result))
                 if code.startswith('reference_'):

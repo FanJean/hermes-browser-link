@@ -384,6 +384,8 @@ class BridgeDaemon:
         error_code = operation.get('errorCode')
         if not isinstance(error_code, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', error_code):
             error_code = None
+        if operation['state'] in {'failed', 'unknown'} and error_code is None:
+            error_code = 'operation_outcome_unknown' if operation['state'] == 'unknown' else 'operation_failed'
         row = {'time': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(operation['startedAt'])) + 'Z',
                'action': action, 'target': target, 'durationMs': operation.get('durationMs', 0),
                'result': operation['state'] if operation['state'] != 'failed' else error_code or 'error'}
@@ -1288,12 +1290,18 @@ class BridgeDaemon:
             for instance_id in pending_notifications:
                 self._notify_tasks_changed(instance_id)
         status = "pending" if isinstance(result, dict) and result.get("status") in {"approval_required", "approved", "executing"} else "succeeded"
+        # 中文注释：部分送达回执不能按 RPC 返回值误记成功；原始业务 JSON 不参与状态解释。
+        uncertain_result = (params.get('action') not in {'js.evaluate', 'api_request', 'cdp.send'}
+                            and isinstance(result, dict) and result.get('outcomeUnknown') is True)
+        result_code = 'operation_outcome_unknown' if uncertain_result else None
+        if uncertain_result:
+            status = 'unknown'
         duration_ms = (time.monotonic() - started) * 1000
         target_summary = result.pop('_targetSummary', None) if isinstance(result, dict) else None
-        self._diagnostic("request_state", status, correlation, duration_ms,
+        self._diagnostic("request_state", status, correlation, duration_ms, result_code,
                          action=params.get('action') if params.get('action') in V1_ACTIONS else None)
-        self._record_task_request_diagnostic(params, status, duration_ms)
-        self._finish_ui_operation(params, status, duration_ms, target_summary=target_summary)
+        self._record_task_request_diagnostic(params, status, duration_ms, result_code)
+        self._finish_ui_operation(params, status, duration_ms, result_code, target_summary=target_summary)
         if params.get("action") == "page.parse" and isinstance(result, dict) and result.get("schemaVersion") == 1:
             with self.state_lock:
                 task = self.tasks.get(params.get("taskId"))
@@ -1854,7 +1862,10 @@ class BridgeDaemon:
         if entry is None:
             entry = {"requestIdHash": request_hash, "payloadHash": payload_hash}
             task["requestHistory"].append(entry)
-        entry.update(state="confirmed" if outcome_kind == "result" else "rejected" if outcome_kind == "error" else "unknown",
+        uncertain_result = isinstance(result, dict) and (
+            outcome_kind == 'result' and entry.get('action') not in {'js.evaluate', 'api_request', 'cdp.send'} and result.get('outcomeUnknown') is True
+            or outcome_kind == 'error' and isinstance(result.get('data'), dict) and result['data'].get('outcomeUnknown') is True)
+        entry.update(state="unknown" if uncertain_result else "confirmed" if outcome_kind == "result" else "rejected" if outcome_kind == "error" else "unknown",
                      dispatched=entry.get("dispatched") is True or outcome_kind in {"result", None},
                      generation=task["generation"])
         self.pending_journal.append(self._ledger_record(task, entry))
@@ -2001,6 +2012,11 @@ class BridgeDaemon:
             return result
 
     def _release_task(self, params: Dict[str, Any], final_state: str, close_agent_tabs: bool, *, handoff_if_pending: bool = False, idle_check=None, stale_check=None) -> Dict[str, Any]:
+        # 中文注释：显式保留页必须有枚举原因；可信会话结束的 pending_human 仍按原设计自动移交。
+        reasons = {'captcha', 'login', 'verification', 'final_submit', 'user_requested'}
+        if (params.get('keepTabs') is True and (not isinstance(params.get('handoffReason'), str) or params['handoffReason'] not in reasons)
+                or 'handoffReason' in params and params.get('keepTabs') is not True):
+            raise ProtocolError('invalid_fields', '补 handoffReason，或不传 keepTabs 普通关闭', {'outcomeUnknown': False})
         task = self._owned_task(params)
         with self.state_lock:
             if stale_check is not None:
@@ -2023,6 +2039,7 @@ class BridgeDaemon:
             if handoff:
                 close_agent_tabs = False
                 task["handoff"] = True
+                task['handoffReason'] = params.get('handoffReason') if params.get('keepTabs') is True else 'pending_human'
             extension = self.extensions.get(task["instanceId"])
             if extension is None:
                 # 中文注释：启动扫描可能早于扩展连接；重连后仅补发这次从未派发的释放。

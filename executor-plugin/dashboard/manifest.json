@@ -3,7 +3,7 @@
   "label": "浏览器连接",
   "description": "浏览器连接、访问模式与 Cookie 镜像；桌面界面由 Hermes 插件提供。",
   "icon": "Globe",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "tab": {
     "path": "/browser-link",
     "position": "after:sessions",

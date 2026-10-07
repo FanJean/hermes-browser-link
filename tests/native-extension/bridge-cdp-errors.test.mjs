@@ -35,7 +35,7 @@ test('wrapped stale read permits refresh, not write replay',async()=>{
  assert.deepEqual(error.data,{outcomeUnknown:false,retryable:true});
 });
 test('classification must not search arbitrary payloads or stack frames',async()=>{
- for(const text of ['private TARGET_OCCLUDED payload','Error: private\n    at STALE_REF','Error: STALE_REF extra-private-data']) {
+ for(const text of ['private TARGET_OCCLUDED payload','Error: private\n    at STALE_REF','Error: STALE_REF extra-private-data','Error: CONTENT_SHIELD_PRIVATE_CANARY']) {
   const error=await request(text);
   assert.equal(error.code,'execution_denied');
   assert.equal(JSON.stringify(error).includes('private'),false);
@@ -59,6 +59,22 @@ test('page parser budget failure has a fixed code',async()=>{
  const error=await request('Error: BUDGET_TOO_SMALL',true,'page.parse');
  assert.equal(error.code,'parse_budget_too_small');
  assert.equal(error.data.outcomeUnknown,false);
+});
+
+test('展开下拉已派发后的遮挡拒绝保留未知结果，不能按前置错误重试',async()=>{
+ const executor=new Executor({debugger:{}});
+ executor.execute=async()=>{throw Object.assign(Error('TARGET_OCCLUDED'),{preDispatch:false});};
+ const sent=[],bridge=new Bridge({postMessage:m=>sent.push(m),onMessage:{addListener(){}}},executor);
+ bridge.receive({id:'post-dispatch',method:'browser.execute',params:{action:'ref_select_option'}});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(sent[0].error.code,'target_occluded');assert.equal(sent[0].error.data.outcomeUnknown,true);assert.equal(sent[0].error.data.retryable,false);
+});
+test('已确认点击的保护输出拒绝保留错误码和确认事实，不允许重试',async()=>{
+ const executor=new Executor({debugger:{}});
+ executor.execute=async()=>{throw Object.assign(Error('CONTENT_SHIELD_STALE'),{preDispatch:false,actionConfirmed:true});};
+ const sent=[],bridge=new Bridge({postMessage:m=>sent.push(m),onMessage:{addListener(){}}},executor);
+ bridge.receive({id:'protected-receipt',method:'browser.execute',params:{action:'ref_click'}});await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(sent[0].error.code,'content_shield_stale');assert.equal(sent[0].error.data.outcomeUnknown,false);assert.equal(sent[0].error.data.actionConfirmed,true);assert.equal(sent[0].error.data.retryable,false);
 });
 
 for(const [reason,code] of [

@@ -228,7 +228,7 @@ class AutocloseTests(unittest.TestCase):
         self.assertEqual(self.releases, [])
 
     def test_keep_tabs_and_stopped_pause_use_handoff(self):
-        self.daemon._dispatch_client('shared.handoff', {**self.params, 'keepTabs': True})
+        self.daemon._dispatch_client('shared.handoff', {**self.params, 'keepTabs': True, 'handoffReason': 'user_requested'})
         self.assertFalse(self.releases[-1]['closeAgentTabs'])
         self.assertTrue(self.task['handoff'])
         self.task = self.new_task(self.owner)
