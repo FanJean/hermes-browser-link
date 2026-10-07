@@ -201,3 +201,8 @@
 - `native-bridge/tests/test_host_shutdown.py`：真实管道、隔离 UDS、半截帧、输出堵塞、断管及大量历史经过真实 host/daemon 后继续读取，不连接个人浏览器。
 - `native-bridge/tests/test_cleanup_contract.py`：历史清理投影低于传输限制、跨实例隔离、完整历史与普通详情保留。
 - `page-semantics/inferred-name.test.mjs`：悬停按钮显隐不改变推断行名称，业务文字变更拒绝旧引用，独立控件、正文及多列表格链接保留。
+
+## 1.8.5 后版本号单一来源
+
+- 新增版本设置回归后，固定 reviewed 门禁为 50 步，已知 runner 允许清单为 91 项。
+- `tests/v1.1-build-closure/version-set.test.mjs`：在临时副本中验证 `npm run version:set` 同步全部版本副本、拒绝降级与重复版本、生成 CHANGELOG 节与发布说明草稿，以及单处版本漂移报出具体文件行。

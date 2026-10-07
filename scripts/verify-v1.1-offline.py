@@ -253,6 +253,7 @@ REVIEWED_RUNNER_CLASSIFICATIONS = {
     'tests/v1.1-advanced/vault.test.mjs': 'pure-offline; synthetic visible form controls in jsdom',
     'tests/v1.1-advanced/test_vault_adapter.py': 'pure-offline; synthetic official Vault source and private typed-fill port',
     'tests/v1.1-build-closure/build-closure.test.mjs': 'pure-offline; build output in scratch',
+    'tests/v1.1-build-closure/version-set.test.mjs': 'pure-offline; version copies in scratch',
     'tests/v1.1-compatibility/test_inventory_official_browser.py': 'pure-offline; synthetic inputs',
     'tests/v1.1-concurrency/test_production_concurrency.py': 'pure-offline; synthetic peer and scratch daemon',
     'tests/v1.1-diagnostics/test_doctor_protocol.py': 'pure-offline; synthetic daemon protocol diagnostics and scratch home',
