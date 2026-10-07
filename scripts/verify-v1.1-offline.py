@@ -94,6 +94,8 @@ NODE_TESTS = (
     'tests/popup-integration/content-filter.test.mjs',
     # 中文注释：受信 UI 配置和持续事件出口复用真实后台消息路由。
     'tests/popup-integration/native-routing.test.mjs',
+    # 中文注释：离线状态回执也必须读取当前扩展清单版本。
+    'tests/workspace-diagnostics-integration/surfaces.test.mjs',
     'page-semantics/long-text.test.mjs',
     'page-semantics/controls.test.mjs',
     'page-semantics/inferred-name.test.mjs',
@@ -198,6 +200,8 @@ REVIEWED_RUNNER_PATHS = (
     'tests/v1.1-advanced/vault.test.mjs',
     'tests/v1.1-advanced/test_vault_adapter.py',
     'tests/v1.1-build-closure/build-closure.test.mjs',
+    # 中文注释：版本更新与拒绝路径只在临时副本执行。
+    'tests/v1.1-build-closure/version-set.test.mjs',
     'tests/v1.1-compatibility/test_inventory_official_browser.py',
     'tests/v1.1-concurrency/test_production_concurrency.py',
     'tests/v1.1-diagnostics/test_doctor_protocol.py',

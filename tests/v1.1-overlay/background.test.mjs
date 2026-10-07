@@ -11,6 +11,7 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {Bridge, BrowserConsent, isUiSender} from '../../native-extension/bridge.mjs';
+const packageVersion=JSON.parse(await readFile('package.json','utf8')).version;
 
 const source=new URL('../../native-extension/',import.meta.url);
 const background=await readFile(new URL('background.mjs',source),'utf8');
@@ -51,7 +52,7 @@ function harness({hostState='cancelled',stopFails=false,resumeState='ready',resu
  }
  class FakeWorkspace{constructor(){this.manager={reconcile:async()=>{}};}async status(){return [];}}
  // 中文注释：合成后台提供通知事件 API，不访问系统通知中心。
- const chrome={notifications:{onClicked:{addListener(){}},clear:async()=>true},runtime:{id:'extension',getURL:p=>`chrome-extension://extension/${p}`,connectNative:()=>port,onMessage:{addListener:f=>listeners.message=f},sendMessage:async()=>{}},storage:{local:{get:async()=>({browserInstanceId:instance}),set:async()=>{}},session:{get:async()=>({instanceId:instance}),set:async()=>{}}},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{get:async()=>({...tab}),query:async()=>[],onCreated:{addListener(){}},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
+ const chrome={notifications:{onClicked:{addListener(){}},clear:async()=>true},runtime:{getManifest:()=>({version:packageVersion}),id:'extension',getURL:p=>`chrome-extension://extension/${p}`,connectNative:()=>port,onMessage:{addListener:f=>listeners.message=f},sendMessage:async()=>{}},storage:{local:{get:async()=>({browserInstanceId:instance}),set:async()=>{}},session:{get:async()=>({instanceId:instance}),set:async()=>{}}},alarms:{create(){},onAlarm:{addListener(){}}},tabs:{get:async()=>({...tab}),query:async()=>[],onCreated:{addListener(){}},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},debugger:{onDetach:{addListener(){}}}};
  vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{CloudLink,CookieMirror,registerWorkspaceStartup:()=>{},NativeWorkspaces:FakeWorkspace,Executor:FakeExecutor,Bridge,BrowserConsent,isUiSender,createApprovalNotifier:()=>null,origin:u=>new URL(u).origin,chrome,crypto:globalThis.crypto,navigator:{userAgent:'Node'},console,setTimeout,clearTimeout});
  return {calls,tick,command:p=>executor.onOverlayCommand(p),local:()=>executor.tasks.get('task-1'),lease:owner=>executor.leases.set(7,owner),host:x=>host={...host,...x},tab:x=>tab={...tab,...x},disconnect:()=>disconnect?.()};
 }

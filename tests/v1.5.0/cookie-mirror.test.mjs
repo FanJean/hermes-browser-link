@@ -6,6 +6,7 @@ import {CookieMirror,siteOf,groupSites,splitCookies,setDetails,CHUNK_LIMIT,valid
 import {Bridge} from '../../native-extension/bridge.mjs';
 import {createApprovalNotifier} from '../../native-extension/approval-notifier.mjs';
 import {readFile} from 'node:fs/promises';
+const packageVersion=JSON.parse(await readFile('package.json','utf8')).version;
 const SECRET=['SECRET','COOKIE','VALUE','xyz'].join('_');
 const id='a'.repeat(32),now=1000000;
 const cookie=(more={})=>({name:'login',value:SECRET,domain:'a.example.com',hostOnly:true,path:'/',secure:true,httpOnly:true,sameSite:'lax',session:true,storeId:'0',...more});
@@ -69,7 +70,7 @@ test('复用确认面板显示源、目标、完整站点和数量；native 消�
 });
 test('源确认路由与隐私模块在注入声明之外；key 和新增权限用途受打包契约保护',async()=>{
  const [bg,manifest,build]=await Promise.all(['background.mjs','manifest.json','build.mjs'].map(f=>readFile(new URL('../../native-extension/'+f,import.meta.url),'utf8')));
- assert.match(bg,/if\(r.kind==='cookie_mirror'\)/);assert.match(bg,/cookieMirror.approve\(r.id\)/);assert.match(bg,/isUiSender/);const m=JSON.parse(manifest);const extensionId=[...createHash('sha256').update(Buffer.from(m.key,'base64')).digest('hex').slice(0,32)].map(n=>String.fromCharCode(97+parseInt(n,16))).join('');assert.equal(extensionId,'dhioigkigkkhceflkkkmoljhdaefjohb');assert.equal(m.version,'1.8.5');assert.ok(m.permissions.includes('cookies'));assert.deepEqual(m.host_permissions,['<all_urls>']);assert.match(build,/'cookie-mirror.mjs': path.join\(source, 'cookie-mirror.mjs'\)/);
+ assert.match(bg,/if\(r.kind==='cookie_mirror'\)/);assert.match(bg,/cookieMirror.approve\(r.id\)/);assert.match(bg,/isUiSender/);const m=JSON.parse(manifest);const extensionId=[...createHash('sha256').update(Buffer.from(m.key,'base64')).digest('hex').slice(0,32)].map(n=>String.fromCharCode(97+parseInt(n,16))).join('');assert.equal(extensionId,'dhioigkigkkhceflkkkmoljhdaefjohb');assert.equal(m.version,packageVersion);assert.ok(m.permissions.includes('cookies'));assert.deepEqual(m.host_permissions,['<all_urls>']);assert.match(build,/'cookie-mirror.mjs': path.join\(source, 'cookie-mirror.mjs'\)/);
 });
 
 // 中文注释：删除弹窗专用通路后，原生 Cookie API 和源扩展确认仍保留。

@@ -16,6 +16,7 @@ import zipfile
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
+VERSION = json.loads((ROOT / 'package.json').read_text())['version']
 ORIGIN = 'chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/'
 HOST = 'com.hermes.browser_link'
 
@@ -201,7 +202,7 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
     def old_install(self):
         # 中文注释：模拟旧安装的版本面，扩展公钥与来源不变。
         for path in (self.package / 'browser-link/plugin.yaml', self.package / 'native-extension/manifest.json'):
-            path.write_text(path.read_text().replace('1.8.5', '1.5.1'))
+            path.write_text(path.read_text().replace(VERSION, '1.5.1'))
         rehash(self.package)
         self.invoke()
         config = self.data / 'host-config.json'
@@ -245,10 +246,10 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         old_extension = json.loads((self.extension / 'manifest.json').read_text())
         config = (self.data / 'host-config.json').read_bytes()
         self.invoke('--upgrade')
-        self.assertIn('version: 1.8.5', (self.plugin / 'plugin.yaml').read_text())
+        self.assertIn(f'version: {VERSION}', (self.plugin / 'plugin.yaml').read_text())
         extension = json.loads((self.extension / 'manifest.json').read_text())
         self.assertEqual(extension['key'], old_extension['key'])
-        self.assertEqual(extension['version'], '1.8.5')
+        self.assertEqual(extension['version'], VERSION)
         self.assertEqual((self.data / 'host-config.json').read_bytes(), config)
         self.assert_private_kept(private)
         backups = list((self.hermes / 'plugin-backups').glob('browser-link-1.5.1-*'))

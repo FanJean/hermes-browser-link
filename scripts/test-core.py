@@ -17,6 +17,8 @@ with (nullcontext(os.environ['TMPDIR']) if 'TMPDIR' in os.environ else tempfile.
     # 中文注释：复用已审阅的显式用例清单，避免通配符启动真实浏览器测试。
     env = {**os.environ, 'TMPDIR': str(Path(scratch).resolve()), 'PYTHONDONTWRITEBYTECODE': '1'}
     commands = [
+        # 中文注释：先核对运行元数据、当前发布文档和下载链接，再执行离线用例。
+        ['node', 'scripts/package-version.mjs'],
         ['node', '--test', '--test-concurrency=1', *gate.NODE_TESTS],
         # 中文注释：首次网站读取确认覆盖 daemon 审批与浏览器来源回读的离线往返。
         [sys.executable, 'tests/v1.1-approval-notify/test_site_read.py'],

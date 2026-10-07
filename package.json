@@ -38,7 +38,9 @@
     "dev:watch": "node scripts/dev-watch-desktop.mjs",
     "package": "node scripts/package-executor.mjs",
     "verify": "python3 scripts/verify-v1.1-offline.py",
-    "check:public": "bash scripts/check-public-release.sh"
+    "check:public": "bash scripts/check-public-release.sh",
+    "version:set": "node scripts/version-set.mjs",
+    "check:version": "node scripts/package-version.mjs"
   },
   "engines": {
     "node": ">=22.12.0"

@@ -11,11 +11,12 @@ import {readFile} from 'node:fs/promises';
 import {JSDOM} from 'jsdom';
 import {Bridge,isUiSender,BrowserConsent} from '../../native-extension/bridge.mjs';
 import {DiagnosticEventBuffer} from '../../browser-diagnostics/js/diagnostics.mjs';
+const packageVersion=JSON.parse(await readFile('package.json','utf8')).version;
 const root=new URL('../../native-extension/',import.meta.url);
 const [html,popup,background]=await Promise.all(['popup.html','popup.mjs','background.mjs'].map(f=>readFile(new URL(f,root),'utf8')));
 const clone=v=>structuredClone(v);
 const seed=()=>({id:'native-task',generation:3,title:'真实路由测试（合成数据）',state:'pending_approval',activeMode:'smart',modeGeneration:1,tabIds:[],allowedOrigins:['https://example.test']});
-async function harness(initialStorage={}){
+async function harness(initialStorage={},manifestVersion=packageVersion){
  let task=seed(),queue=[],receive,dispatch,executor,poll;const nativeCalls=[],popupCalls=[];
  const port={onDisconnect:{addListener(){}},onMessage:{addListener:f=>receive=f},postMessage:m=>{
   nativeCalls.push(clone(m));queueMicrotask(()=>{let result;
@@ -49,7 +50,7 @@ async function harness(initialStorage={}){
  }
  class TestWorkspaces{constructor(){this.manager={reconcile:async()=>{}};}async status(){return [];}}
  const event={addListener(){}};const storage=clone(initialStorage);const api={
-  runtime:{id:'test',getManifest:()=>({version:'1.8.1'}),onMessage:{addListener:f=>dispatch=f},connectNative:()=>port,sendMessage:async()=>({})},
+  runtime:{id:'test',getManifest:()=>({version:manifestVersion}),onMessage:{addListener:f=>dispatch=f},connectNative:()=>port,sendMessage:async()=>({})},
   storage:{session:{get:async()=>({instanceId:'test-instance'}),set:async()=>{}},local:{get:async()=>clone(storage),set:async v=>Object.assign(storage,v)}},
   notifications:{onClicked:event},
   alarms:{create(){},onAlarm:event},tabs:{onCreated:event,onRemoved:event,onUpdated:event,query:async()=>[{id:7,url:'https://example.test/work',title:'工作页'}],get:async()=>({id:7,url:'https://example.test/work'})},debugger:{onDetach:event}
@@ -66,6 +67,15 @@ async function harness(initialStorage={}){
  const click=async selector=>{const b=d.querySelector(selector);assert.ok(b,selector);assert.equal(b.disabled,false,selector);b.click();await flush();};
  return {dom,d,click,send,flush,storage,api,poll:async()=>{await poll();await flush();},nativeCalls,popupCalls,dispatch,executor,queue:(nonce='nonce-real-routing')=>{queue=[{taskId:task.id,nonce,digest:'digest-real-routing',request:{action:'click',tabId:7,selector:'#save'}}];},reset:()=>{task={...seed(),generation:4};executor.tasks.clear();executor.leases.clear();}};
 }
+test('握手与弹窗状态读取浏览器 manifest，而非源码版本常量',async()=>{
+ const parts=packageVersion.split('.').map(BigInt),version=`${parts[0]}.${parts[1]}.${parts[2]+1n}`;
+ const h=await harness({},version);
+ assert.equal(h.nativeCalls.find(m=>m.method==='extension.hello').params.version,version);
+ assert.equal((await h.send({type:'popup_status'})).result.version,version);
+ assert.equal(h.d.querySelector('#version-label').textContent,`v${version}`);
+ h.dom.window.close();
+});
+
 test('browser identity survives sessions while old preference leaves smart as default',async()=>{
  const old=await harness({preferredMode:'full',browserInstanceId:'durable-instance'});
  assert.equal(old.nativeCalls.find(m=>m.method==='extension.hello').params.instanceId,'durable-instance');
@@ -116,7 +126,7 @@ test('指定屏蔽区域只接受受信 popup，校验 origin 与选择器并读
 test('生产弹窗仅提供自动屏蔽，右上角展示本扩展版本',async()=>{
  const h=await harness();
  assert.equal(h.d.querySelector('#shield-settings,#cursor-toggle,#cookie-mirror'),null);
- assert.equal(h.d.querySelector('#version-label').textContent,'v1.8.1');
+ assert.equal(h.d.querySelector('#version-label').textContent,`v${packageVersion}`);
  await h.click('#filter-toggle');assert.equal(h.storage.pageContentFilter,true);
  assert.equal(h.popupCalls.some(row=>row.type==='visual_cursor'||row.type==='cookie_mirror_pending'||row.type.startsWith('page_content_shield')),false);h.dom.window.close();
 });

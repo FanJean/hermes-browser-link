@@ -322,14 +322,13 @@ test('native build refuses to replace its source directory without changing it',
   }
 });
 
-test('1.8.5 发布入口报告同一个版本', async () => {
+test('当前发布入口报告同一个版本', async () => {
   // 中文注释：以包版本为发布基准，插件、桌面 API、扩展和 Native 握手必须一致。
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const plugin = await readFile(path.join(root, 'executor-plugin/plugin.yaml'), 'utf8');
   const version = /^version:\s*([^\s]+)$/m.exec(plugin)?.[1];
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(pkg.version, '1.8.5');
   assert.equal(version, pkg.version);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);
@@ -342,7 +341,7 @@ test('1.8.5 发布入口报告同一个版本', async () => {
   const background = await readFile(path.join(root, 'native-extension/background.mjs'), 'utf8');
   assert.equal(desktop.version, version);
   assert.equal(extension.version, version);
-  assert.ok(background.includes(`version:'${version}'`));
+  assert.equal([...background.matchAll(/version:chrome\.runtime\.getManifest\(\)\.version/g)].length, 2);
 });
 
 // 中文注释：工具栏独有图标引用也必须闭包检查，不能只检查 manifest.icons。
@@ -367,7 +366,7 @@ test('版本闭包拒绝桌面、锁文件及运行握手错配',async()=>{
   const expected=await verifyPackageVersions(root);assert.equal(await verifyPackageVersions(work),expected);
   for(const file of files){
    const original=await readFile(path.join(work,file),'utf8');
-   await writeFile(path.join(work,file),original.replaceAll(expected,'0.0.0'));
+   await writeFile(path.join(work,file),file==='native-extension/background.mjs'?original.replaceAll('chrome.runtime.getManifest().version','chrome.runtime.getManifest().name'):original.replaceAll(expected,'0.0.0'));
    await assert.rejects(verifyPackageVersions(work),/Package versions must match/);
    await writeFile(path.join(work,file),original);
   }

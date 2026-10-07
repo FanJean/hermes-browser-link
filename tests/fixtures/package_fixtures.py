@@ -82,7 +82,7 @@ def write_packager_source(root: Path, *, include_api_client: bool = False) -> Pa
         "native-bridge/host.py": b"# host\n",
         "native-extension/manifest.json": b'{"manifest_version":3,"version":"1.3.0"}\n',
         "native-extension/build.mjs": b"// build entry fixture\n",
-        "native-extension/background.mjs": b"// 中文注释：版本握手夹具。\nconst hello={version:'1.3.0'};const popup={version:'1.3.0'};\n",
+        "native-extension/background.mjs": b"// 中文注释：版本握手夹具。\nconst hello={version:chrome.runtime.getManifest().version};const popup={version:chrome.runtime.getManifest().version};\n",
         "executor-plugin/plugin.yaml": b"name: browser-link\nversion: 1.3.0\n",
         "executor-plugin/__init__.py": b"\"\"\"Plugin fixture.\"\"\"\n",
         "executor-plugin/open_tool.py": b"# open tool\n",

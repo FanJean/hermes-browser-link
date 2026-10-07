@@ -7,6 +7,7 @@ import {readFile} from 'node:fs/promises';
 import {CookieMirror} from '../../native-extension/cookie-mirror.mjs';
 import {Bridge,BrowserConsent,isUiSender} from '../../native-extension/bridge.mjs';
 import {createApprovalNotifier} from '../../native-extension/approval-notifier.mjs';
+const packageVersion=JSON.parse(await readFile('package.json','utf8')).version;
 const background=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
 const clone=x=>structuredClone(x);
 const tick=async()=>{for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));};
@@ -30,7 +31,7 @@ function harness({focusFails=false,browserFullConsent=false,decideFails=false,co
  class WorkspaceFake{constructor(){this.manager={reconcile:async()=>{}};}async status(){return [];}}
  const local={browserInstanceId:'instance-A',browserFullConsent:{version:1,enabled:browserFullConsent}};
  // 中文注释：通知回调在后台顶层注册，离线模拟点击只允许聚焦。
- const chrome={notifications:{onClicked:{addListener:f=>listeners.notification=f},create:async()=>{},clear:async()=>true},cookies:{getAll:async()=>clone(cookieData)},runtime:{id:'ext-123',getURL:p=>`chrome-extension://ext-123/${p}`,onMessage:{addListener:f=>listeners.message=f},connectNative:()=>port,sendMessage:async()=>{}},
+ const chrome={notifications:{onClicked:{addListener:f=>listeners.notification=f},create:async()=>{},clear:async()=>true},cookies:{getAll:async()=>clone(cookieData)},runtime:{getManifest:()=>({version:packageVersion}),id:'ext-123',getURL:p=>`chrome-extension://ext-123/${p}`,onMessage:{addListener:f=>listeners.message=f},connectNative:()=>port,sendMessage:async()=>{}},
   storage:{local:{get:async()=>clone(local),set:async x=>Object.assign(local,x)},session:{get:async()=>({instanceId:'instance-A'}),set:async()=>{}}},
   alarms:{create(){},onAlarm:{addListener:f=>listeners.alarm=f}},
   tabs:{get:async id=>id===7?clone(tab):id===panelTab?.id?clone(panelTab):null,query:async()=>[clone(tab)],onCreated:{addListener(){}},onRemoved:{addListener(){}},onUpdated:{addListener(){}}},
