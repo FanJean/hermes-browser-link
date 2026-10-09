@@ -606,6 +606,12 @@ function restoreCaptureDecorations(){
  return {ok};
 }
 
+// 中文注释：常见第三方登录页的主机名。与 executor-plugin/native_tools.py 的 _SIGN_IN_HOSTS 保持一致；只用于提示，不授予任何权限。
+const SIGN_IN_HOSTS=new Set(['accounts.google.com','login.microsoftonline.com','login.live.com','appleid.apple.com','login.yahoo.com']);
+const SIGN_IN_SUFFIXES=['.auth0.com','.okta.com'];
+export function isSignInUrl(url){
+ try{const u=new URL(url);return u.protocol==='https:'&&(SIGN_IN_HOSTS.has(u.hostname)||SIGN_IN_SUFFIXES.some(suffix=>u.hostname.endsWith(suffix)));}catch{return false;}
+}
 export function origin(url) {
  const u=new URL(url);
  if(!['http:','https:'].includes(u.protocol)||u.username||u.password)throw Error('origin scheme denied');
@@ -737,8 +743,8 @@ const SITE_READ_ACTIONS=new Set(['snapshot','screenshot','page.observe','page.pa
 function assertV1Action(action) { if(!V1_ACTIONS.includes(action))throw Error('V1 unsupported action'); }
 
 export class Executor {
- constructor(api,onEvent=()=>{},{beforeLeaseRelease=async()=>{},onOverlayCommand=null,releaseDeadlineMs=RELEASE_DEADLINE_MS,onDownloadEvent=null,onCdpEvents=null,onContentShield=null}={}) {
-  this.onContentShield=onContentShield;this.shieldResults=new WeakMap();
+ constructor(api,onEvent=()=>{},{beforeLeaseRelease=async()=>{},onOverlayCommand=null,releaseDeadlineMs=RELEASE_DEADLINE_MS,onDownloadEvent=null,onCdpEvents=null,onContentShield=null,onSignInRedirect=null}={}) {
+  this.onContentShield=onContentShield;this.onSignInRedirect=onSignInRedirect;this.shieldResults=new WeakMap();
   this.beforeLeaseRelease=beforeLeaseRelease;
   this.releaseDeadlineMs=Number.isFinite(releaseDeadlineMs)&&releaseDeadlineMs>0?Math.min(releaseDeadlineMs,RELEASE_DEADLINE_MS):RELEASE_DEADLINE_MS;
   // Only trusted extension background code may supply this callback. It must
@@ -1308,7 +1314,11 @@ export class Executor {
    if(!t.offScopeTabs)t.offScopeTabs=new Set();t.offScopeTabs.add(tabId);
    const documentGeneration=await bump();
    if(documentGeneration===null)return;
-   if(first)this.onEvent({taskId:t.id,generation:t.generation,tabId,event,documentGeneration,outOfScope:true});
+   if(first){
+    this.onEvent({taskId:t.id,generation:t.generation,tabId,event,documentGeneration,outOfScope:true});
+    // 中文注释：工作页跳到第三方登录时页面已冻结、没有遮罩；单独提醒用户亲自完成登录，登录后跳回授权网站即自动恢复。
+    if(isSignInUrl(url))this.onSignInRedirect?.({taskId:t.id,tabId});
+   }
    return;
   }
   if(url!=='about:blank'&&t.officialBlankSeen?.has(tabId)){
@@ -2669,6 +2679,8 @@ export class Executor {
     }catch(error){
      // 中文注释：主框架可能先于 tabs.get 提交跳转；等标签页网址更新后再判定来源。
      if(error?.message==='origin denied')redirected=true;
+     // 中文注释：新页提交导航前主框架是 about:blank 或空网址，只跳过本轮；关闭探测会退回等全部子资源加载完（常到上限 8 秒）。
+     else if(error?.message==='origin scheme denied'||error instanceof TypeError&&/Invalid URL/i.test(error.message)){}
      else if(!isTransientLoadError(error))probeOff=true;
     }
     if(redirected){

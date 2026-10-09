@@ -3,7 +3,7 @@ import {swapInstalledDirectory,rollbackDirectorySwaps,installedPluginTargets,ins
 import {runDevelopmentGuard,assertDevelopmentIdle} from './dev-sync-daemon.mjs';
 import {spawnSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
-import {cp, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile} from 'node:fs/promises';
+import {cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile} from 'node:fs/promises';
 import {homedir,tmpdir} from 'node:os';
 import path from 'node:path';
 
@@ -54,7 +54,13 @@ for(const file of [desktopEntry,desktopMarkerPath]){
  if(!(await lstat(file)).isFile())throw Error(`安装入口不是普通文件：${file}`);
 }
 const desktopMarker=JSON.parse(await readFile(desktopMarkerPath,'utf8'));
-if(desktopMarker.package!=='browser-link'||desktopMarker.source!==path.join(pluginTarget,'desktop'))throw Error('桌面插件来源不匹配');
+// 中文注释：共享安装后 Desktop 可能记录某个命名 profile 的链接路径；只要真实路径就是根程序的 desktop 目录即视为同一来源。
+const sameDesktopSource=async source=>{
+ if(typeof source!=='string'||!path.isAbsolute(source))return false;
+ if(source===path.join(pluginTarget,'desktop'))return true;
+ try{return await realpath(source)===await realpath(path.join(pluginTarget,'desktop'));}catch{return false;}
+};
+if(desktopMarker.package!=='browser-link'||!await sameDesktopSource(desktopMarker.source))throw Error('桌面插件来源不匹配');
 const installedManifest=JSON.parse(await readFile(path.join(extensionTarget,'manifest.json'),'utf8'));
 const sourceManifest=JSON.parse(await readFile(path.join(repo,'native-extension','manifest.json'),'utf8'));
 // 中文注释：--allow-upgrade 只放行同名扩展的版本升级（源码版本更高），不允许降级或换扩展。

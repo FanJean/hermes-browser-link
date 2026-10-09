@@ -145,7 +145,9 @@ async function performOverlayCommand({taskId,generation,tabId,origin:site,kind})
 const reportDownload=p=>{const current=bridge;if(!current||!connected)return Promise.resolve();return current.request('extension.download_event',p).catch(()=>{});};
 // 中文注释：已存在的订阅也必须遵循当前开关；设置读失败时不推送原始事件。
 const pushCdpEvents=async p=>{try{if((await readContentShield()).enabled)return;}catch{return;}const current=bridge;if(!current||!connected)return;return current.request('extension.cdp_events',p).catch(()=>{});};
-const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}),{onOverlayCommand:overlayCommand,onDownloadEvent:reportDownload,onCdpEvents:pushCdpEvents,onContentShield:readContentShield});
+const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}),{onOverlayCommand:overlayCommand,onDownloadEvent:reportDownload,onCdpEvents:pushCdpEvents,onContentShield:readContentShield,
+ // 中文注释：系统通知只说明需要登录，不携带网站、任务或账号信息。
+ onSignInRedirect:()=>void showPanelNotification(chrome,'hermes-browser-sign-in','任务页面跳到了第三方登录页。请在该标签页亲自选择账号并完成登录，完成后任务会自动继续。')});
 // 中文注释：镜像状态变化只刷新源扩展确认面板，弹窗不保留复制结果。
 const cookieMirror=new CookieMirror(chrome,{onChanged:()=>{void refreshApprovals();}});
 let cloud=null;

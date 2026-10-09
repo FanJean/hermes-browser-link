@@ -71,6 +71,18 @@ class FeaturesTests(unittest.TestCase):
                                     status='failed', action='ref_fill', error_code='element_timeout')['error_code'],
                          'element_timeout')
 
+    def test_log_append_prunes_at_most_once_per_interval(self):
+        # 中文注释：整目录扫描不能在每个动作收尾时执行；间隔到期后才再次清理。
+        operation = {'action': 'click', 'state': 'succeeded', 'startedAt': 1780000000, 'durationMs': 1}
+        with patch.object(self.daemon, '_prune_task_logs') as prune, patch('daemon.time.monotonic', return_value=1000.0):
+            for _ in range(5):
+                self.daemon._append_task_log('task-1', operation)
+        self.assertEqual(prune.call_count, 1)
+        with patch.object(self.daemon, '_prune_task_logs') as prune, patch('daemon.time.monotonic', return_value=1061.0):
+            self.daemon._append_task_log('task-1', operation)
+        self.assertEqual(prune.call_count, 1)
+        self.assertEqual(len(self.daemon._read_task_log('task-1', 10)), 6)
+
     def test_resume_summary_accepts_only_structural_flags(self):
         task = {'id': 'task-1', 'owner': 'owner-1', 'instanceId': 'chrome-1', 'generation': 2,
                 'state': 'paused', 'updatedAt': 0}

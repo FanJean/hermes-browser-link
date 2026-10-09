@@ -209,6 +209,28 @@ class ResultPrivacyTests(unittest.TestCase):
                 self.assertFalse(result['outcome_unknown'])
                 self.assertNotIn(CANARY, json.dumps(result))
 
+    def test_sign_in_page_asks_user_instead_of_navigating_back(self):
+        # 中文注释：工作页停在第三方登录页时，提示用户亲自登录并等待，不能建议导航回原站打断登录。
+        module = load('native_tools')
+        cases = (('tab_out_of_scope', 'currentOrigin', 'https://accounts.google.com', True),
+                 ('redirected_out_of_scope', 'finalOrigin', 'https://tenant.okta.com', True),
+                 ('tab_out_of_scope', 'currentOrigin', 'https://other.example', False),
+                 ('tab_out_of_scope', 'currentOrigin', 'http://accounts.google.com', False))
+        for code, key, origin, sign_in in cases:
+            with self.subTest(code=code, origin=origin):
+                error = RuntimeError(CANARY)
+                error.code = code
+                error.data = {'outcomeUnknown': False, key: origin}
+                profile = SimpleNamespace(authority=SimpleNamespace(
+                    consume=lambda *a, **kw: SimpleNamespace(owner='tool:synthetic', tool_call_id='c')),
+                    call=lambda *a, **kw: (_ for _ in ()).throw(error))
+                result = json.loads(module.make_tool_handler('browser_shared_run', profile)(
+                    {'task_id': 't', 'tab_id': 1, 'action': 'semantic_snapshot'}, session_id='test'))
+                self.assertEqual(result['bridgeCode'], code)
+                self.assertEqual(result.get('user_action_required'), 'sign_in' if sign_in else None)
+                self.assertEqual('不要 navigate 回原网站' in result['error'], sign_in)
+                self.assertNotIn(CANARY, json.dumps(result))
+
     def test_pre_dispatch_url_rejection_is_not_unknown(self):
         # 中文注释：导航前的网址校验拒绝未派发，不应标记为结果不确定；显式 unknown 仍保留。
         module = load('native_tools')

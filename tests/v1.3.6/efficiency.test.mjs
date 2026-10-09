@@ -96,3 +96,36 @@ test('选择器点击与填写滚动到中部后才派发',()=>{
   assert.equal(field.value,'已填');assert.deepEqual(blocks,['center','center']);
  }finally{dom.window.close();}
 });
+
+test('新页主框架仍是 about:blank 时不关闭就绪探测',async()=>{
+ // 中文注释：新建标签页提交导航前主框架是空白页；来源检查失败只能跳过本轮探测，不能退回等待全部资源加载完。
+ let frames=0;
+ const api={tabs:{get:async()=>({id:7,url:'https://site.test/app',status:'loading'})},debugger:{
+  attach:async()=>{},sendCommand:async(_target,method)=>{
+   if(method==='Page.getFrameTree')return {frameTree:{frame:{id:'main',url:++frames<=2?'about:blank':'https://site.test/app',loaderId:'doc'}}};
+   if(method==='Page.createIsolatedWorld')return {executionContextId:1};
+   return {result:{value:{ready:'interactive',title:'应用',heading:true,textLength:10,elementCount:4}}};
+  },
+ }};
+ const executor=new Executor(api),task={id:'t',generation:1,revoked:false,allowedOrigins:['https://site.test']};
+ executor.tasks.set('t',task);executor.leases.set(7,'t');
+ const started=performance.now();
+ const result=await executor.settledTab(7,()=>{},null,3000,task,'https://site.test/app');
+ assert.equal(result.ready,'interactive');
+ assert.ok(performance.now()-started<1500);
+});
+
+test('工作页跳到第三方登录页只提醒一次，普通外站不提醒',async()=>{
+ // 中文注释：登录页上没有遮罩，需单独提醒用户亲自登录；同一次离站不重复提醒。
+ const signIns=[],events=[];
+ const executor=new Executor({tabs:{},debugger:{}},event=>events.push(event),{onSignInRedirect:row=>signIns.push(row)});
+ const task={id:'t',generation:1,revoked:false,allowedOrigins:['https://site.test'],approvedOrigins:new Set(),tabIds:new Set([7,8])};
+ executor.tasks.set('t',task);executor.leases.set(7,'t');executor.leases.set(8,'t');
+ executor.closeTabResources=async()=>{};
+ await executor.tabEvent(7,'navigated','https://accounts.google.com/o/oauth2/auth?x=1');
+ await executor.tabEvent(7,'navigated','https://accounts.google.com/signin/select');
+ await executor.tabEvent(8,'navigated','https://other.test/');
+ assert.deepEqual(signIns,[{taskId:'t',tabId:7}]);
+ assert.equal(events.filter(event=>event.outOfScope).length,2);
+ assert.ok(events.every(event=>!('url' in event)));
+});

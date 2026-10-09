@@ -20,6 +20,17 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
+# 中文注释：常见第三方登录页主机名，与扩展 core.mjs 的 SIGN_IN_HOSTS 保持一致；只影响提示文案，不授予权限。
+_SIGN_IN_HOSTS = frozenset({'accounts.google.com', 'login.microsoftonline.com', 'login.live.com', 'appleid.apple.com', 'login.yahoo.com'})
+_SIGN_IN_SUFFIXES = ('.auth0.com', '.okta.com')
+
+
+def _is_sign_in_origin(value):
+    if not isinstance(value, str) or not value.startswith('https://'):
+        return False
+    host = value[len('https://'):].split('/', 1)[0].split(':', 1)[0].lower()
+    return host in _SIGN_IN_HOSTS or host.endswith(_SIGN_IN_SUFFIXES)
+
 def runtime_module():
     path = Path(__file__).with_name('native_runtime.py').resolve()
     name = 'hermes_browser_native_runtime_' + hashlib.sha256(str(path).encode()).hexdigest()[:16]
@@ -603,6 +614,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 'extension_disconnected': '扩展连接已中断；请检查连接，读取任务状态后再继续。结果不确定时禁止自动重试。',
                 'page_not_ready': '页面仍在加载或刚被替换；稍等几秒后在同一标签页重新读取即可，不要重新打开或新建标签页。',
                 'document_changed': '页面已更改，请重新读取后再执行。',
+                'page_script_error': '页面解析器在这个页面上出错，未返回结果；可等页面稳定后重新读取一次，或改用 page.parse 的其他 sections / 截图。同一页面连续出错时不要反复重试。',
                 'site_changed': '读取期间页面切换了网站，结果未返回；请用新 request_id 重新申请目标网站读取。',
                 'stale_reference': '页面引用已失效，请重新读取。',
                 # 中文注释：分页游标失效需要重新解析页面，保留类型供调用者区分连接与授权错误。
@@ -717,6 +729,13 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
             for key in ('currentOrigin', 'scopeHint', 'stage', 'reasonCode', 'effect', 'suggestion'):
                 if key in data:
                     result[key] = data[key]
+            # 中文注释：工作页停在第三方登录页时，回到原站会打断登录；改为请用户亲自登录并等待自动恢复。
+            if code in {'tab_out_of_scope', 'redirected_out_of_scope'} and _is_sign_in_origin(
+                    data.get('currentOrigin') if code == 'tab_out_of_scope' else data.get('finalOrigin')):
+                result['error'] = ('工作页正在第三方登录页，需要用户在该标签页亲自选择账号并完成登录；登录完成后页面会跳回授权网站，任务自动恢复。'
+                                   '请告诉用户去完成登录，等用户确认后再重新读取该页。不要 navigate 回原网站、不要新开任务或标签页，也不要尝试操作登录页。')
+                result['user_action_required'] = 'sign_in'
+                result['retryable'] = False
             # 中文注释：跨站跳转只转发 client 已校验的来源，不含路径或查询。
             if code == 'redirected_out_of_scope' and isinstance(data.get('finalOrigin'), str):
                 result['finalOrigin'] = data['finalOrigin']

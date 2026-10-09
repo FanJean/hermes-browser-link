@@ -176,8 +176,12 @@ for file,value in manifests:
  file.parent.mkdir(parents=True,exist_ok=True);file.write_text(json.dumps(value));file.chmod(0o600)
  `,path.resolve(import.meta.dirname,'../../cloud-link/registration.py'),home,f.base],{encoding:'utf8'});
  assert.equal(registration.status,0,registration.stderr);
+ // 中文注释：共享安装后 Desktop 可能记录命名 profile 的链接路径；真实路径相同应放行，同步后统一写回根路径。
+ const marker=JSON.parse(await readFile(f.marker,'utf8'));
+ await writeFile(f.marker,JSON.stringify({...marker,source:path.join(f.link,'desktop')}));
  const result=run();
  assert.equal(result.status,0,result.stderr);const output=JSON.parse(result.stdout);
+ assert.equal(JSON.parse(await readFile(f.marker,'utf8')).source,path.join(f.root,'desktop'));
  assert.equal(output.pluginCopies,1);assert.equal(output.daemonStopped,false);t.diagnostic(JSON.stringify(output));
  const repeated=run();assert.equal(repeated.status,0,repeated.stderr);
  assert.equal(await readlink(f.link),originalLink);assert.equal(await readFile(config,'utf8'),'disabled-sentinel');

@@ -10,6 +10,7 @@ from collections import OrderedDict
 import errno
 import fcntl
 import hashlib
+import hmac
 import json
 import logging
 import math
@@ -99,6 +100,7 @@ _TOOL_RESULT_LIMIT = 900 * 1024
 
 _MAX_LINE = 1024 * 1024
 _DEFAULT_REQUEST_HISTORY_LIMIT = 4096
+_TASK_LOG_PRUNE_INTERVAL_SECONDS = 60
 _DIAGNOSTIC_ROTATED_RE = re.compile(r"^events\.(\d{6})\.jsonl$")
 _MAX_DIAGNOSTIC_CURSOR = 10**20 - 1
 
@@ -206,6 +208,7 @@ class BridgeDaemon:
         self.primary_path = self.data_dir / 'primary-browser.json'
         self.task_log_dir = self.data_dir / 'task-logs'
         self.task_log_lock = threading.Lock()
+        self.task_log_pruned_at = None
         # 中文注释：结果缓存只在内存中保留，任务账本与防重放指纹独立保存。
         self.result_cache = OrderedDict()
         self.result_cache_bytes = 0
@@ -505,19 +508,29 @@ class BridgeDaemon:
             fd = _open_private_regular(self._task_log_path(task_id), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, 'ab') as stream:
                 stream.write(encoded)
-            self._prune_task_logs()
+            # 中文注释：上千个日志文件时整目录扫描约 20ms；每分钟最多清理一次，不在每个动作上付出这笔开销。
+            now = time.monotonic()
+            if self.task_log_pruned_at is None or now - self.task_log_pruned_at >= _TASK_LOG_PRUNE_INTERVAL_SECONDS:
+                self.task_log_pruned_at = now
+                self._prune_task_logs()
 
     def _prune_task_logs(self):
-        # 中文注释：保留最近七天且总量不超过 10 MiB；优先删除最旧任务文件。
-        files = sorted((path for path in self.task_log_dir.glob('*.jsonl') if path.is_file() and not path.is_symlink()),
-                       key=lambda path: path.stat().st_mtime)
+        # 中文注释：保留最近七天且总量不超过 10 MiB；优先删除最旧任务文件。每个文件只 stat 一次。
+        files = []
+        for path in self.task_log_dir.glob('*.jsonl'):
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                files.append((info.st_mtime, info.st_size, path))
+        files.sort(key=lambda row: row[0])
         cutoff = time.time() - 7 * 86400
-        total = sum(path.stat().st_size for path in files)
-        for path in files:
-            info = path.stat()
-            if info.st_mtime < cutoff or total > 10 * 1024 * 1024:
-                total -= info.st_size
-                path.unlink()
+        total = sum(size for _, size, _ in files)
+        for mtime, size, path in files:
+            if mtime < cutoff or total > 10 * 1024 * 1024:
+                total -= size
+                path.unlink(missing_ok=True)
 
     def _read_task_log(self, task_id, limit):
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -984,7 +997,9 @@ class BridgeDaemon:
         try:
             hello = _read_line(reader)
             role = hello.get("role")
-            if hello.get("token") != token or role not in {"client", "extension"}:
+            presented = hello.get("token")
+            if (not isinstance(presented, str) or not hmac.compare_digest(presented.encode("utf-8"), token.encode("utf-8"))
+                    or role not in {"client", "extension"}):
                 return
             if role == "extension":
                 self._serve_extension(conn, reader, str(hello.get("origin", "")))
@@ -1440,14 +1455,16 @@ class BridgeDaemon:
             if code:
                 operation["errorCode"] = code
             task["operationTimeline"] = (task.get("operationTimeline", []) + [dict(operation)])[-32:]
-            try:
-                self._append_task_log(task['id'], operation, target_summary)
-            except (OSError, ValueError, ProtocolError):
-                # 中文注释：日志写入失败不能把已派发动作改报失败或触发重放。
-                pass
+            log_entry = (task['id'], dict(operation), target_summary)
             task["lastActivityAt"] = time.time()
             self._persist_tasks()
             instance_id = task['instanceId']
+        # 中文注释：日志文件 IO 不持全局状态锁，避免一个动作收尾阻塞其他任务和客户端。
+        try:
+            self._append_task_log(*log_entry)
+        except (OSError, ValueError, ProtocolError):
+            # 中文注释：日志写入失败不能把已派发动作改报失败或触发重放。
+            pass
         if instance_id:
             self._notify_tasks_changed(instance_id)
 

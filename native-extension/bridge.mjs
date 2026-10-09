@@ -98,7 +98,7 @@ function executionError(error,message){
  else if(reason==='READ_ORIGIN_CHANGED'){code='site_changed';text='The page changed sites before the read completed; request a new site approval.';}
  else if(reason==='INVALID_NODE_REF'){code='stale_reference';text='The page reference is stale; obtain a new snapshot.';}
  else if(reason==='CAPTURE_CHANGED'){code='document_changed';text='Page content changed; obtain a new snapshot.';}
- else if(['DOM_CHANGED','DOCUMENT_REPLACED','NODE_CHANGED'].includes(detail)){code='document_changed';text='Page content changed; obtain a new snapshot.';}
+ else if(['DOM_CHANGED','DOCUMENT_REPLACED','NODE_CHANGED','document changed'].includes(detail)){code='document_changed';text='Page content changed; obtain a new snapshot.';}
  else if(['STALE_REF','STALE_SNAPSHOT','BINDING_MISMATCH'].includes(detail)){code='stale_reference';text='The page reference is stale; obtain a new snapshot.';}
  else if(['FRAME_TOKEN_STALE','FRAME_DISCOVERY_UNAVAILABLE'].includes(reason)){code='stale_frame';text='The selected frame changed; discover frames again.';}
  else if(detail==='origin denied'&&typeof error?.currentOrigin==='string'){code='tab_out_of_scope';text='同站用 goto_url，新站用 browser_shared_open。';}
@@ -107,6 +107,9 @@ function executionError(error,message){
  else if(['navigation timeout','NAVIGATION_TIMEOUT','PAGE_NOT_READY'].includes(detail)){code='page_not_ready';text='The page did not become ready within the deadline.';}
  // 中文注释：页面加载途中旧文档被替换时的 CDP 瞬时错误，归为“页面未就绪”，只读动作可重试，不再落入笼统的拒绝执行。
  else if(/^\{"code":-?\d+,"message":"(?:Cannot find context with specified id|Execution context was destroyed|Inspected target navigated or closed|Cannot find frame|Frame with the given id was not found|No frame for given id)/.test(detail)){code='page_not_ready';text='The page is still loading or was replaced; read it again after it loads.';}
+ // 中文注释：解析类读取中页面脚本抛出的 JS 异常只保留异常类型，归为解析出错，不回传网页异常正文。
+ if(code==='execution_denied'&&message.method==='browser.execute'&&['semantic_snapshot','page.parse','page.observe','snapshot','frame_catalog'].includes(message.params?.action)
+  &&/^(?:TypeError|RangeError|ReferenceError|SyntaxError|DOMException|InvalidStateError|NotSupportedError|SecurityError)\b/.test(detail)){code='page_script_error';text='The page parser failed on this page; nothing was returned.';}
  const filePreDispatch=['artifact_path_denied','artifact_origin_denied','file_input_not_unique','not_file_input'].includes(code);
  let candidates;
  if(['reference_target_missing','reference_target_ambiguous','element_timeout'].includes(code)&&detail.includes('|')){
