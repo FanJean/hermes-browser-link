@@ -105,12 +105,14 @@ def stage_package(work: Path, package: Path, origins: list[str], hermes_home: Pa
     """在隔离 HOME 中安装候选包，并以安装后的文件运行所有后续工具调用。"""
     value = configure_paths(work, hermes_home, package_mode=True)
     package = package.expanduser().resolve()
-    # 中文注释：以正式 CLI 调用安装脚本；模块导入会在待验包内写入 __pycache__，破坏摘要清单。
-    command = [sys.executable, str(package / "install-executor.py"),
-               "--package", str(package), "--user-home", str(value["home"]),
-               "--hermes-home", str(value["hermes"]), "--apply"]
-    for origin in origins:
-        command.extend(("--extension-origin", origin))
+    # 中文注释：跨平台离线夹具调用真实安装事务验证 macOS 文件布局；公开 CLI 仍只允许 macOS。
+    # runpy 不在待验包内写入 __pycache__，所有包摘要与路径检查仍由 install 执行。
+    code = ("import json,runpy,sys; from pathlib import Path; "
+            "installer=runpy.run_path(sys.argv[1]); "
+            "print(json.dumps(installer['install'](Path(sys.argv[2]),Path(sys.argv[3]),"
+            "Path(sys.argv[4]),json.loads(sys.argv[5]),apply=True)))")
+    command = [sys.executable, '-c', code, str(package / "install-executor.py"),
+               str(package), str(value["home"]), str(value["hermes"]), json.dumps(origins)]
     installed = json.loads(subprocess.run(command, check=True, capture_output=True, text=True).stdout)
     if installed.get("status") != "installed_disabled":
         raise RuntimeError("package-first installation was not confirmed")
