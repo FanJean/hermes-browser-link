@@ -2,6 +2,7 @@
 import importlib.util
 from contextlib import nullcontext
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -12,10 +13,10 @@ spec = importlib.util.spec_from_file_location('offline_gate', ROOT / 'scripts/ve
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
-# 中文注释：只有足够短的 TMPDIR 才直接使用；macOS 默认 /var/folders/... 或会话临时目录过长，
-# 嵌套后 Unix socket 会超过 103 字节上限，此时退回 /tmp 下的短目录。
+# 中文注释：调用方指定的 TMPDIR 原样使用（verify 依赖这一点）。只有它恰好是 macOS 系统默认的
+# /var/folders/.../T 时视为未指定：该路径嵌套后 Unix socket 会超过 103 字节，改用 /tmp 下的短目录。
 _explicit_tmp = os.environ.get('TMPDIR')
-_use_explicit = bool(_explicit_tmp) and len(str(Path(_explicit_tmp).resolve())) <= 24
+_use_explicit = bool(_explicit_tmp) and not re.fullmatch(r'/private/var/folders/[^/]+/[^/]+/T', str(Path(_explicit_tmp).resolve()))
 with (nullcontext(_explicit_tmp) if _use_explicit else tempfile.TemporaryDirectory(prefix='hbc-', dir='/tmp')) as scratch:
     # 中文注释：复用已审阅的显式用例清单，避免通配符启动真实浏览器测试。
     env = {**os.environ, 'TMPDIR': str(Path(scratch).resolve()), 'PYTHONDONTWRITEBYTECODE': '1'}

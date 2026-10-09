@@ -15,7 +15,6 @@ node bench/site/server.mjs 8765
 ```bash
 node bench/mechanical.mjs --browser chrome --reps 5 --label before --port 8765
 node bench/mechanical.mjs --browser edge --reps 5 --label before-edge --port 8765
-node bench/mechanical.mjs --browser chrome --reps 5 --label after-cursor-off --port 8765 --cursor off
 ```
 
 代理基准使用已安装且可用的 Hermes profile；`HERMES_BENCH_PROFILE` 默认为 `default`，可设为命名 profile。运行器逐个执行七个自包含任务，任务标题为 `基准·<任务名>·<label>`，会显示在侧栏。每项前清空站点日志，结束后保存快照、Hermes 文本输出、只读查询到的 session id 和当时 `tasks.json` 的只读副本。不要同时运行两份代理基准，共用站点日志会互相覆盖。

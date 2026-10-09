@@ -336,3 +336,9 @@ test('拖动先到起点再到终点，同一操作反复绘制不回跳',contex
  overlay.interactionSurface.clear(request);assert.equal(cursor.style.display,'block');
  context.mock.timers.tick(500);assert.equal(cursor.style.transform,'translate(310px,210px)');overlay.remove();
 });
+// 中文注释：谷歌 One Tap / FedCM 登录框固定在右上角，控制卡片必须避开，保证“接管页面”可点。
+test('控制卡片固定在右下角，不与右上角登录框重叠',()=>{
+ const {doc}=fixture(),overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ const bar=overlay.host.shadow.children.find(x=>x.dataset.role==='status');
+ assert.equal(bar.style.bottom,'16px');assert.equal(bar.style.right,'16px');assert.equal(bar.style.top,undefined);
+});

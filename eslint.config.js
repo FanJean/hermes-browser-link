@@ -88,6 +88,8 @@ export default [
     ignores: [
       'node_modules/',
       '.ci/',
+      // 中文注释：.claude/ 是本机代理工具目录（含会话 worktree），已在 .gitignore 中，不属于源码。
+      '.claude/',
       '**/node_modules/',
       'artifacts/',
       'release/',

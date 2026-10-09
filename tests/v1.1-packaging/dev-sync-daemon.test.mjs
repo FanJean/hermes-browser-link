@@ -72,9 +72,10 @@ test('dev-sync 拒绝真实活 daemon 且不发送信号',async t=>{
 });
 
 async function syncFixture(t){
- const base=await mkdtemp(path.join(tmpdir(),'sync-guard-'));
+ // 中文注释：目录名保持很短，verify 的 scratch 下真实 daemon socket 路径仍需不超过 103 字节。
+ const base=await mkdtemp(path.join(tmpdir(),'sg-'));
  t.after(()=>rm(base,{recursive:true,force:true}));
- const repo=path.join(base,'repo'),home=path.join(base,'home');
+ const repo=path.join(base,'repo'),home=path.join(base,'h');
  await mkdir(path.join(repo,'scripts'),{recursive:true});
  for(const file of ['directory-swap.mjs','dev-sync-local.mjs','dev-sync-daemon.mjs','install-cli.py','install-executor.py'])
   await cp(path.resolve(import.meta.dirname,'../../scripts',file),path.join(repo,'scripts',file));

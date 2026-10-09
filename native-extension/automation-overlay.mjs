@@ -49,7 +49,8 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  Object.assign(ripple.style,{position:'fixed',display:'none',width:'26px',height:'26px',border:'2px solid #ff8a00',borderRadius:'50%',pointerEvents:'none',zIndex:'2',opacity:'0',transition:'opacity 180ms cubic-bezier(.23,1,.32,1),transform 180ms cubic-bezier(.23,1,.32,1)'});
  const bar=doc.createElement('div');bar.dataset.role='status';
  // 中文注释：窄窗口下将内边距计入现有宽度限制，避免解析状态栏超出视口。
- Object.assign(bar.style,{position:'fixed',top:'16px',right:'16px',width:'min(342px,calc(100vw - 32px))',boxSizing:'border-box',padding:'14px 16px',border:'1px solid rgba(255,255,255,.16)',borderRadius:'14px',background:'#172a20',color:'#fff',font:'13px/1.45 system-ui,sans-serif',boxShadow:'0 12px 35px rgba(0,0,0,.22)',pointerEvents:'auto'});
+ // 中文注释：控制卡片放右下角；谷歌 One Tap / FedCM 等登录框固定在右上角，放在上面会盖住“接管页面”按钮。
+ Object.assign(bar.style,{position:'fixed',bottom:'16px',right:'16px',width:'min(342px,calc(100vw - 32px))',boxSizing:'border-box',padding:'14px 16px',border:'1px solid rgba(255,255,255,.16)',borderRadius:'14px',background:'#172a20',color:'#fff',font:'13px/1.45 system-ui,sans-serif',boxShadow:'0 12px 35px rgba(0,0,0,.22)',pointerEvents:'auto'});
  const eyebrow=doc.createElement('div');eyebrow.textContent='HERMES · 浏览器任务';Object.assign(eyebrow.style,{fontSize:'10px',letterSpacing:'.09em',color:'#a9c9b6',marginBottom:'6px'});bar.append(eyebrow);
  const label=doc.createElement('div');label.textContent=states.waiting;Object.assign(label.style,{fontSize:'15px',fontWeight:'650'});bar.append(label);
  const detail=doc.createElement('div');detail.textContent='页面暂不可点击 · Ctrl+Alt+Shift+F12 接管';Object.assign(detail.style,{fontSize:'12px',color:'#bfd0c4',marginTop:'3px'});bar.append(detail);

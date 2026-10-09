@@ -50,9 +50,8 @@ async function run() {
   try {
     const begin=performance.now();session=await openRealSession({browser,label:'bench'});record('browser_launch',performance.now()-begin,true);
     await session.enableFullAccess();
-    // 中文注释：基准开始前持久化光标开关，动作测量不包含设置时间。
-    const cursorSetting=await session.ui.evaluate(`chrome.runtime.sendMessage({type:'visual_cursor',enabled:${cursor==='on'}})`);
-    if((cursorSetting?.result||cursorSetting)?.enabled!==(cursor==='on'))throw Error('cursor setting unconfirmed');
+    // 中文注释：1.7.0 起任务鼠标始终显示，扩展已移除 visual_cursor 开关；无法关闭时明确拒绝，不静默测成开启。
+    if(cursor==='off')throw Error('--cursor off is no longer supported: the task cursor is always on since 1.7.0');
     for(let rep=0;rep<reps;rep++) {
       let task;
       const fresh=name=>openTask(session,{owner:`bench-${rep}-${name}`,origins:[origin,apex],

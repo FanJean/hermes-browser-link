@@ -1,6 +1,6 @@
 # Hermes Browser Link
 
-**1.9.0 — macOS stable release.** Authorized browser tasks, automatic text and screenshot shielding, a persistent task cursor, Desktop Cookie mirroring, independent cloud browser access and stable-release updates.
+**1.9.1 — macOS stable release.** Authorized browser tasks, automatic text and screenshot shielding, a persistent task cursor, Desktop Cookie mirroring, independent cloud browser access and stable-release updates.
 
 ![Hermes Browser Link](docs/assets/readme-banner.png)
 
@@ -38,10 +38,10 @@ Shielding protects Browser Link outputs, leaves your visible webpage intact, and
 
 ## Quick start (3 steps)
 
-1. With Hermes and Python already installed (`hermes --version`, `python3 --version`), download the [Release asset](https://github.com/fanjing188/hermes-browser-link/releases) named `hermes-browser-link-1.9.0.zip` — not GitHub's **Source code (zip)**. No Node.js or npm is needed. **Program installed and enabled** confirms the local installation only, not a browser connection:
+1. With Hermes and Python already installed (`hermes --version`, `python3 --version`), download the [Release asset](https://github.com/fanjing188/hermes-browser-link/releases) named `hermes-browser-link-1.9.1.zip` — not GitHub's **Source code (zip)**. No Node.js or npm is needed. **Program installed and enabled** confirms the local installation only, not a browser connection:
 
    ```sh
-   curl -fL https://github.com/fanjing188/hermes-browser-link/releases/download/v1.9.0/hermes-browser-link-1.9.0.zip -o hermes-browser-link-1.9.0.zip && unzip hermes-browser-link-1.9.0.zip && cd hermes-browser-link-1.9.0 && ./install.sh
+   curl -fL https://github.com/fanjing188/hermes-browser-link/releases/download/v1.9.1/hermes-browser-link-1.9.1.zip -o hermes-browser-link-1.9.1.zip && unzip hermes-browser-link-1.9.1.zip && cd hermes-browser-link-1.9.1 && ./install.sh
    ```
 
 2. While the terminal waits, open `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** → paste the printed absolute **Extension directory** (not the extracted ZIP directory). The installer copies it to the clipboard when available. It waits up to 3 minutes; **Extension connected** confirms the connection. Ctrl+C skips only this wait. A timeout does not undo installation or require reinstalling; load the extension and run the printed **Check** command.
@@ -51,7 +51,7 @@ The first install enables **default** unless you pass `--profile <name>`, even i
 
 Upgrade: quit Chrome, Edge and Hermes, then run `./install.sh --upgrade` from the new package (automatic backup and rollback). If an older cloud launcher requires it, run `./install.sh --upgrade --maintenance` once, then reload the extension and restart Desktop. Uninstall: `./install.sh --uninstall` keeps task-private data; add `--purge` to delete it.
 
-Automatic updates accept stable releases; 1.9.0 is eligible. Upgrade an older installation manually once to install the current update source. After installing the update component, run `./install.sh --auto-update install`. It checks stable releases hourly and installs after browsers and Hermes exit. Reload the extension before starting Hermes again. Use `--auto-update check` for checks only, `--auto-update off` to disable, or `--update` to update now. See [automatic updates](docs/installation.md#automatic-updates--自动更新).
+Automatic updates accept stable releases; 1.9.1 is eligible. Upgrade an older installation manually once to install the current update source. After installing the update component, run `./install.sh --auto-update install`. It checks stable releases hourly and installs after browsers and Hermes exit. Reload the extension before starting Hermes again. Use `--auto-update check` for checks only, `--auto-update off` to disable, or `--update` to update now. See [automatic updates](docs/installation.md#automatic-updates--自动更新).
 
 [Source/manual installation, profiles and troubleshooting](docs/installation.md) · [Agent installation prompt](docs/agent-install-prompt.md).
 
