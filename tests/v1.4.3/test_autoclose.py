@@ -44,7 +44,7 @@ class Context:
 
 class AutocloseTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(dir='/tmp', prefix='ac-')
+        self.tmp = tempfile.TemporaryDirectory(prefix='ac-')
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name).resolve()
         self.now = 1_700_000_000.0

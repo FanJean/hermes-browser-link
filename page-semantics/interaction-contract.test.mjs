@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {createPageSemantics} from './index.js';
 
-function fixture(html){
+function fixture(html,options={}){
  const dom=new JSDOM(html,{pretendToBeVisual:true});
  dom.window.HTMLElement.prototype.getClientRects=()=>[{width:100,height:30}];
- const document=dom.window.document,semantics=createPageSemantics({document,taskId:'t',documentId:'d',leaseId:'l'});
+ const document=dom.window.document,semantics=createPageSemantics({document,taskId:'t',documentId:'d',leaseId:'l',...options});
  return {document,semantics,close(){semantics.revoke();dom.window.close();}};
 }
 test('角色采用首个有效非抽象 ARIA token，未知角色不覆盖原生角色',()=>{
@@ -54,5 +54,28 @@ test('动作清单改变参与增量快照，重新解析反映当前能力',()=
   const next=f.semantics.snapshot({baselineId:first.snapshotId});
   assert.equal(next.kind,'delta');assert.equal(next.items.length,1);assert.ok(!next.items[0].actions.includes('fill'));
   field.removeAttribute('aria-readonly');assert.ok(f.semantics.snapshot().items[0].actions.includes('fill'));
+ }finally{f.close();}
+});
+
+// 中文注释：只按标准字段语义识别登录步骤，输出用途而不是已填写的账号或秘密。
+test('登录快照区分账号、密码和验证码，敏感字段不声明普通填写能力',()=>{
+ const f=fixture('<input type="email" autocomplete="username" aria-label="账号" value="PRIVATE_ACCOUNT"><input type="password" autocomplete="current-password" aria-label="密码" value="PRIVATE_PASSWORD"><input autocomplete="one-time-code" aria-label="验证码" value="PRIVATE_CODE"><button>下一步</button>');
+ try{
+  const items=f.semantics.snapshot().items;
+  assert.deepEqual(items.slice(0,3).map(item=>item.fieldKind),['account','password','otp']);
+  assert.deepEqual(items.slice(0,3).map(item=>item.inputType),['email','password','text']);
+  assert.ok(items[0].actions.includes('fill'));
+  for(const item of items.slice(1,3)){assert.deepEqual(item.actions,[]);assert.equal(item.inputRequired,'vault_or_user');}
+  assert.ok(items[3].actions.includes('click'));assert.doesNotMatch(JSON.stringify(items),/PRIVATE_/);
+ }finally{f.close();}
+});
+
+test('登录解析使用宿主的同一敏感判定，文本型验证码也不声明普通填写',()=>{
+ let calls=0;
+ const f=fixture('<input aria-label="验证码">',{classifyField:node=>{calls++;return node.localName==='input'?'otp':null;}});
+ try{
+  const field=f.semantics.snapshot().items[0];assert.equal(field.fieldKind,'otp');
+  assert.deepEqual(field.actions,[]);assert.equal(field.inputRequired,'vault_or_user');
+  assert.equal(calls,1);
  }finally{f.close();}
 });

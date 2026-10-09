@@ -6,7 +6,6 @@ const ID = 'browser-link'
 const ROOT = '/browser-link'
 const POLL_MS = 3000
 let pluginCtx = null
-const browserAccessRequestGate = new Map()
 
 function api(path, options) {
   if (!pluginCtx || typeof pluginCtx.rest !== 'function') {
@@ -27,19 +26,6 @@ function browserLabel(browser) {
 
 function browserConsentStatus(browser) {
   return ['enabled', 'disabled', 'unknown'].includes(browser?.consentStatus) ? browser.consentStatus : 'unknown'
-}
-
-function accessRequestState(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).length !== 2 || !Object.prototype.hasOwnProperty.call(value, 'requestId') ||
-      !Object.prototype.hasOwnProperty.call(value, 'status') || typeof value.requestId !== 'string' ||
-      value.requestId.length === 0 || value.requestId.length > 128) return 'invalid'
-  // 中文注释：桥接确认扩展已打开确认页后才显示此状态。
-  if (value.status === 'confirmation_requested') return 'awaiting'
-  if (value.status === 'already_requested') return 'already_requested'
-  if (value.status === 'expired') return 'expired'
-  if (value.status === 'unknown') return 'unknown'
-  return 'invalid'
 }
 
 function button(label, onClick, options = {}) {
@@ -176,7 +162,6 @@ function CookieMirrorPanel({ browser, rows, fresh }) {
 
 function BrowserWork() {
   const browsers = useQuery({ queryKey: [ID, 'browsers'], queryFn: () => collection('/shared/browsers'), retry: false, refetchInterval: POLL_MS })
-  const [accessAttempts, setAccessAttempts] = useState({})
   const [primaryPending, setPrimaryPending] = useState(null)
   const [primaryError, setPrimaryError] = useState(false)
   const [cookiePanels, setCookiePanels] = useState({})
@@ -186,24 +171,6 @@ function BrowserWork() {
   const online = browsersFresh ? rows.filter(browser => browser.connected === true) : []
   const offline = browsersFresh ? rows.filter(browser => browser.connected === false) : []
   const unknown = browsersFresh ? rows.filter(browser => browser.connected !== true && browser.connected !== false) : []
-  const setAttempt = (instanceId, attempt) => {
-    browserAccessRequestGate.set(instanceId, attempt)
-    setAccessAttempts(current => ({ ...current, [instanceId]: attempt }))
-  }
-  const requestBrowserAccess = async browser => {
-    const instanceId = browser.instanceId
-    const consentStatus = browserConsentStatus(browser)
-    if (!browsersFresh || browser.connected !== true || browser.accessRequestSupported !== true || typeof instanceId !== 'string' || !instanceId) return
-    // 中文注释：重复点击只发送一次在途请求，授权结果仍以浏览器读回为准。
-    if (browserAccessRequestGate.get(instanceId)?.state === 'pending') return
-    setAttempt(instanceId, { consentStatus, state: 'pending' })
-    try {
-      const result = await api(`/shared/browsers/${encodeURIComponent(instanceId)}/access-request`, { method: 'POST', body: {} })
-      setAttempt(instanceId, { consentStatus, state: accessRequestState(result) })
-    } catch (_) {
-      setAttempt(instanceId, { consentStatus, state: 'unknown' })
-    }
-  }
   const setPrimary = async browser => {
     if (!browsersFresh || browser.connected !== true || primaryPending) return
     setPrimaryPending(browser.instanceId)
@@ -217,26 +184,19 @@ function BrowserWork() {
   }
   const browserRow = browser => {
     const consentStatus = browserConsentStatus(browser)
-    // 中文注释：桌面面板直接显示每个浏览器当前的两档权限模式。
-    const consent = ({ enabled: '全部访问', disabled: '智能审批 · 首次读取网站需确认', unknown: '模式待确认' })[consentStatus]
-    const actionLabel = ({ enabled: '切换模式', disabled: '切换模式', unknown: '查看模式' })[consentStatus]
-    const attempt = accessAttempts[browser.instanceId] || browserAccessRequestGate.get(browser.instanceId)
-    const disabled = !browsersFresh || browser.connected !== true || browser.accessRequestSupported !== true || attempt?.state === 'pending' || typeof browser.instanceId !== 'string' || !browser.instanceId
-    // 中文注释：请求反馈留在按钮内，避免管理访问后插入整段提示撑乱列表。
-    const compactAction = attempt?.consentStatus === consentStatus
-      ? ({ pending: '请求中…', awaiting: '确认页已打开', already_requested: '查看确认页', unknown: '状态待确认', expired: '重新请求', invalid: '状态待确认' })[attempt.state] || actionLabel
-      : actionLabel
+    // 中文注释：离线或未知状态不能用旧偏好证明当前授权；桌面不提供另一套授权入口。
+    const consent = browser.connected !== true ? '授权待确认'
+      : ({ enabled: '已授权 · 任务直接执行', disabled: '请在扩展中连接并授权', unknown: '授权待确认' })[consentStatus]
     return jsxs('div', { 'data-browser-row':'', 'data-browser-id':browser.instanceId, style:BROWSER_ROW_STYLE, children:[
       jsxs('div',{className:'min-w-0',children:[
         jsx('strong',{className:'text-sm text-(--ui-text-primary)',children:browserLabel(browser.browser)}),
         jsx('p',{className:'mt-1 text-xs text-(--ui-text-secondary)',children:`${browser.connected===true?'已连接':browser.connected===false?'未连接':'连接待确认'} · ${consent}${browser.primary===true?' · 主要链接':''}`})
       ]}),
       jsxs('div',{style:{display:'flex',gap:'0.5rem'},children:[
-        browser.accessRequestSupported===true?button(compactAction,()=>requestBrowserAccess(browser),{disabled}):null,
         browser.primary===true?null:button(primaryPending===browser.instanceId?'设置中…':'设为主要链接',()=>setPrimary(browser),
           {disabled:!browsersFresh||browser.connected!==true||!!primaryPending})
       ]}),
-      // 中文注释：入口单独占一行，避免在窄窗口挤压已有模式和主要链接按钮。
+      // 中文注释：入口单独占一行，避免在窄窗口挤压主要链接按钮。
       browser.connected===true&&browser.features?.includes('cookie_mirror_v1')?jsx('div',{style:{gridColumn:'1 / -1'},children:button(cookiePanels[browser.instanceId]?'收起 Cookie 镜像':'Cookie 镜像',()=>setCookiePanels(current=>({...current,[browser.instanceId]:!current[browser.instanceId]})))}):null,
       // 中文注释：收起只隐藏面板，保留同一请求的查询和结果，避免误发第二次镜像。
       cookiePanels[browser.instanceId]!==undefined?jsx('div',{hidden:!cookiePanels[browser.instanceId],style:{gridColumn:'1 / -1'},children:jsx(CookieMirrorPanel,{browser,rows,fresh:browsersFresh})}):null
@@ -252,7 +212,7 @@ function BrowserWork() {
     primaryError?jsx('p',{role:'alert',className:'text-xs text-(--ui-text-danger)',children:'主要链接设置未确认，请刷新后重试。'}):null,
     browsersFresh&&!rows.length?jsx('p', { className: 'text-sm text-(--ui-text-secondary)', children: '暂无浏览器，请打开浏览器扩展并连接 Hermes。' }):null,
     ...[['在线浏览器',online],['离线浏览器',offline],['状态待确认的浏览器',unknown]].filter(([,items])=>items.length).map(([label,items])=>jsxs('section', { 'aria-label':label,style:BROWSER_WORK_SECTION_STYLE,children:[jsx('h2',{style:BROWSER_WORK_HEADING_STYLE,children:label}),...items.map(browserRow)] },label)),
-    rows.some(row=>row.accessRequestSupported!==true)?jsx('p',{className:'text-xs text-(--ui-text-tertiary)',children:'请在浏览器扩展弹窗中查看权限模式。'}):null
+    jsx('p',{className:'text-xs text-(--ui-text-tertiary)',children:'连接授权在浏览器扩展中确认；普通任务无需逐项批准。接管、停止、凭据保护和 Cookie 镜像确认仍独立生效。'})
   ] })
 }
 

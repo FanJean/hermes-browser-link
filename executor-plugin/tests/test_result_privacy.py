@@ -121,6 +121,42 @@ class ResultPrivacyTests(unittest.TestCase):
         self.assertEqual(result['contentFilter']['unreadFrames'], 1)
         self.assertNotIn(CANARY, json.dumps(result))
 
+    def test_login_fields_and_surfaces_survive_without_values(self):
+        # 中文注释：用途和浮层归属穿过公共投影，任意字段值和原始属性仍拒绝。
+        field = {'ref': 'r', 'role': 'textbox', 'name': '密码', 'inputType': 'password',
+                 'fieldKind': 'password', 'inputRequired': 'vault_or_user', 'actions': [],
+                 'value': CANARY, 'autocomplete': CANARY,
+                 'context': [{'ref': 'layer', 'role': 'dialog', 'name': '登录', 'surfaceKind': 'modal', 'value': CANARY}]}
+        output, _ = self.invoke(True, 'run', {'task_id': 't', 'tab_id': 1, 'action': 'semantic_snapshot'}, {'items': [field]})
+        self.assertEqual(output['items'][0]['fieldKind'], 'password')
+        self.assertEqual(output['items'][0]['context'][0]['surfaceKind'], 'modal')
+        self.assertNotIn(CANARY, json.dumps(output))
+        parsed = {'regions': [{'sourceRef': 'layer', 'surfaceKind': 'floating', 'value': CANARY}],
+                  'forms': [{**field, 'sourceRef': 'field', 'surfaceRef': 'layer'}]}
+        output, _ = self.invoke(True, 'run', {'task_id': 't', 'tab_id': 1, 'action': 'page.parse'}, parsed)
+        self.assertEqual(output['regions'][0]['surfaceKind'], 'floating')
+        self.assertEqual(output['forms'][0]['surfaceRef'], 'layer')
+        self.assertEqual(output['forms'][0]['inputRequired'], 'vault_or_user')
+        self.assertEqual(output['forms'][0]['actions'], [])
+        self.assertNotIn(CANARY, json.dumps(output))
+
+    def test_popup_results_keep_candidate_identity_without_authority_or_oauth_url(self):
+        candidate = {'candidateRef': 'popup-ref', 'tabId': 2, 'windowId': 8, 'openerTabId': 1,
+                     'origin': 'https://accounts.example.test', 'windowType': 'popup', 'url': CANARY, 'nonce': CANARY}
+        raw = {'sourceTabId': 1, 'observationMs': 30000, 'candidates': [candidate], 'scope': CANARY}
+        output, _ = self.invoke(True, 'run', {'task_id': 't', 'tab_id': 1, 'action': 'popup_catalog'}, raw)
+        self.assertEqual(output['candidates'][0]['candidateRef'], 'popup-ref')
+        self.assertNotIn(CANARY, json.dumps(output))
+        output, _ = self.invoke(True, 'run', {'task_id': 't', 'tab_id': 1, 'action': 'popup_adopt', 'candidate_ref': 'popup-ref'},
+                                {'adopted': True, **candidate, 'sourceTabId': 1, 'cleanupOwned': False})
+        self.assertEqual(output['tabId'], 2)
+        self.assertIs(output['cleanupOwned'], False)
+        self.assertNotIn(CANARY, json.dumps(output))
+        task = load('runtime')._project_tool_result('browser_shared_get', {},
+                                                   {'id': 't', 'adoptedPopupTabIds': [2], 'agentTabIds': [1]})
+        self.assertEqual(task['adoptedPopupTabIds'], [2])
+        self.assertNotIn('agentTabIds', task)
+
     def test_complex_ui_error_summaries_reach_public_tool(self):
         # 中文注释：模拟 daemon 异常，检查 Hermes JSON 只含固定码与脱敏摘要。
         module = load('native_tools')
@@ -130,7 +166,7 @@ class ResultPrivacyTests(unittest.TestCase):
             'reference_target_ambiguous': {'candidates': [{'role': 'button', 'name': '保存', 'value': CANARY}]},
             'target_occluded': {'obstruction': {'role': 'dialog', 'name': '遮挡层', 'value': CANARY,
                 'closeButton': {'binding': binding, 'snapshotId': 's', 'ref': 'r', 'name': '关闭', 'value': CANARY}}},
-            **{code: {} for code in ('target_disabled', 'target_hidden', 'target_zero_size',
+            **{code: {} for code in ('popup_stale', 'target_disabled', 'target_hidden', 'target_zero_size',
                                     'target_out_of_viewport', 'closed_shadow_unavailable',
                                     'cross_origin_frame_unavailable')},
         }

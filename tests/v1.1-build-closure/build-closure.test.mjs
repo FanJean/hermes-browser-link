@@ -41,6 +41,7 @@ const sourceCopies = [
   // 中文注释：有界页面观察是 1.4.4 起的运行依赖，必须逐字复制并校验哈希。
   'page-observation.mjs',
   'vault.mjs',
+  'oauth-popups.mjs',
   'approval-notifier.mjs',
   'approval-panel.html',
   'approval-panel.css',

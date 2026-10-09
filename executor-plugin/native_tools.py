@@ -112,7 +112,7 @@ TOOL_SCHEMAS = {
         'parameters': _object({'task_id': _text(), 'action': {'type': 'string', 'enum': ['list', 'claim', 'cancel']},
                                'download_id': _text(64)}, ('task_id',))},
     'browser_shared_run': {
-        'description': '同一页需要两步以上（填表、翻页、采集、点击后读结果）请用一次 browser_shared_script；打开或导航后先看回执摘要，不足再读取页面；同一页不要混用 browser_exec。需要用户处理时列出标签页；会话结束会保留待处理页。' + '在任务的工作页执行一个动作。智能审批下首次读取每个网站需确认，之后同站读取直接执行；tabs 只返回任务标签。返回 approval_required 或 user_input_required 时，等用户处理后用相同 request_id 和参数再查一次，不要改参重发；outcome_unknown 为真时不要重试，先读页面核实。详见技能 browser-link:use-my-browser。',
+        'description': '同一页需要两步以上（填表、翻页、采集、点击后读结果）请用一次 browser_shared_script；打开或导航后先看回执摘要，不足再读取页面；同一页不要混用 browser_exec。需要用户处理时列出标签页；会话结束会保留待处理页。' + '在任务的工作页执行一个动作。浏览器连接授权后，普通读取、导航、写入和 Python 工作流直接执行，不逐项确认；tabs 只返回任务标签。除 popup_adopt 外，返回 approval_required 或 user_input_required 时，等用户处理后用相同 request_id 和参数再查一次，不要改参重发；popup_adopt 的等待只读查询当前任务，不重发接管。outcome_unknown 为真时不要重试，先读页面核实。详见技能 browser-link:use-my-browser。',
         'parameters': _object({'task_id': _text(), 'request_id': _text(),
             'action': {'type': 'string', 'enum': [
                 'navigate', 'snapshot', 'click', 'fill', 'press', 'screenshot', 'tabs', 'new_tab', 'api_request',
@@ -128,6 +128,7 @@ TOOL_SCHEMAS = {
             'clickMode': {'type': 'string', 'enum': ['open_link_in_task_tab', 'pointer'],
                           'description': 'ref_click 在可见页面确认可信 click 送达；后台页面使用已确认的 DOM 合成点击并标注回退原因，不激活标签页。click/ref_click 的 open_link_in_task_tab 模式显式打开符合条件的链接。'},
             'ref': _text(256), 'checked': {'type': 'boolean'},
+            'candidate_ref': _text(128),
             'frame_token': _text(128),
             'by': {'type': 'string', 'enum': ['value', 'label', 'index']},
             'values': {'type': 'array', 'maxItems': 100, 'items': {'oneOf': [
@@ -155,6 +156,7 @@ TOOL_SCHEMAS = {
 }
 # Explicit public capability gate, independent of smart/full approval modes.
 PUBLIC_ACTIONS = frozenset({
+    'popup_catalog', 'popup_adopt',
     'navigate', 'snapshot', 'click', 'fill', 'press', 'screenshot', 'tabs', 'new_tab',
     'page.parse', 'semantic_snapshot', 'frame_catalog', 'ref_click', 'ref_fill', 'ref_press', 'ref_set_checked', 'ref_select_option', 'api_request',
     'interaction.capture', 'interaction.bounds', 'interaction.click',
@@ -165,8 +167,9 @@ PUBLIC_ACTIONS = frozenset({
     'images', 'console', 'dialog',
 })
 _run_schema = TOOL_SCHEMAS['browser_shared_run']['parameters']
+TOOL_SCHEMAS['browser_shared_run']['description'] += ' popup_catalog 使用授权源 tab_id 发现刚创建的独立登录弹窗，只返回元数据；popup_adopt 传同一源 tab_id 和 candidate_ref，全部访问也必须明确确认。不得另开登录网址代替原弹窗；批准后用 browser_shared_get 核对当前代次和 adoptedPopupTabIds，再显式选择已知 candidate 的 tabId 并重新读取。脚本用 wait_pending 只读查询账本，返回 state=confirmed 而非 adopted/tabId 回执；不重发接管，不自动移动或关闭弹窗。元数据不等于当前页面访问证明。'
 TOOL_SCHEMAS['browser_shared_run']['description'] += (
-    ' 页面执行：智能审批逐项确认 js.evaluate / cdp.send / cdp.events，全部访问直接执行。'
+    ' 页面执行：连接授权后 js.evaluate / cdp.send / cdp.events 直接执行，不逐项确认。'
     '发生过凭据填写的页面不能运行任意 JS/CDP。原始脚本结果不做字段级脱敏。'
     ' read_page/page_text 返回 dict：读 page["items"] / page["elements"]，不能切片 dict；wait_for timeout 上限 60 秒。'
     ' JS 用 evaluate("(selector)=>document.querySelector(selector)?.textContent", "#result") 传值；isolated 共享 DOM，不共享网站 JS 全局变量，main 需明确理由且不自动切换。'
@@ -184,7 +187,7 @@ _run_schema['properties']['options']['properties'].update({
 for suffix, description in (
     ('get', '读取当前可信会话拥有的任务。'),
     ('cancel', '取消当前会话任务并释放其控制权，不影响其他任务或关闭用户标签页。'),
-    ('resume', '恢复已取消或需同步的任务（新代次）；新任务使用当前浏览器的智能审批或全部访问模式。不会重放结果不确定的动作。'),
+    ('resume', '恢复已取消或需同步的任务（新代次）；新任务沿用浏览器连接授权（全部访问），无需逐项批准；未连接或授权未确认时不执行。不会重放结果不确定的动作。'),
     ('close', '关闭任务并关掉它新建的工作页；结果看 cleanupState。每轮成功完成默认立即关闭工作页并收组；显式设置完成宽限时，同会话 browser_shared_* 调用取消计时；失败或中断立即按 handoff 结束。keep_tabs=true 仅用于本轮回复明确请用户现在去该页完成一步，必须同时传 handoff_reason（captcha/login/verification/final_submit/user_requested）。遇阻、结果未知、读不到或遮挡时记录 URL 和停点后普通关闭；真正交接时：撤销任务权限、移除遮罩并收组，但不关页面，cleanupReason 为 handed_to_user。cleanup_action=status 只读核实；仅当状态为 pending 且 cleanupRemainingCount 大于 0 时可用 retry。unknown 或 failed 不满足重试门禁，不能重试删页。不会关闭用户自己的页面。'),
 ):
     properties = {'task_id': _text()}
@@ -249,7 +252,7 @@ def _public(value, raw=None):
         if isinstance(row, dict) and row.get('state') == 'authorizing':
             row['message'] = '正在自动安装工作页授权，无需逐个批准；请用get查询ready状态后再执行，不要重复创建任务。'
         if isinstance(row, dict) and row.get('state') == 'pending_approval':
-            row['message'] = '浏览器扩展正在自动安装任务，请先用get查询ready状态，不要重复创建；就绪后用new_tab创建工作页。智能审批模式下，高风险动作仍需逐项批准。'
+            row['message'] = '浏览器扩展正在自动安装任务，请先用get查询ready状态，不要重复创建；就绪后用new_tab创建工作页。连接授权后的普通动作无需逐项批准，特殊确认和凭据保护仍生效。'
     return result
 
 
@@ -385,6 +388,7 @@ def _validate(tool_name, args):
     if tool_name == 'browser_shared_run':
         action = public['action']
         fields = {
+            'popup_catalog': (), 'popup_adopt': ('candidate_ref',),
             'tabs': (), 'new_tab': ('url',), 'navigate': ('url',), 'snapshot': (),
             'click': ('selector',), 'fill': ('selector', 'text'), 'press': ('selector', 'key'),
             'screenshot': (), 'api_request': ('url', 'fields'), 'page.parse': (), 'semantic_snapshot': (), 'frame_catalog': (),
@@ -465,6 +469,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                        'task_id': 'taskId', 'action': 'action', 'tab_id': 'tabId', 'url': 'url',
                        'selector': 'selector', 'text': 'text', 'key': 'key',
                        'clickMode': 'clickMode',
+                       'candidate_ref': 'candidateRef',
                        'fields': 'fields', 'http_method': 'httpMethod',
                        'options': 'options', 'binding': 'binding', 'snapshot_id': 'snapshotId',
                        'ref': 'ref', 'checked': 'checked', 'frame_token': 'frameToken', 'target_id': 'targetId',
@@ -569,6 +574,7 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                     'retryable': False, 'outcome_unknown': args.get('action') != 'list_sites'}, ensure_ascii=False)
             messages = {
                 'cookie_mirror_denied': 'Cookie 镜像请求不可用或已过期，请在扩展核实；不要重复执行。',
+                'popup_stale': '登录弹窗身份已变化或失效，未接管；请重新核对候选，不要重放确认。',
                 'approval_denied': '用户拒绝了这次操作，未执行。',
                 'user_input_declined': '用户选择不填写该敏感字段，未执行。',
                 'approval_expired': '这次确认已过期，未执行；不会自动重试。',
@@ -674,11 +680,11 @@ def make_tool_handler(tool_name, profile_runtime, *, host_bridge=None, backend_c
                 tool_name == 'browser_shared_downloads' and args.get('action', 'list') != 'cancel') or (
                 tool_name == 'browser_shared_close' and args.get('cleanup_action') == 'status') or (
                 tool_name == 'browser_shared_run' and args.get('action') in {
-                    'tabs', 'snapshot', 'page.parse', 'semantic_snapshot', 'frame_catalog', 'screenshot', 'api_request',
+                    'popup_catalog', 'tabs', 'snapshot', 'page.parse', 'semantic_snapshot', 'frame_catalog', 'screenshot', 'api_request',
                     'interaction.capture', 'interaction.bounds', 'cdp.events', 'images', 'console'})
             # user_input_declined: a manual-input request is never dispatched to the page.
             safe_before_dispatch = data.get('outcomeUnknown') is False and code in {
-                'stale_reference', 'stale_frame', 'target_unavailable', 'invalid_select_option',
+                'popup_stale', 'stale_reference', 'stale_frame', 'target_unavailable', 'invalid_select_option',
                 'invalid_target_state', 'document_changed', 'site_changed', 'cdp_method_denied', 'invalid_params',
                 'task_busy', 'target_not_owned', 'permission_denied', 'no_dialog', 'dialog_open', 'invalid_state', 'task_closed', 'instance_unavailable', 'task_preparing', 'browser_access_revoked',
                 'target_occluded', 'target_hit_unverified', 'target_unstable', 'unsupported_frame_transform', 'background_pointer_unavailable', 'radio_cannot_uncheck',

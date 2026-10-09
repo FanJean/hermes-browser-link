@@ -315,7 +315,7 @@ def network_stop(*, tab=None):
 
 @_tab_scoped
 def page_request(url, *, fields, method='GET', max_bytes=65536, timeout_ms=10000, tab=None):
-    """中文注释：同源 GET/HEAD 的有界 JSON 字段读取；智能审批先确认，不推断业务无副作用。"""
+    """中文注释：连接授权后直接执行同源 GET/HEAD 的有界 JSON 字段读取；不推断业务无副作用。"""
     import re
     if (not isinstance(url, str) or not 1 <= len(url) <= 4096 or method not in ('GET', 'HEAD')
             or type(max_bytes) is not int or not 1024 <= max_bytes <= 131072
@@ -446,6 +446,21 @@ def expect_navigation(url=None, *, timeout=15, tab=None):
 def frame_catalog(*, tab=None):
     """列出当前任务页的 frame 及可用的不透明引用。"""
     return _call('run', ['frame_catalog', {}])
+
+
+@_tab_scoped
+def popup_catalog(*, tab=None):
+    """仅列出授权源页新建的独立登录弹窗元数据，不读取内容或接管。"""
+    return _call('run', ['popup_catalog', {}])
+
+
+@_tab_scoped
+def popup_adopt(candidate_ref, *, tab=None):
+    """请求精确接管已有弹窗。先在同一脚本调用 popup_catalog 保留 candidate；
+    ApprovalRequired 后用 wait_pending(tab=source) 只读查询账本，不重发接管。
+    等待返回 state=confirmed，不是 adopted 回执；显式 use_tab(candidate['tabId'])
+    后重新 read_page 核实原窗口当前权限与内容，不另开登录网址。"""
+    return _call('run', ['popup_adopt', {'candidateRef': candidate_ref}])
 
 
 @_tab_scoped
@@ -716,7 +731,7 @@ def cancel_download(download_id):
 
 @_tab_scoped
 def js(expression, *, world='isolated', await_promise=True, timeout_ms=10000, frame_token=None, tab=None):
-    """在任务页运行 JavaScript；智能审批需确认，全部访问直接执行。"""
+    """在任务页运行 JavaScript；连接授权后直接执行，凭据与内容保护仍生效。"""
     if not isinstance(expression, str) or not expression or world not in ('isolated', 'main'):
         raise BrowserError('invalid JavaScript request', code='invalid_params', outcome_unknown=False)
     params = {'expression': expression, 'world': world, 'awaitPromise': bool(await_promise), 'timeoutMs': int(timeout_ms)}
@@ -732,7 +747,7 @@ def js(expression, *, world='isolated', await_promise=True, timeout_ms=10000, fr
 
 @_tab_scoped
 def cdp(method, frame_token=None, tab=None, **params):
-    """原始 CDP 方法；智能审批逐项确认，全部访问直接执行。"""
+    """原始 CDP 方法；连接授权后直接执行，任务租约、来源和凭据保护仍生效。"""
     if not isinstance(method, str) or not method:
         raise BrowserError('invalid CDP method', code='invalid_params', outcome_unknown=False)
     payload = {'method': method, 'params': params}
@@ -813,7 +828,12 @@ def load_checkpoint():
 
 @_tab_scoped
 def wait_pending(timeout_s=20.0, *, tab=None):
-    """After ApprovalRequired, wait for the user's decision on that same request."""
+    """Wait for the same approval/manual-input request (max 300 s).
+    Ordinary requests return their original receipt. Popup adoption queries only
+    the ledger and current scope, returning operation_status fields (state=confirmed),
+    never an adopted/tabId receipt. Select the catalog candidate with use_tab
+    and read_page next; confirmation is not current page-access proof. Unknown
+    outcomes, rejected approvals or changed scope never replay the adoption."""
     if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
             or not math.isfinite(timeout_s) or not 0 <= timeout_s <= 300):
         raise BrowserError('invalid approval wait timeout', code='invalid_params', outcome_unknown=False)
@@ -829,7 +849,7 @@ def wait_pending(timeout_s=20.0, *, tab=None):
 
 HELPERS = {name: globals()[name] for name in (
     'BrowserError', 'ApprovalRequired', 'UserInputRequired', 'new_tab', 'use_tab', 'current_tab', 'parallel', 'goto_url', 'wait_for_load', 'page_text',
-    'semantic_snapshot', 'frame_catalog', 'read_page', 'wait_for_element', 'click_element', 'fill_element', 'scroll',
+    'semantic_snapshot', 'frame_catalog', 'popup_catalog', 'popup_adopt', 'read_page', 'wait_for_element', 'click_element', 'fill_element', 'scroll',
     'click', 'fill', 'press', 'ref_click', 'ref_fill', 'ref_press', 'ref_set_checked', 'ref_select_option', 'upload_files',
     'screenshot', 'reconcile', 'operation_status', 'reconnect', 'load_checkpoint', 'wait_pending',
     'downloads', 'wait_for_download', 'claim_download', 'cancel_download',

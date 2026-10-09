@@ -1,4 +1,4 @@
-// 中文注释：真实浏览器中验证同源页面请求在智能审批与全部访问下的行为，所有数据均为合成值。
+// 中文注释：隔离浏览器验证连接授权的同源请求、停止撤权与同请求不重放；数据均为合成值。
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {openRealSession,openTask} from '../native-v2/real-session.mjs';
@@ -22,31 +22,33 @@ const origin=`http://127.0.0.1:${server.address().port}`;
 const browser=process.argv.includes('--edge')?'edge':'chrome';
 let session;
 try{
- session=await openRealSession({browser,label:'ap'});
+ session=await openRealSession({browser,label:'ap',compactScratch: true});
  await session.enableFullAccess();
  const task=await openTask(session,{origins:[origin],url:`${origin}/login`,title:'页面请求权限验收'});
  const command={world:'main',expression:'fetch("/api",{credentials:"include"}).then(response=>response.json())'};
- const full=await task.run('js.evaluate',command);
+ const full=await task.run('js.evaluate',command,'api-direct');
  assert.equal(full.value.count,1,JSON.stringify(full));
  assert.equal(full.value.authenticated,true);
  assert.equal(hits,1);
- // 中文注释：降级为智能审批后，页面请求先等待批准；拒绝不产生 HTTP 请求。
- await session.clickPopup('#access-toggle');
- await waitFor(async()=>(await session.rpc(task.owner,'get',{task_id:task.task.id})).activeMode==='smart',15000);
- const rejectedId='api-reject';
- assert.equal((await task.run('js.evaluate',command,rejectedId)).status,'approval_required');
- await session.approvePanel('reject','执行页面 JavaScript');
- const rejected=await task.run('js.evaluate',command,rejectedId);
- assert.equal(rejected.bridgeCode,'approval_denied',JSON.stringify(rejected));
+ assert.deepEqual(await task.run('js.evaluate',command,'api-direct'),full);
+ assert.equal(hits,1,'same request ID reads the result without another HTTP request');
+ assert.ok((await session.rpc('foreign-owner','run',{task_id:task.task.id,request_id:'foreign-api',action:'js.evaluate',tab_id:task.tabId,...command})).error);
+ assert.ok((await task.run('navigate',{url:'https://example.com/'})).error);
+ assert.equal(new URL(await task.read('location.href')).origin,origin);
+ // 中文注释：通过真实弹窗停止事件撤权，旧请求和新请求都不得产生 HTTP 请求。
+ await session.ui.evaluate(`chrome.tabs.update(${task.tabId},{active:true}).then(()=>chrome.runtime.sendMessage({type:'changed'}))`);
+ await waitFor(()=>session.ui.evaluate(`(()=>{const e=document.querySelector('#page-task');return !e.hidden&&e.dataset.taskId===${JSON.stringify(task.task.id)}&&!document.querySelector('#stop-task').disabled})()`),15000);
+ await session.ui.evaluate(`document.querySelector('#stop-task').click()`);
+ const stopped=await waitFor(async()=>{const current=await session.rpc(task.owner,'get',{task_id:task.task.id});return current.state==='cancelled'?current:null;},15000);
+ assert.equal(stopped.cleanupState,'succeeded',JSON.stringify(stopped));
+ assert.equal((await task.run('js.evaluate',command,'api-direct')).bridgeCode,'task_closed');
+ assert.equal((await task.run('js.evaluate',command,'api-after-stop')).bridgeCode,'task_closed');
  assert.equal(hits,1);
- const approvedId='api-approve';
- assert.equal((await task.run('js.evaluate',command,approvedId)).status,'approval_required');
- await session.approvePanel('approve','执行页面 JavaScript');
- const approved=await waitFor(async()=>{
-  const result=await task.run('js.evaluate',command,approvedId);
-  return result.value?.count===2?result:null;
- },15000);
- assert.equal(approved.value.count,2);
- assert.equal(approved.value.authenticated,true);
- console.log(JSON.stringify({browser,fullDirect:true,smartRejected:true,smartApproved:true,requestCount:hits}));
+ const fresh=await openTask(session,{origins:[origin],url:`${origin}/login`,title:'停止后新任务请求'});
+ const direct=await fresh.run('js.evaluate',command,'api-fresh');
+ assert.equal(direct.value.count,2,JSON.stringify(direct));
+ assert.equal(direct.value.authenticated,true);
+ assert.deepEqual(await fresh.run('js.evaluate',command,'api-fresh'),direct);
+ assert.equal(hits,2,'only explicitly new task action produces the second request');
+ console.log(JSON.stringify({browser,connectionAuthorized:true,fullDirect:true,taskOwnershipGuard:true,originGuard:true,stopRevokes:true,newTaskDirect:true,noReplay:true,requestCount:hits}));
 }finally{await session?.close();server.close();}

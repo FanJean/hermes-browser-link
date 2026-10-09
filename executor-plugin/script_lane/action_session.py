@@ -96,8 +96,9 @@ class ActionSession:
     """Translate a small Python action slice into the existing shared.run RPC.
 
     The object is in the trusted host, not agent_helpers.py or the model's
-    interpreter. One call can be pending; only resume_pending queries the exact
-    same payload and request ID. Any transport/receipt failure freezes the
+    interpreter. One call can be pending. Ordinary approvals query the same
+    payload; popup adoption waits query only its ledger and current scope.
+    Any transport/receipt failure freezes the
     session, including read calls, until the host explicitly reconciles it.
     """
 
@@ -119,6 +120,9 @@ class ActionSession:
         self._tab_sessions = {}
         self._rpc_lock = threading.RLock()
         self._resume_summary = None
+        self._popup_candidates = {}
+        self._pending_popup_scope = None
+        self._popup_waiting = False
 
     def _wait_for_resume(self):
         # 中文注释：暂停仅轮询同一任务状态，不重放已派发动作；代次或终态变化立即退出。
@@ -149,6 +153,7 @@ class ActionSession:
             self._wait_for_resume()
             task = self._runtime.call('shared.get', {'owner': self._owner, 'taskId': self._task_id})
         owned = [row.get('tabId') for row in task.get('workTabs', []) if isinstance(row, dict)]
+        owned += task.get('adoptedPopupTabIds', [])
         if (type(tab_id) is not int or tab_id not in owned or tab_id not in task.get('tabIds', [])
                 or task.get('state') not in {'ready', 'running'} or task.get('generation') != self._generation):
             raise ActionRejected('foreign_tab')
@@ -225,6 +230,15 @@ class ActionSession:
             raise OutcomeUnknown('previous outcome unknown; reconcile before any further action')
         if self._pending is not None:
             raise PendingAction('resolve the existing request before another action')
+        self._pending_popup_scope = None
+        self._popup_waiting = False
+        if action == 'popup_adopt':
+            task = self._runtime.call('shared.get', {'owner': self._owner, 'taskId': self._task_id})
+            self._pending_popup_scope = {
+                'instanceId': task.get('instanceId'), 'generation': task.get('generation'),
+                'modeGeneration': task.get('modeGeneration'),
+                'candidate': self._popup_candidates.get((arguments.get('tabId'), arguments.get('candidateRef'))),
+            }
         payload = {'owner': self._owner, 'taskId': self._task_id,
                    'requestId': secrets.token_urlsafe(18), 'action': action, **arguments}
         self._last_request_id = payload['requestId']
@@ -298,12 +312,65 @@ class ActionSession:
                 'outcome_unknown': unknown or any(child['outcome_unknown'] for child in children),
                 'resumeSummary': self._resume_summary or next((child.get('resumeSummary') for child in children if child.get('resumeSummary')), None)}
 
+    def _query_popup_pending(self):
+        # 中文注释：账本只证明原动作状态，不重取成功缓存，也不授予或续用旧权限。
+        payload, scope = self._pending, self._pending_popup_scope
+        assert payload is not None
+        try:
+            status = self.operation_status(payload['requestId'])
+            if status['state'] == 'unknown':
+                raise OutcomeUnknown('popup adoption outcome unknown; do not replay')
+            task = self._runtime.call('shared.get', {'owner': self._owner, 'taskId': self._task_id})
+            if (not scope or task.get('id') != self._task_id
+                    or task.get('instanceId') != self._instance_id
+                    or scope['instanceId'] != self._instance_id
+                    or task.get('generation') != self._generation
+                    or scope['generation'] != self._generation
+                    or status['generation'] != self._generation
+                    or type(scope['modeGeneration']) is not int
+                    or task.get('modeGeneration') != scope['modeGeneration']
+                    or task.get('state') not in {'ready', 'running', 'paused'}):
+                raise ActionRejected('approval_revoked')
+            if status['state'] == 'rejected':
+                # 中文注释：公开账本不含拒绝原因，不能把它猜成用户拒绝或过期。
+                raise ActionRejected('approval_revoked')
+            if status['state'] == 'confirmed':
+                candidate = scope['candidate']
+                if (not status['dispatched'] or not candidate
+                        or payload['tabId'] not in task.get('tabIds', [])
+                        or candidate['tabId'] not in task.get('tabIds', [])
+                        or candidate['tabId'] not in task.get('adoptedPopupTabIds', [])
+                        or candidate['origin'] not in task.get('allowedOrigins', [])):
+                    raise ActionRejected('approval_revoked')
+                if task['state'] == 'paused':
+                    self._wait_for_resume()
+                    return self._query_popup_pending()
+                self._pending = None
+                self._pending_kind = None
+                self._popup_waiting = False
+                return status
+        except ActionRejected as exc:
+            if exc.code in {'operation_status_unavailable', 'invalid_operation_status'}:
+                self._unknown = True
+                raise OutcomeUnknown('popup ledger unavailable; do not replay', code=exc.code) from exc
+            self._pending = None
+            self._pending_kind = None
+            self._popup_waiting = False
+            raise
+        except Exception as exc:
+            self._unknown = True
+            raise OutcomeUnknown('popup result query failed; do not replay',
+                                 code=getattr(exc, 'code', None)) from exc
+        raise ApprovalRequired('await existing popup approval; query its ledger only')
+
     def resume_pending(self) -> Any:
         if self._unknown:
             raise OutcomeUnknown('previous outcome unknown; do not replay')
         if self._pending is None:
             raise PendingAction('no pending request')
         payload = self._pending
+        if self._popup_waiting:
+            return self._query_popup_pending()
         try:
             while True:
                 try:
@@ -336,6 +403,8 @@ class ActionSession:
             if receipt.get('requestId') != payload['requestId']:
                 self._unknown = True
                 raise OutcomeUnknown('pending receipt requestId mismatch')
+            if self._pending_kind == 'popup_adopt':
+                self._popup_waiting = True
             if receipt['status'] == 'user_input_required':
                 raise UserInputRequired('the user must fill this sensitive field in the page')
             raise ApprovalRequired('await existing approval and query this same request')
@@ -350,6 +419,12 @@ class ActionSession:
             self._unknown = True
             raise OutcomeUnknown('native action rejected or uncertain; inspect the task state')
         kind = self._pending_kind
+        if kind == 'popup_catalog':
+            self._popup_candidates = {(payload['tabId'], row['candidateRef']):
+                                      {'tabId': row['tabId'], 'origin': row['origin']}
+                                      for row in receipt.get('candidates', [])
+                                      if isinstance(row, dict) and isinstance(row.get('candidateRef'), str)
+                                      and type(row.get('tabId')) is int and isinstance(row.get('origin'), str)}
         if kind == 'navigate' and (type(receipt.get('tabId')) is not int or receipt['tabId'] != self.tab_id):
             self._unknown = True
             raise OutcomeUnknown('navigate receipt did not match the bound tab')
@@ -468,6 +543,8 @@ class ActionSession:
     # keys each accepts. The daemon still validates values, origins, approval
     # and sensitive targets; this only narrows the surface.
     SCRIPT_ACTIONS = {
+        'popup_catalog': frozenset(),
+        'popup_adopt': frozenset({'candidateRef'}),
         # 中文注释：复用原生已开放的滚动动作，不新增脚本任意执行权限。
         'scroll': frozenset({'direction'}),
         'snapshot': frozenset(),

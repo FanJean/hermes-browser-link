@@ -25,18 +25,72 @@ class Element{
 }
 function fixture(){const body=new Element('body'),documentElement=new Element('html');documentElement.isConnected=true;const doc={location:{origin:'https://example.test'},documentElement,defaultView:{innerWidth:800,innerHeight:600,getComputedStyle:element=>({display:element.style.display||'block',opacity:element.style.opacity||'1'})},createElement:t=>new Element(t)};documentElement.append(body);return {doc,body};}
 const scope={taskId:'task-1',generation:2,tabId:7,origin:'https://example.test'};
-// 中文注释：解析反馈必须随真实步骤开始和结束，不能在接管、异常或输入时继续显示扫描。
-test('解析步骤显示扫描，切换状态立即收起，截图隐藏后可恢复',async()=>{
+// 中文注释：等待轮询的短读取不应闪出扫描光带；超过反馈门槛仍显示真实解析状态。
+test('短读取轮询不闪出扫描，持续解析才显示光带',context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
  const {doc}=fixture(),overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
  const scan=overlay.host.shadow.children.find(x=>x.dataset.role==='parsing-scan');
- assert.equal(scan.style.display,'none');
- for(const step of ['snapshot','semantic_snapshot','page.parse','page.observe','frame_catalog']){
-  overlay.update({state:'running',step});assert.equal(scan.style.display,'block',step);assert.equal(scan.style.pointerEvents,'none');
-  await overlay.withHidden(async()=>assert.equal(overlay.host.style.opacity,'0'));
-  assert.notEqual(overlay.host.style.opacity,'0');assert.equal(scan.style.display,'block');
-  for(const state of ['paused','pausing','unknown','disconnected','waiting']){overlay.update({state});assert.equal(scan.style.display,'none',state);overlay.update({state:'running',step});}
+ const visible=()=>scan.style.display==='block'&&scan.style.opacity!=='0';
+ for(let i=0;i<20;i++){
+  overlay.update({state:'running',step:'page.observe'});
+  context.mock.timers.tick(16);assert.equal(visible(),false,'短读取不能启动扫描');
+  overlay.update({state:'waiting'});context.mock.timers.tick(40);assert.equal(visible(),false);
  }
- overlay.update({state:'running',step:'ref_click'});assert.equal(scan.style.display,'none');overlay.remove();
+ overlay.update({state:'running',step:'semantic_snapshot'});context.mock.timers.tick(120);assert.equal(visible(),true);
+ overlay.update({state:'paused'});assert.equal(visible(),false);context.mock.timers.tick(1000);assert.equal(visible(),false);
+ overlay.remove();
+});
+// 中文注释：读取种类切换不能隐藏再显示光带，否则 CSS 动画会从顶部反复重来。
+test('连续解析切换步骤不重启光带，旧完成定时器不能清掉新扫描',context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
+ const {doc}=fixture(),overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ const scan=overlay.host.shadow.children.find(x=>x.dataset.role==='parsing-scan');
+ const changes=[];let display=scan.style.display;
+ Object.defineProperty(scan.style,'display',{get:()=>display,set:value=>{changes.push(value);display=value;}});
+ overlay.update({state:'running',step:'semantic_snapshot'});context.mock.timers.tick(120);assert.equal(scan.style.display,'block');
+ changes.length=0;
+ for(const step of ['page.parse','page.observe','snapshot','frame_catalog']){
+  overlay.update({state:'running',step});context.mock.timers.tick(20);assert.equal(scan.style.display,'block');
+ }
+ assert.deepEqual(changes,[],'连续解析不应切换 display 或重启动画');
+ overlay.showParsedElements([{x:20,y:80,width:120,height:36}]);overlay.update({state:'waiting'});
+ context.mock.timers.tick(600);overlay.update({state:'running',step:'page.parse'});context.mock.timers.tick(220);
+ assert.equal(scan.style.display,'block');assert.equal(scan.style.opacity,'1');overlay.remove();
+});
+// 中文注释：生产每个动作都经过 waiting；等待期间隐藏并暂停动画，下个读取续播而非重新创建。
+test('真实动作之间经过 waiting，光带隐藏但不重新创建动画',context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
+ const {doc}=fixture(),overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ const scan=overlay.host.shadow.children.find(x=>x.dataset.role==='parsing-scan'),beam=scan.children[0];
+ const visible=()=>scan.style.display==='block'&&scan.style.opacity!=='0';
+ overlay.update({state:'running',step:'semantic_snapshot'});context.mock.timers.tick(120);assert.equal(visible(),true);
+ const changes=[];let display=scan.style.display;
+ Object.defineProperty(scan.style,'display',{get:()=>display,set:value=>{changes.push(value);display=value;}});
+ for(const step of ['semantic_snapshot','page.parse','page.observe']){
+  overlay.update({state:'waiting'});assert.equal(visible(),false);
+  context.mock.timers.tick(1000);assert.equal(visible(),false);
+  assert.deepEqual(changes,[],'waiting 不能用 display:none 销毁扫描动画');
+  assert.equal(beam.style.animationPlayState,'paused');
+  overlay.update({state:'running',step});context.mock.timers.tick(119);assert.equal(visible(),false);
+  context.mock.timers.tick(1);assert.equal(visible(),true);assert.equal(beam.style.animationPlayState,'running');
+  assert.deepEqual(changes,[],'下个真实读取不能重新创建扫描动画');
+ }
+ overlay.remove();
+});
+// 中文注释：解析反馈必须随真实步骤开始和结束，不能在接管、异常或输入时继续显示扫描。
+test('解析步骤显示扫描，切换状态立即收起，截图隐藏后可恢复',async context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
+ const {doc}=fixture(),overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ const scan=overlay.host.shadow.children.find(x=>x.dataset.role==='parsing-scan');
+ const visible=()=>scan.style.display==='block'&&scan.style.opacity!=='0';
+ assert.equal(visible(),false);
+ for(const step of ['snapshot','semantic_snapshot','page.parse','page.observe','frame_catalog']){
+  overlay.update({state:'running',step});context.mock.timers.tick(120);assert.equal(visible(),true,step);assert.equal(scan.style.pointerEvents,'none');
+  await overlay.withHidden(async()=>assert.equal(overlay.host.style.opacity,'0'));
+  assert.notEqual(overlay.host.style.opacity,'0');assert.equal(visible(),true);
+  for(const state of ['paused','pausing','unknown','disconnected','waiting']){overlay.update({state});assert.equal(visible(),false,state);overlay.update({state:'running',step});}
+ }
+ overlay.update({state:'running',step:'ref_click'});assert.equal(visible(),false);overlay.remove();
 });
 // 中文注释：只绘制实际解析回执中的可见矩形；完成后的短暂反馈不阻塞任务，旧定时器不能清掉新扫描。
 test('解析元素边框有数量和矩形限制，新步骤或异常清除旧完成反馈',context=>{

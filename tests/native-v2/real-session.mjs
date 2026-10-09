@@ -1,6 +1,6 @@
 // 中文注释：真实 Chrome/Edge 临时 profile 验收的公共启动流程；矩阵脚本复用它，不接触个人浏览器配置。
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
+import {createHash, randomBytes} from 'node:crypto';
 import {spawn, execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {copyFile, mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
@@ -13,9 +13,24 @@ const exec = promisify(execFile);
 export const root = path.resolve(import.meta.dirname, '../..');
 const python = process.env.HERMES_PYTHON || path.join(process.env.HOME, '.hermes/hermes-agent/venv/bin/python');
 const helper = path.join(import.meta.dirname, 'real-helper.py');
-// 中文注释：macOS 默认 TMPDIR 过长，会让 bridge.sock 超出 AF_UNIX 路径上限；隔离验收固定使用短临时根目录。
-// 必须解析 /tmp 符号链接，浏览器按真实路径计算解包扩展 ID，主机注册必须使用同一 ID。
-const scratch = realpathSync(process.platform === 'darwin' ? '/tmp' : tmpdir());
+// 中文注释：默认保留旧短临时根目录；compactScratch 只使用指定 TMPDIR，延迟解析以免触及 /tmp。
+const scratchRoot = compactScratch => {
+  if (compactScratch && !process.env.TMPDIR) throw Error('compactScratch requires an explicit TMPDIR');
+  return realpathSync(compactScratch ? process.env.TMPDIR : process.platform === 'darwin' ? '/tmp' : tmpdir());
+};
+
+async function createCompactHome(scratch) {
+  // 中文注释：四位随机名直接位于 scratch 下，独占创建；真实绝对 socket 路径按字节检查。
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const home = path.join(scratch, randomBytes(2).toString('hex'));
+    if (Buffer.byteLength(path.join(home, 'plugin-data/browser-link-native/bridge.sock')) > 103) {
+      throw Error('TMPDIR is too long for a compact fixture bridge socket');
+    }
+    try { await mkdir(home, {mode: 0o700}); return home; }
+    catch (error) { if (error.code !== 'EEXIST') throw error; }
+  }
+  throw Error('could not allocate a private compact fixture home');
+}
 export const browserPaths = {
   chrome: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   edge: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
@@ -31,32 +46,47 @@ export async function helperCall(...args) {
   return JSON.parse(stdout.trim().split('\n').filter(Boolean).at(-1) || '{}');
 }
 
-// 中文注释：启动一个临时 profile 浏览器并完成扩展连接与完整访问授权；restart() 用同一 profile 重启浏览器。
-export async function openRealSession({browser, packageMode = false, hostRules = '', label = 'm', headed = false, workWindowMode, idleCloseSeconds, taskIdleTimeoutSeconds, sharedWith = null}) {
+// 中文注释：离线 staging 与真实启动共用布局，dispose() 只删除本次独占创建的目录。
+export async function stageRealSession({browser, packageMode = false, label = 'm', compactScratch = false, sharedWith = null}) {
+  const scratch = scratchRoot(compactScratch);
+  if (compactScratch && path.basename(label) !== label) throw Error('compactScratch label must not contain a path');
   const work = await mkdtemp(path.join(scratch, `${label}${browser[0]}-`));
-  const packageRoot = path.join(work, 'package');
-  const extensionRoot = packageMode ? path.join(packageRoot, 'native-extension') : path.join(work, 'dist-native');
-  if (packageMode) await exec(process.execPath, [path.join(root, 'scripts/package-executor.mjs'), '--source', root, '--output', packageRoot], {cwd: root, timeout: 120000});
-  else await exec(process.execPath, [path.join(root, 'native-extension/build.mjs'), extensionRoot], {cwd: root});
-  const profile = path.join(work, 'profile');
-  const downloadsDir = path.join(work, 'downloads');
-  await mkdir(path.join(profile, 'Default'), {recursive: true}); await mkdir(downloadsDir, {recursive: true});
-  await writeFile(path.join(profile, 'Default', 'Preferences'), JSON.stringify({download: {default_directory: downloadsDir, prompt_for_download: false, directory_upgrade: true}}));
-  // 中文注释：1.4.0 起扩展 ID 由 manifest key 固定；无 key 时才按加载路径推算。
-  const manifestKey = JSON.parse(await readFile(path.join(extensionRoot, 'manifest.json'), 'utf8')).key;
-  const expectedExtensionId = [...(manifestKey ? createHash('sha256').update(Buffer.from(manifestKey, 'base64')).digest('hex') : sha256(path.resolve(extensionRoot))).slice(0, 32)]
-    .map(digit => String.fromCharCode(97 + Number.parseInt(digit, 16))).join('');
-  let staged;
+  let compactHome;
+  const dispose = async () => {
+    await rm(work, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});
+    if (compactHome) await rm(compactHome, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});
+  };
   try {
+    if (compactScratch && !sharedWith) compactHome = await createCompactHome(scratch);
+    const packageRoot = path.join(work, 'package');
+    const extensionRoot = packageMode ? path.join(packageRoot, 'native-extension') : path.join(work, 'dist-native');
+    if (packageMode) await exec(process.execPath, [path.join(root, 'scripts/package-executor.mjs'), '--source', root, '--output', packageRoot], {cwd: root, timeout: 120000});
+    else await exec(process.execPath, [path.join(root, 'native-extension/build.mjs'), extensionRoot], {cwd: root});
+    const profile = path.join(work, 'profile');
+    const downloadsDir = path.join(work, 'downloads');
+    const temp = path.join(work, 'tmp');
+    await mkdir(path.join(profile, 'Default'), {recursive: true});
+    await mkdir(downloadsDir, {recursive: true}); await mkdir(temp, {recursive: true});
+    await writeFile(path.join(profile, 'Default', 'Preferences'), JSON.stringify({download: {default_directory: downloadsDir, prompt_for_download: false, directory_upgrade: true}}));
+    // 中文注释：1.4.0 起扩展 ID 由 manifest key 固定；无 key 时才按加载路径推算。
+    const manifestKey = JSON.parse(await readFile(path.join(extensionRoot, 'manifest.json'), 'utf8')).key;
+    const expectedExtensionId = [...(manifestKey ? createHash('sha256').update(Buffer.from(manifestKey, 'base64')).digest('hex') : sha256(path.resolve(extensionRoot))).slice(0, 32)]
+      .map(digit => String.fromCharCode(97 + Number.parseInt(digit, 16))).join('');
     const origins = JSON.stringify([`chrome-extension://${expectedExtensionId}/`]);
-    // 中文注释：Cookie 镜像双浏览器验收共享临时 daemon，仍隔离浏览器 profile。
-    staged = sharedWith ? sharedWith.staged : packageMode ? await helperCall('stage_package', work, packageRoot, origins) : await helperCall('stage', work, origins);
+    const homeArgs = compactHome ? [compactHome] : [];
+    // 中文注释：共享 fixture 不拥有源 Hermes home，关闭时不能删除它。
+    const staged = sharedWith ? sharedWith.staged : packageMode ? await helperCall('stage_package', work, packageRoot, origins, ...homeArgs) : await helperCall('stage', work, origins, ...homeArgs);
     const profileManifest = path.join(profile, 'NativeMessagingHosts/com.hermes.browser_link.json');
     await mkdir(path.dirname(profileManifest), {recursive: true});
     await copyFile(staged.manifests[browser === 'chrome' ? 0 : 1], profileManifest);
-  } catch (error) { await rm(work, {recursive: true, force: true}); throw error; }
-  const temp = path.join(work, 'tmp');
-  await mkdir(temp, {recursive: true});
+    return {work, profile, downloadsDir, temp, compactHome, staged, extensionRoot, expectedExtensionId, dispose};
+  } catch (error) { await dispose(); throw error; }
+}
+
+// 中文注释：启动临时 profile；compactScratch=true 可把所有 fixture 产物限制在指定 TMPDIR 内。
+export async function openRealSession({browser, packageMode = false, hostRules = '', label = 'm', headed = false, workWindowMode, idleCloseSeconds, taskIdleTimeoutSeconds, sharedWith = null, compactScratch = false}) {
+  const fixture = await stageRealSession({browser, packageMode, label, sharedWith, compactScratch});
+  const {work, profile, downloadsDir, temp, compactHome, staged, extensionRoot, expectedExtensionId} = fixture;
   // 中文注释：浏览器必须继承真实 HOME（见 tests/v1-launch-safety），只把 HERMES_HOME/TMPDIR 指到临时目录。
   const browserEnv = {
     HOME: process.env.HOME, HERMES_HOME: staged.hermesHome, TMPDIR: temp,
@@ -66,7 +96,7 @@ export async function openRealSession({browser, packageMode = false, hostRules =
   if(workWindowMode!==undefined)browserEnv.HERMES_BROWSER_WORK_WINDOW=workWindowMode;
   if(idleCloseSeconds!==undefined)browserEnv.HERMES_BROWSER_IDLE_CLOSE_SECONDS=String(idleCloseSeconds);
   if(taskIdleTimeoutSeconds!==undefined)browserEnv.HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS=String(taskIdleTimeoutSeconds);
-  const session = {work, profile, downloadsDir, staged, browser, extensionId: expectedExtensionId, logs: ''};
+  const session = {work, profile, downloadsDir, compactHome, staged, browser, extensionId: expectedExtensionId, logs: ''};
   let proc, cdp, ui, popupTarget, base;
 
   const activateExtensionTab = async (client, targetId) => {
@@ -119,11 +149,8 @@ export async function openRealSession({browser, packageMode = false, hostRules =
   // 中文注释：只最小化当前临时 profile 的普通窗口，复现源浏览器处于后台。
   session.background = () => ui.evaluate(`chrome.windows.getAll({windowTypes:['normal']}).then(windows=>Promise.all(windows.map(win=>chrome.windows.update(win.id,{state:'minimized'})))).then(()=>true)`);
   session.enableFullAccess = async () => {
-    await ui.evaluate(`chrome.storage.local.set({browserFullConsent:{version:1,enabled:false}})`);
-    await waitFor(() => ui.evaluate(`document.querySelector('#access-toggle').disabled===false`));
-    // 中文注释：权限开关直接展示，通过真实点击确认开启全部访问。
-    await session.clickPopup('#access-toggle'); await session.clickPopup('#confirm-enable');
-    await waitFor(() => ui.evaluate(`document.querySelector('#access-toggle').getAttribute('aria-checked')==='true'`));
+    // 中文注释：保留 runner 共用入口；连接授权已包含直接访问，不再模拟第二次授权。
+    await waitFor(() => ui.evaluate(`chrome.runtime.sendMessage({type:'popup_status'}).then(r=>r.result?.connected===true&&r.result?.browserFullConsentStatus==='enabled')`));
   };
   session.rpc = (owner, suffix, args = {}) => helperCall('rpc', sharedWith?.work || work, owner, suffix, JSON.stringify(args));
   session.instance = async () => {
@@ -191,8 +218,8 @@ export async function openRealSession({browser, packageMode = false, hostRules =
   session.close = async () => {
     const cleanupError = sharedWith ? null : await helperCall('cleanup', work).then(() => null, error => error);
     await stopBrowser();
-    if (process.env.KEEP_NATIVE_V2_SCRATCH === '1') console.error('retained fixture:', work);
-    else await rm(work, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});
+    if (process.env.KEEP_NATIVE_V2_SCRATCH === '1') console.error('retained fixture:', work, compactHome || '');
+    else await fixture.dispose();
     if (cleanupError) throw cleanupError;
   };
   try { await launch(); } catch (error) { await session.close().catch(() => {}); throw error; }

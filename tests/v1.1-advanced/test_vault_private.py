@@ -17,6 +17,7 @@ from vault_client import call  # noqa: E402
 from vault_private import VaultPrivateService  # noqa: E402
 from vault_adapter.adapter import VaultAdapter  # noqa: E402
 from vault_adapter.integration import NativeVaultPrivatePort  # noqa: E402
+from tests.support import temporary_bridge_home  # noqa: E402
 
 
 class FakeDaemon:
@@ -52,13 +53,7 @@ class FakeDaemon:
 
 class VaultPrivateTests(unittest.TestCase):
     def setUp(self):
-        # 中文注释：隔离门禁的 HOME 路径较长；套接字测试使用其上层 scratch 短路径并在退出时清理。
-        # 中文注释：遵循门禁 TMPDIR 的短路径，不推导或写入用户 Hermes 暂存目录。
-        scratch = Path(tempfile.gettempdir()).resolve()
-        scratch.mkdir(parents=True, exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(dir=scratch, prefix="vp-")
-        self.addCleanup(self.temp.cleanup)
-        self.home = Path(self.temp.name)
+        self.home = self.enterContext(temporary_bridge_home())
         self.daemon = FakeDaemon(self.home)
         self.service = VaultPrivateService(self.daemon)
         self.service.start()
@@ -66,6 +61,11 @@ class VaultPrivateTests(unittest.TestCase):
         self.scope = {"sessionId": "session", "owner": "owner", "taskId": "task",
                       "instanceId": "browser", "generation": 3, "modeGeneration": 2,
                       "tabId": 7, "allowedOrigins": ["https://example.test"]}
+
+    def test_fixture_uses_owned_tmpdir_and_bindable_private_socket(self):
+        self.assertEqual(self.home.parent, Path(tempfile.gettempdir()).resolve())
+        self.assertLessEqual(len(str(self.service.socket_path).encode()), 103)
+        self.assertTrue(self.service.socket_path.is_socket())
 
     def test_secret_uses_private_socket_and_nonce_is_single_use(self):
         # 中文注释：普通 RPC 不提供 Vault 方法；私有填写只回传数量并一次性消耗检查 nonce。

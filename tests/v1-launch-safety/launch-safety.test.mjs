@@ -32,8 +32,18 @@ function verify(source) {
   const text = node => source.slice(node.start, node.end).replace(/\s+/g, '');
   const calls = all.filter(n => n.type === 'CallExpression');
   const declarations = all.filter(n => n.type === 'VariableDeclarator');
+  const fixture=declarations.find(n=>n.id.name==='fixture'&&n.init?.argument?.callee?.name==='stageRealSession');
+  if(fixture){
+    const imported=ast.body.find(n=>n.type==='ImportDeclaration'&&n.source.value==='./real-session.mjs');
+    assert.ok(imported?.specifiers.some(n=>n.imported?.name==='stageRealSession'&&n.local.name==='stageRealSession'),'reviewed staging helper only');
+    const fields=fixture.init.argument.arguments[0].properties;
+    assert.deepEqual(fields.map(n=>n.key.name).sort(),['browser','compactScratch','label','packageMode']);
+    assert.equal(text(fields.find(n=>n.key.name==='compactScratch').value),'true');
+    assert.ok(declarations.some(n=>n.id.type==='ObjectPattern'&&n.init?.name==='fixture'&&['work','staged'].every(key=>n.id.properties.some(p=>p.key.name===key&&p.value.name===key))),'launch uses staged owned paths');
+    verifyAdditional(sourceFor('native-v2/real-session.mjs'));
+  }
   const scratch = declarations.find(n => n.id.name === 'scratch');
-  assert.equal(text(scratch.init), "path.resolve(process.env.HOME,'.hermes/cache/scratch')", 'absolute scratch only');
+  if(!fixture)assert.equal(text(scratch.init), "path.resolve(process.env.HOME,'.hermes/cache/scratch')", 'absolute scratch only');
   const launches = calls.filter(n => n.callee.name === 'spawn' && ['binary', 'choices[browser]'].includes(text(n.arguments[0])));
   assert.equal(launches.length, 1, 'exactly one recognized browser launch');
   const launch = launches[0];
@@ -54,7 +64,7 @@ function verify(source) {
   if (work) {
     assert.equal(work.init.type, 'AwaitExpression');
     assert.match(text(work.init), /^awaitmkdtemp\(path.join\(scratch,/u, 'fresh work, never a reusable PID directory');
-  } else {
+  } else if(!fixture) {
     const installs = all.filter(n => n.type === 'NewExpression' && n.callee.name === 'PackageInstall');
     assert.equal(installs.length, 2, 'serial and concurrent package launch');
     for (const install of installs) assert.match(text(install.arguments[0]), /^awaitmkdtemp\(path.join\(scratch,/u);
@@ -74,9 +84,9 @@ function verify(source) {
     assert.deepEqual(fields.map(p => p.key.name).sort(), ['HERMES_HOME','HOME','LANG','PATH','TMPDIR']);
     const value = key => text(fields.find(p => p.key.name === key).value);
     assert.equal(value('HOME'), 'process.env.HOME', 'browser keeps real HOME for the macOS keychain');
-    assert.equal(value('HERMES_HOME'), "path.join(scratchHome,'.hermes')");
+    assert.equal(value('HERMES_HOME'), fixture?'staged.hermesHome':"path.join(scratchHome,'.hermes')");
     assert.equal(value('TMPDIR'), 'temp');
-    assert.ok(["path.join(work,'h')", "path.join(work,'home')"].includes(text(declarations.find(n => n.id.name === 'scratchHome').init)));
+    if(!fixture)assert.ok(["path.join(work,'h')", "path.join(work,'home')"].includes(text(declarations.find(n => n.id.name === 'scratchHome').init)));
     assert.equal(text(declarations.find(n => n.id.name === 'temp').init), "path.join(work,'tmp')");
     assert.equal(value('PATH'), "process.env.PATH||'/usr/bin:/bin:/usr/sbin:/sbin'");
     assert.equal(value('LANG'), "process.env.LANG||'en_US.UTF-8'");
@@ -92,6 +102,25 @@ function verify(source) {
   }
 }
 for (const file of runners) test(`temporary-profile launch policy: ${file}`, () => verify(sourceFor(file)));
+test('staged Native launcher rejects live homes, profiles and unowned staging', () => {
+  const source=sourceFor('native-v2/real-native-v2.mjs');
+  verify(source);
+  for(const [from,to] of [
+    ['HOME: process.env.HOME','HOME: work'],
+    ['HERMES_HOME: staged.hermesHome','HERMES_HOME: process.env.HERMES_HOME'],
+    ['TMPDIR: temp','TMPDIR: process.env.TMPDIR'],
+    ["path.join(work,'profile')","path.join(process.env.HOME,'profile')"],
+    ['compactScratch: true','compactScratch: false'],
+    ['stageRealSession({browser, packageMode, label:\'n\', compactScratch: true})','stageRealSession({browser, packageMode, label:\'n\', compactScratch: true, sharedWith: live})'],
+    ["import {stageRealSession} from './real-session.mjs';","import {stageRealSession} from './unreviewed-session.mjs';"],
+    ["'--use-mock-keychain',",''],
+    ["'--password-store=basic',",''],
+  ]){
+    const changed=source.replace(from,to);
+    assert.notEqual(changed,source);
+    assert.throws(()=>verify(changed));
+  }
+});
 // These are mitigation checks, not a macOS keychain sandbox or incident diagnosis.
 test('negative fixtures reject flags in comments, personal profile, HOME override and reused work', () => {
   const source = sourceFor('approval-integration/real-approval.mjs');

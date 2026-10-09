@@ -179,7 +179,7 @@ class VaultPrivateService:
             if (not task or task["owner"] != scope["owner"] or task["instanceId"] != scope["instanceId"]
                     or task["generation"] != scope["generation"] or task["modeGeneration"] != scope["modeGeneration"]
                     or task["allowedOrigins"] != scope["allowedOrigins"] or task["state"] != "ready"
-                    or scope["tabId"] not in task.get("agentTabIds", [])
+                    or (scope["tabId"] not in task.get("agentTabIds", []) and scope["tabId"] not in task.get('adoptedPopupTabIds', []))
                     or daemon.tab_leases.get((scope["instanceId"], scope["tabId"])) != task["id"]):
                 raise ValueError("Vault task changed")
             if scope["tabId"] in task.get("scriptedTabs", []):

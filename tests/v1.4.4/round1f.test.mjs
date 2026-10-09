@@ -106,6 +106,7 @@ test('技能长度、直接 open、传值、同脚本读回和输出约定均有
  const batch=await readFile('executor-plugin/skills/batch-scrape/SKILL.md','utf8');
  for(const term of ['arguments','isolated','main','satisfied','nextCursor','workspace','elements'])assert.ok(batch.includes(term),term);
  // 中文注释：共享语义库增加 slot、上下文及 AX 绑定；仍限制一次安装且保持后续调用的小消息。
- // 中文注释：共享控件描述只随冷安装发送，新增角色与动作规则的声明仍限制在 73KB 内。
- assert.ok(Buffer.byteLength(semanticWorldDeclaration)<=73000);
+ // 中文注释：账号字段、登录浮层和宿主 classifier 使声明由 HEAD 72883B 增至 75313B（+2430B），只随冷安装发送。
+ // 中文注释：76KB 上限保留 687B 余量；安装次数与八次热调用 <6KB 由 cdp-budget.test.mjs 独立守住。
+ assert.ok(Buffer.byteLength(semanticWorldDeclaration)<=76000);
 });

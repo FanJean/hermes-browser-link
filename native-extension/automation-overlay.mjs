@@ -25,9 +25,9 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  [data-role="parsing-elements"]{transition:opacity 220ms cubic-bezier(.23,1,.32,1)}
  @media(prefers-reduced-motion:reduce){[data-role="parsing-beam"]{animation:none;opacity:.35;transform:none}[data-role="parsing-elements"]{transition:none}}`;
  const parsingScan=doc.createElement('div');parsingScan.dataset.role='parsing-scan';parsingScan.setAttribute('aria-hidden','true');
- Object.assign(parsingScan.style,{position:'fixed',inset:'0',display:'none',overflow:'hidden',pointerEvents:'none',boxShadow:'inset 0 0 28px rgba(75,210,145,.16)'});
+ Object.assign(parsingScan.style,{position:'fixed',inset:'0',display:'block',opacity:'0',overflow:'hidden',pointerEvents:'none',boxShadow:'inset 0 0 28px rgba(75,210,145,.16)'});
  const parsingBeam=doc.createElement('div');parsingBeam.dataset.role='parsing-beam';
- Object.assign(parsingBeam.style,{position:'absolute',top:'0',left:'0',width:'100%',height:'96px',background:'linear-gradient(180deg,transparent,rgba(75,210,145,.05) 65%,rgba(75,210,145,.18))',borderBottom:'1px solid rgba(108,238,173,.8)',boxSizing:'border-box',pointerEvents:'none'});parsingScan.append(parsingBeam);
+ Object.assign(parsingBeam.style,{position:'absolute',top:'0',left:'0',width:'100%',height:'96px',background:'linear-gradient(180deg,transparent,rgba(75,210,145,.05) 65%,rgba(75,210,145,.18))',borderBottom:'1px solid rgba(108,238,173,.8)',boxSizing:'border-box',pointerEvents:'none',animationPlayState:'paused'});parsingScan.append(parsingBeam);
  const parsingElements=doc.createElement('div');parsingElements.dataset.role='parsing-elements';parsingElements.setAttribute('aria-hidden','true');
  Object.assign(parsingElements.style,{position:'fixed',inset:'0',display:'none',opacity:'0',pointerEvents:'none'});
  const highlightStyle=color=>({position:'fixed',display:'none',border:`3px solid ${color}`,borderRadius:'4px',background:color==='#ff8a00'?'rgba(255,138,0,.16)':'rgba(56,136,232,.16)',boxSizing:'border-box',pointerEvents:'none',animation:'hermes-pulse 0.9s ease-out infinite'});
@@ -95,21 +95,36 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  release.style.display=retry.style.display=resume.style.display='none';actions.append(takeover,resume,stop,release,retry);
  shadow.append(veil,border,target,parsingScan,parsingElements,interactionTarget,dragStart,dragEnd,interactionStatus,cursor,cursorHint,ripple,bar,pulse);doc.documentElement.append(host);
  const parsingSteps=new Set(['snapshot','semantic_snapshot','page.parse','page.observe','frame_catalog']);
- let parsingStep=null,parsingTimer=null,parsingFadeTimer=null;
- // 中文注释：解析反馈定时器独立于页面动作，不等待动画；新步骤开始前取消旧反馈，防止迟到清理。
+ const parsingFeedbackDelayMs=120;
+ let parsingStep=null,parsingStartTimer=null,parsingTimer=null,parsingFadeTimer=null;
+ // 中文注释：元素反馈与扫描分别清理，旧元素淡出不能销毁下个读取使用的动画。
+ function clearParsedElements(){
+  clearTimeout(parsingTimer);clearTimeout(parsingFadeTimer);parsingTimer=parsingFadeTimer=null;
+  parsingElements.style.display='none';parsingElements.style.opacity='0';parsingElements.replaceChildren();
+ }
+ function pauseParsingScan(){parsingScan.style.opacity='0';parsingBeam.style.animationPlayState='paused';}
  function clearParsing(){
-  clearTimeout(parsingTimer);clearTimeout(parsingFadeTimer);parsingTimer=parsingFadeTimer=null;parsingStep=null;
-  parsingScan.style.display='none';parsingElements.style.display='none';parsingElements.style.opacity='0';parsingElements.replaceChildren();
+  clearTimeout(parsingStartTimer);parsingStartTimer=null;parsingStep=null;
+  pauseParsingScan();clearParsedElements();
  }
  function syncParsing(state,step){
   if(state==='running'&&parsingSteps.has(step)){
-   if(parsingStep!==step){clearParsing();parsingStep=step;}
-   parsingScan.style.display='block';return;
+   if(parsingStep!==step){
+    // 中文注释：解析类型切换只清除旧元素反馈；保留光带与启动计时，避免动画反复从头播放。
+    clearParsedElements();parsingStep=step;
+   }
+   // 中文注释：短读取与等待轮询不启动光带，反馈定时器不阻塞实际解析或授权检查。
+   if(parsingScan.style.opacity!=='1'&&parsingStartTimer===null)parsingStartTimer=setTimeout(()=>{
+    parsingStartTimer=null;if(!removed&&currentState==='running'&&parsingStep){parsingScan.style.opacity='1';parsingBeam.style.animationPlayState='running';}
+   },parsingFeedbackDelayMs);
+   return;
   }
   if(state==='waiting'&&parsingStep){
-   parsingStep=null;parsingScan.style.display='none';
+   clearTimeout(parsingStartTimer);parsingStartTimer=null;
+   // 中文注释：每个真实动作都经过 waiting；隐藏并暂停同一个动画，下次解析只续播。
+   parsingStep=null;pauseParsingScan();
    if(parsingElements.children.length){
-    parsingTimer=setTimeout(()=>{parsingTimer=null;parsingElements.style.opacity='0';parsingFadeTimer=setTimeout(clearParsing,220);},600);return;
+    parsingTimer=setTimeout(()=>{parsingTimer=null;parsingElements.style.opacity='0';parsingFadeTimer=setTimeout(clearParsedElements,220);},600);return;
    }
   }
   clearParsing();

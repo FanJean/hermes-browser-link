@@ -4,15 +4,15 @@ import {createHash} from 'node:crypto';
 import {spawn, execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createServer} from 'node:http';
-import {copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile} from 'node:fs/promises';
+import {mkdir, readFile, readdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {CdpClient, waitFor, fetchJson} from './cdp-client.mjs';
+import {stageRealSession} from './real-session.mjs';
 
 const exec = promisify(execFile);
 const root = path.resolve(import.meta.dirname, '../..');
 const python = process.env.HERMES_PYTHON || path.join(process.env.HOME, '.hermes/hermes-agent/venv/bin/python');
 const helper = path.join(import.meta.dirname, 'real-helper.py');
-const scratch = path.resolve(process.env.HOME, '.hermes/cache/scratch');
 const evidenceDir = path.join(import.meta.dirname, 'evidence');
 const choices = {
   chrome: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -140,13 +140,14 @@ async function helperCall(...args) {
 }
 
 async function run(browser) {
-  const work = await mkdtemp(path.join(scratch, `n${browser[0]}-`));
-  const packageRoot=path.join(work,'package');
-  const extensionRoot = packageMode ? path.join(packageRoot,'native-extension') :
-    directExtension ? path.resolve(directExtension) : path.join(work, 'dist-native');
-  if(packageMode)await exec(process.execPath,[path.join(root,'scripts/package-executor.mjs'),
-   '--source',root,'--output',packageRoot],{cwd:root,timeout:120000});
-  else if(!directExtension)await exec(process.execPath,[path.join(root,'native-extension/build.mjs'),extensionRoot],{cwd:root});
+  // 中文注释：复用已验收的短 socket 布局，所有临时产物只写指定 TMPDIR。
+  const fixture = await stageRealSession({browser, packageMode, label:'n', compactScratch: true});
+  const {work, downloadsDir, staged} = fixture;
+  const profile = path.join(work,'profile');
+  const temp = path.join(work,'tmp');
+  const extensionRoot = directExtension ? path.resolve(directExtension) : fixture.extensionRoot;
+  let proc, cdp, ui, logs = '', report, cleanupError;
+  try {
   const buildDeps = JSON.parse(await readFile(path.join(extensionRoot, 'BUILD-DEPS.json'), 'utf8'));
   const canonical = {
     'vendor/page-semantics.mjs': path.join(root, 'page-semantics/index.js'),
@@ -157,46 +158,28 @@ async function run(browser) {
     assert.equal(sha256(await readFile(path.join(extensionRoot, relative))), sha256(await readFile(source)));
   }
 
-  const profile = path.join(work, 'profile');
-  await mkdir(profile, {recursive: true});
-  // 中文注释：临时 profile 的默认下载目录指向本次 scratch，测试不写入用户真实的“下载”文件夹。
-  const downloadsDir=path.join(work,'downloads');
-  await mkdir(path.join(profile,'Default'),{recursive:true});await mkdir(downloadsDir,{recursive:true});
-  await writeFile(path.join(profile,'Default','Preferences'),JSON.stringify({download:{default_directory:downloadsDir,prompt_for_download:false,directory_upgrade:true}}));
+
   // 中文注释：无 key 的 unpacked 扩展 ID 由规范化路径摘要确定；先登记 Native host 再启动浏览器，消除首次连接竞态。
   // 中文注释：1.4.0 起扩展 ID 由 manifest key 固定；无 key 时才按加载路径推算。
   const manifestKey = JSON.parse(await readFile(path.join(extensionRoot, 'manifest.json'), 'utf8')).key;
   const expectedExtensionId = [...(manifestKey ? sha256(Buffer.from(manifestKey, 'base64')) : sha256(path.resolve(extensionRoot))).slice(0,32)]
     .map(digit=>String.fromCharCode(97+Number.parseInt(digit,16))).join('');
-  let staged;
-  try{
-    const origins=JSON.stringify([`chrome-extension://${expectedExtensionId}/`]);
-    // 中文注释：包模式只通过包内安装器落地到隔离 HOME，后续 helper 都读取安装后的插件。
-    staged = packageMode?await helperCall('stage_package',work,packageRoot,origins):
-      await helperCall('stage',work,origins);
-    const manifestSource = staged.manifests[browser === 'chrome' ? 0 : 1];
-    const profileManifest = path.join(profile, 'NativeMessagingHosts/com.hermes.browser_link.json');
-    await mkdir(path.dirname(profileManifest), {recursive: true});
-    await copyFile(manifestSource, profileManifest);
-  }catch(error){await rm(work,{recursive:true,force:true});throw error;}
-  const temp = path.join(work, 'tmp');
-  await mkdir(temp, {recursive: true});
-  const scratchHome = path.join(work, 'h');
+  assert.equal(expectedExtensionId, fixture.expectedExtensionId, 'direct extension must match the staged Native host origin');
   const browserEnv = {
-    HOME: process.env.HOME, HERMES_HOME: path.join(scratchHome, '.hermes'), TMPDIR: temp,
-    PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin', LANG: process.env.LANG || 'en_US.UTF-8',
+    // 中文注释：字段必须可静态审阅；浏览器 HOME 不变，compactScratch 的 Hermes home 不能重算。
+    HOME: process.env.HOME,
+    HERMES_HOME: staged.hermesHome,
+    TMPDIR: temp,
+    PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
+    LANG: process.env.LANG || 'en_US.UTF-8',
   };
-  const proc = spawn(choices[browser], [
+  proc = spawn(choices[browser], [
     '--headless=new', '--use-mock-keychain', '--password-store=basic', '--disable-background-networking', '--disable-sync', '--no-proxy-server',
     '--site-per-process', '--host-resolver-rules=MAP frame.test 127.0.0.1,MAP deep.test 127.0.0.1',
     `--user-data-dir=${profile}`, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
     '--enable-unsafe-extension-debugging', '--no-first-run', '--no-default-browser-check', 'about:blank',
   ], {stdio: ['ignore', 'ignore', 'pipe'], detached: true, cwd: work, env: browserEnv});
-  let cdp;
-  let ui;
-  let logs = '',report,cleanupError;
   proc.stderr.on('data', chunk => { logs += String(chunk); });
-  try {
     const port = await waitFor(async () => {
       try { return (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; }
       catch { return null; }
@@ -229,14 +212,8 @@ async function run(browser) {
     await waitFor(() => ui.evaluate(`document.querySelector('#connection-label')!==null`));
     if (!await ui.evaluate(`document.querySelector('#connection-label').textContent==='已连接'`)) await click('#connect');
     await waitFor(() => ui.evaluate(`document.querySelector('#connection-label').textContent==='已连接'`), 35000);
-    // 中文注释：临时 profile 初次授权状态未配置；先置为明确关闭，再用真实界面完成开启。
-    await ui.evaluate(`chrome.storage.local.set({browserFullConsent:{version:1,enabled:false}})`);
-    await waitFor(()=>ui.evaluate(`document.querySelector('#access-toggle').disabled===false`));
-    // 中文注释：低频授权在简洁界面的折叠区，先展开再按真实坐标操作。
-    await click('.settings > summary');
-    await waitFor(()=>ui.evaluate(`document.querySelector('.settings').open===true`));
-    await click('#access-toggle');await click('#confirm-enable');
-    await waitFor(()=>ui.evaluate(`document.querySelector('#access-toggle').getAttribute('aria-checked')==='true'`));
+    // 中文注释：连接本身已授权；只读取状态，不操作已移除的权限开关。
+    await waitFor(()=>ui.evaluate(`chrome.runtime.sendMessage({type:'popup_status'}).then(reply=>reply?.result?.browserFullConsentStatus==='enabled')`));
 
     const rpc = (session, suffix, args = {}) => helperCall('rpc', work, session, suffix, JSON.stringify(args));
     const instances = await waitFor(async () => {
@@ -302,6 +279,7 @@ async function run(browser) {
     assert.equal(semantic.version, 2, JSON.stringify(semantic));
     assert.equal(semantic.items.length, 1);
     const buttonToken = {binding: semantic.binding, snapshot_id: semantic.snapshotId, ref: semantic.items[0].ref};
+    const clickRequestId = `${browser}-native-v2-${sequence+1}`;
     const clickResult = await runWithReadback('ref_click', buttonToken);
     assert.equal(clickResult.clicked, true, JSON.stringify(clickResult));
     assert.equal(await readPage('document.body.dataset.clicks'), '1');
@@ -370,7 +348,7 @@ async function run(browser) {
       const claimedRow=await dl({action:'claim',download_id:row.id});
       assert.equal(claimedRow.sha256,sha256(REPORT_BYTES),JSON.stringify(claimedRow));
       assert.equal(sha256(await readFile(claimedRow.localPath)),sha256(REPORT_BYTES));
-      assert.ok(claimedRow.localPath.startsWith(path.join(work,'h','.hermes')),'claimed file lives in the private store');
+      assert.ok(claimedRow.localPath.startsWith(`${staged.hermesHome}${path.sep}`),'claimed file lives in the private store');
     }
     await clickNamed('Download Blob','button');
     const blobDownload=await waitDownload(row=>row.state==='complete'&&row.filename==='blob-report.txt');
@@ -679,13 +657,7 @@ print('RESULT=' + json.dumps(out))`;
     assert.equal(vaultPageValue,'synthetic-vault-password-2026');
     const vaultClosed=await rpc('vault-session','close',{task_id:vaultTask.id});
     assert.equal(vaultClosed.state,'closed');
-    await click('#access-toggle');
-    await waitFor(async()=>((await rpc('session-a','get',{task_id:task.id})).activeMode==='smart'));
-    assert.equal((await rpc('session-a','get',{task_id:task.id})).activeMode,'smart');
-    assert.equal((await run('js.evaluate',{expression:'1'})).status,'approval_required');
-    const childDenied=await run('ref_click',childWrite);
-    assert.equal(childDenied.status,'approval_required');
-
+    // 中文注释：敏感字段保护在连接授权的全部访问下仍须生效。
     const password = await run('semantic_snapshot', {options: {mode: 'interactive', query: 'Password', roles: ['textbox'], budget: 1600}});
     const sensitive = await run('ref_fill', {binding: password.binding, snapshot_id: password.snapshotId, ref: password.items[0].ref, text: 'fixture'});
     assert.equal(sensitive.status, 'user_input_required', 'sensitive ref fill must request human input');
@@ -695,8 +667,14 @@ print('RESULT=' + json.dumps(out))`;
     assert.equal(await readPage('document.querySelector("#password").value'), '', 'agent did not fill the sensitive field');
 
 
-    const closed = await rpc('session-a', 'close', {task_id: task.id});
-    assert.equal(closed.state, 'closed');
+    // 中文注释：真实取消撤销任务，旧 JS、子框架写入和已完成请求均不能再派发。
+    const closed = await rpc('session-a', 'cancel', {task_id: task.id});
+    assert.equal(closed.state, 'cancelled');
+    assert.equal(closed.cleanupState,'succeeded',JSON.stringify(closed));
+    assert.equal((await run('js.evaluate',{expression:'1'})).bridgeCode,'task_closed');
+    assert.equal((await run('ref_click',childWrite)).bridgeCode,'task_closed');
+    const oldClick={task_id:task.id,request_id:clickRequestId,action:'ref_click',tab_id:tabId,...buttonToken};
+    assert.equal((await rpc('session-a','run',oldClick)).bridgeCode,'task_closed','ended task cannot return or replay an old action');
     const remaining=await waitFor(async()=>{
       const ids=await ui.evaluate('chrome.tabs.query({}).then(t=>t.map(x=>x.id))');
       return ids.includes(userTabId)&&!ids.includes(tabId)?ids:null;
@@ -730,12 +708,12 @@ print('RESULT=' + json.dumps(out))`;
         'cross-origin OOPIF frame catalog and scoped snapshot',
         'cross-origin OOPIF DOM click/fill/check/select/pointer/key after trusted task full-access approval',
         'nested OOPIF click/fill/check/select/key/pointer readback, parent navigation invalidates tokens, nested secret screenshot blocked',
-        'smart-mode child write requests approval, old child token rejected, child secret blocks screenshot',
+        'cancelled task rejects JS and child writes; old child tokens rejected and child secret blocks screenshot',
         'task-scoped single and multiple file selection plus local-path upload with real website hashes',
         'task downloads: link, same-name uniquify, blob, interrupted refusal, cancel, private claim with matching SHA-256',
         'concurrent same-URL user download left unclaimed and counted as unattributed',
         'native images/console/dialog reads for official tools; open JS dialog fails other actions fast',
-        'JS directly runs in full mode; smart mode requests approval after mode change',
+        'JS directly runs after connection authorization; task cancellation revokes execution',
         'isolated vs main-world JS, node/cyclic values as descriptions, exceptions, async values, bounded timeout',
         'raw CDP valid methods dispatched, off-origin navigation denied, events scrubbed',
         'raw Target.getTargets, owned target_id, frame token routing, bounded CDP timeout and foreign target rejection',
@@ -760,12 +738,12 @@ print('RESULT=' + json.dumps(out))`;
     cleanupError=await helperCall('cleanup',work).then(()=>null,error=>error);
     ui?.close();
     cdp?.close();
-    try { process.kill(-proc.pid, 'SIGTERM'); } catch {}
+    try { if(proc)process.kill(-proc.pid, 'SIGTERM'); } catch {}
     await new Promise(resolve => setTimeout(resolve, 500));
-    try { process.kill(-proc.pid, 'SIGKILL'); } catch {}
+    try { if(proc)process.kill(-proc.pid, 'SIGKILL'); } catch {}
     // 中文注释：默认销毁临时配置；显式调试开关只保留文件，仍会停止测试 daemon 与浏览器。
     if(process.env.KEEP_NATIVE_V2_SCRATCH==='1')console.error('retained fixture:',work);
-    else await rm(work, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});
+    else await fixture.dispose();
   }
   if(cleanupError)throw cleanupError;
   // 中文注释：仅在业务链路和隔离清理都完成后写入通过证据。

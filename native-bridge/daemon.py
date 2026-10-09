@@ -77,6 +77,7 @@ from cdp_gateway import CdpGateway, GatewayDenied
 from vault_private import VaultPrivateService, remove_stale_socket
 
 V1_ACTIONS = frozenset({
+    'popup_catalog', 'popup_adopt',
     'navigate', 'snapshot', 'click', 'fill', 'press', 'screenshot', 'tabs', 'new_tab',
     'page.observe', 'page.parse', 'semantic_snapshot', 'frame_catalog', 'ref_click', 'ref_fill', 'ref_press', 'ref_set_checked', 'ref_select_option', 'api_request',
     'interaction.capture', 'interaction.bounds', 'interaction.click',
@@ -790,6 +791,7 @@ class BridgeDaemon:
                 task["state"] = "needs_sync"
                 task["tabIds"] = []
                 task["agentTabIds"] = []
+                task['adoptedPopupTabIds'] = []
                 task["updatedAt"] = time.time()
                 changed = True
             task.setdefault("agentTabIds", [])
@@ -1208,7 +1210,7 @@ class BridgeDaemon:
         self._notify_tasks_changed(instance_id)
         return self._public_task(task)
 
-    def _pending_action(self, task, params, request_hash, payload_hash, pending_notifications, read_origin=None):
+    def _pending_action(self, task, params, request_hash, payload_hash, pending_notifications, read_origin=None, popup_scope=None):
         key = (task['id'], request_hash)
         pending = self.action_approvals.get(key)
         if pending is not None:
@@ -1224,6 +1226,8 @@ class BridgeDaemon:
                        'generation': task['generation'], 'modeGeneration': task.get('modeGeneration', 1),
                        'status': 'approval_required', **({'readOrigin': read_origin} if read_origin else {})}
             self.action_approvals[key] = pending
+            if popup_scope is not None:
+                pending['popupScope'] = json.loads(json.dumps(popup_scope))
             task.setdefault("requestHistory", []).append({"requestIdHash": request_hash, "payloadHash": payload_hash,
                 "state": "awaiting_approval", "dispatched": False, "generation": task["generation"],
                 "modeGeneration": task.get('modeGeneration', 1)})
@@ -1397,6 +1401,11 @@ class BridgeDaemon:
                 if cached[1] == "error":
                     error = cached[2]
                     raise ProtocolError(error["code"], error["message"], error.get("data"))
+                if action in {'popup_catalog', 'popup_adopt'} and cached[1] == 'result':
+                    # 中文注释：宿主缓存无法证明扩展当前屏蔽设置和两端租约；只交付首次回执，绝不重发接管来复核。
+                    raise ProtocolError('request_outcome_unavailable',
+                                        'popup receipt is one-shot; query operation status or use a new catalog requestId',
+                                        {'outcomeUnknown': False, 'retryable': False})
                 return cached[2]
             if len(task.get("requestHistory", [])) >= self.request_history_limit and (task_id, request_hash) not in self.action_approvals:
                 raise ProtocolError(
@@ -1405,8 +1414,19 @@ class BridgeDaemon:
                 )
             self.preparing_requests[(task_id, request_hash)] = payload_hash
             read_origin = None
+            popup_scope = (_approval or self.action_approvals.get((task_id, request_hash), {})).get('popupScope')
             try:
                 with _outside_task_lock(lock):
+                    if action == 'popup_adopt' and popup_scope is None:
+                        with self.state_lock:
+                            extension = self.extensions.get(task['instanceId'])
+                            if (task['state'] not in {'ready', 'running'} or extension is None
+                                    or self.tab_leases.get((task['instanceId'], params['tabId'])) != task_id):
+                                raise ProtocolError('foreign_tab', 'popup source is not leased', {'outcomeUnknown': False})
+                            scope_params = {k:v for k,v in params.items() if k != 'owner'}
+                            scope_params.update(generation=task['generation'], modeGeneration=task.get('modeGeneration', 1))
+                        popup_scope = self._extension_call(extension, 'browser.popup_prepare', scope_params)
+                        self._validate_popup_scope(popup_scope, params, task)
                     if action in SITE_READ_ACTIONS and task.get('activeMode') == 'smart':
                         with self.state_lock:
                             extension = self.extensions.get(task['instanceId'])
@@ -1561,6 +1581,10 @@ class BridgeDaemon:
                 grant_origin = (site_origin if task.get('activeMode') == 'smart' and site_origin
                                 and site_origin not in task.setdefault('readOrigins', []) else None)
                 pending = self.action_approvals.get((task_id, request_hash))
+                if action == 'popup_adopt':
+                    self._validate_popup_scope(popup_scope, params, task)
+                    if self.tab_leases.get((task['instanceId'], popup_scope['candidate']['tabId'])) is not None:
+                        raise ProtocolError('popup_stale', 'popup target is already leased', {'outcomeUnknown': False})
                 if pending is not None and _approval is not pending:
                     return self._pending_action(task, params, request_hash, payload_hash, pending_notifications,
                                                 pending.get('readOrigin') if pending.get('readOrigin') == site_origin else grant_origin)
@@ -1572,9 +1596,11 @@ class BridgeDaemon:
                             or pending.get('readOrigin') not in {None, site_origin}):
                         raise ProtocolError('approval_revoked', 'approval expired or revoked')
                     pending['status'] = 'executing'
+                elif action == 'popup_adopt':
+                    return self._pending_action(task, params, request_hash, payload_hash, pending_notifications, popup_scope=popup_scope)
                 elif grant_origin and action in SITE_READ_ACTIONS and not _gateway:
                     return self._pending_action(task, params, request_hash, payload_hash, pending_notifications, grant_origin)
-                elif (action not in {'tabs', 'snapshot', 'screenshot', 'page.observe', 'page.parse', 'semantic_snapshot', 'frame_catalog', 'interaction.capture', 'interaction.bounds', 'official.ready_state', 'images', 'console'}
+                elif (action not in {'popup_catalog', 'tabs', 'snapshot', 'screenshot', 'page.observe', 'page.parse', 'semantic_snapshot', 'frame_catalog', 'interaction.capture', 'interaction.bounds', 'official.ready_state', 'images', 'console'}
                       and not _gateway
                       and task.get('activeMode', 'smart') != 'full'):
                     return self._pending_action(task, params, request_hash, payload_hash, pending_notifications, grant_origin)
@@ -1596,6 +1622,9 @@ class BridgeDaemon:
                              "modeGeneration": task.get('modeGeneration', 1)}
                     task["requestHistory"].append(entry)
                 entry.update(state="dispatched", dispatched=True, generation=generation, action=action)
+                if action == 'popup_adopt':
+                    # 中文注释：在途关闭只绑定已批准的精确目标，不持久化候选内容或扩大清理权限。
+                    entry['popupTargetTabId'] = popup_scope['candidate']['tabId']
                 self._persist_tasks()
                 self.inflight_requests[(task_id, request_hash)] = payload_hash
 
@@ -1610,6 +1639,8 @@ class BridgeDaemon:
             command_params["modeGeneration"] = mode_generation
             if _approval is not None:
                 command_params["approval"] = {"nonce": _approval["nonce"], "digest": _approval["digest"]}
+            if action == 'popup_adopt':
+                command_params['popupScope'] = popup_scope
             command_params["allowedOrigins"] = list(task["allowedOrigins"])
             if task.get('activeMode') == 'smart' and action in SITE_READ_ACTIONS and site_origin:
                 command_params['approvedReadOrigin'] = site_origin
@@ -1640,13 +1671,25 @@ class BridgeDaemon:
             except ProtocolError as exc:
                 cleanup = False
                 # 中文注释：滚动已派发后的超时仍有副作用不确定性。
-                read_only = action in {"tabs", "snapshot", "screenshot", "page.observe", "page.parse", "semantic_snapshot", "frame_catalog", "interaction.capture", "interaction.bounds", "official.ready_state", "cdp.events", "network.inspect", "images", "console"}
+                read_only = action in {"popup_catalog", "tabs", "snapshot", "screenshot", "page.observe", "page.parse", "semantic_snapshot", "frame_catalog", "interaction.capture", "interaction.bounds", "official.ready_state", "cdp.events", "network.inspect", "images", "console"}
                 uncertain_official_write = (action in {'official.new_tab','official.goto_url'}
                                             and exc.data.get('outcomeUnknown') is True)
+                uncertain_popup_adoption = (action == 'popup_adopt' and (
+                    exc.data.get('outcomeUnknown') is True
+                    or exc.code in {'extension_timeout', 'extension_disconnected', 'workspace_unknown'}))
+                if uncertain_popup_adoption:
+                    exc.data = {**exc.data, 'outcomeUnknown': True, 'retryable': False}
                 if read_only and exc.code in {"extension_timeout", "extension_disconnected"}:
                     exc.data = {"outcomeUnknown": False, "retryable": False}
                 with self.state_lock:
-                    if task["state"] == "running" and task["generation"] == generation:
+                    if uncertain_popup_adoption:
+                        # 中文注释：接管可能已发布扩展租约；未知墓碑先落盘，再释放原代资格且保留所有原页。
+                        self._record_request_locked(task, request_hash, payload_hash, None, None)
+                        if task['generation'] == generation and task['state'] in {'ready', 'running', 'paused'}:
+                            self._revoke_task_locked(task, 'needs_sync')
+                        self._persist_tasks()
+                        cleanup = True
+                    elif task["state"] == "running" and task["generation"] == generation:
                         # 中文注释：单次扩展超时不证明任务代次或标签归属变化；只冻结该请求的重放。
                         if exc.code in {"extension_disconnected", "workspace_unknown"} or uncertain_official_write:
                             self._record_request_locked(task, request_hash, payload_hash, None, None)
@@ -1679,8 +1722,9 @@ class BridgeDaemon:
                 # adapter failure, not just an approval worker operation.
                 with self.state_lock:
                     self._record_request_locked(task, request_hash, payload_hash, None, None)
-                    # 中文注释：迟到异常只撤销它所属的运行代次，不能覆盖停止或恢复后的任务状态。
-                    if task['generation'] == generation and task['state'] == 'running':
+                    # 中文注释：未知接管同代暂停/继续也须撤权；其他动作仍仅收尾 running，保留新代与终态。
+                    if task['generation'] == generation and (task['state'] == 'running'
+                            or action == 'popup_adopt' and task['state'] in {'ready', 'paused'}):
                         self._revoke_task_locked(task, "needs_sync")
                     self._persist_tasks()
                 try:
@@ -1723,7 +1767,11 @@ class BridgeDaemon:
                     self._record_request_locked(task, request_hash, payload_hash, None, None)
                     if task["generation"] == generation and task["state"] in {"ready", "running"}:
                         task["state"] = "running" if any(key[0] == task_id for key in self.inflight_requests) else "ready"
-                    race_cleanup = (
+                    if action == 'popup_adopt' and task['generation'] == generation and task['state'] in {'ready', 'running', 'paused'}:
+                        # 中文注释：拒绝迟到接管回执也必须撤销原代资格；新代次仍由其独立授权控制。
+                        self._revoke_task_locked(task, 'needs_sync')
+                        changed_state = task['state']
+                    race_cleanup = action == 'popup_adopt' or (
                         opened_task_tab
                         and (task["generation"] != generation or task["state"] in {"cancelled", "closed", "needs_sync"})
                         and isinstance(result, dict)
@@ -1732,6 +1780,23 @@ class BridgeDaemon:
                     )
                     self._persist_tasks()
                 else:
+                    if action == 'popup_adopt':
+                        expected = {'adopted': True, **popup_scope['candidate'], 'sourceTabId': params['tabId'], 'cleanupOwned': False}
+                        target_id = popup_scope['candidate']['tabId']
+                        retired = task.get('retiredPopupTabs', {}).get(str(generation), [])
+                        if (result != expected or target_id in retired
+                                or self.tab_leases.get((task['instanceId'], params['tabId'])) != task_id
+                                or self.tab_leases.get((task['instanceId'], target_id)) is not None):
+                            self._record_request_locked(task, request_hash, payload_hash, None, None)
+                            self._revoke_task_locked(task, 'needs_sync')
+                            self._persist_tasks()
+                            post_error = ProtocolError('invalid_extension_result', 'popup adoption result is unverified', {'outcomeUnknown': True})
+                        else:
+                            self.tab_leases[(task['instanceId'], target_id)] = task_id
+                            task['tabIds'].append(target_id)
+                            task.setdefault('adoptedPopupTabIds', []).append(target_id)
+                            if result['origin'] not in task['allowedOrigins']:
+                                task['allowedOrigins'].append(result['origin'])
                     if opened_task_tab:
                         if not isinstance(result, dict) or not isinstance(result.get("tabId"), int) or isinstance(result.get("tabId"), bool):
                             self._record_request_locked(task, request_hash, payload_hash, None, None)
@@ -1912,6 +1977,7 @@ class BridgeDaemon:
         self._record_task_state_diagnostic(task, "unknown" if state == "needs_sync" else "cancelled")
         task["tabIds"] = []
         task["agentTabIds"] = []
+        task['adoptedPopupTabIds'] = []
         task["updatedAt"] = time.time()
 
     def _revoke_api_locked(self, task):
@@ -2002,6 +2068,7 @@ class BridgeDaemon:
                 task["state"] = "pending_approval"
                 task["tabIds"] = []
                 task["agentTabIds"] = []
+                task['adoptedPopupTabIds'] = []
                 task["updatedAt"] = time.time()
                 self._persist_tasks()
                 result = self._public_task(task)
@@ -2238,11 +2305,38 @@ class BridgeDaemon:
         return None
 
     @staticmethod
+    def _validate_popup_scope(scope, params, task):
+        """中文注释：私有回读仅含来源与身份，拒绝查询、正文或模型扩大授权。"""
+        valid = isinstance(scope, dict) and set(scope) == {'source', 'candidate'}
+        source = scope.get('source', {}) if valid else {}
+        candidate = scope.get('candidate', {}) if valid else {}
+        valid = (valid and isinstance(source, dict) and isinstance(candidate, dict)
+                 and set(source) == {'tabId', 'windowId', 'origin', 'documentGeneration'}
+                 and set(candidate) == {'candidateRef', 'tabId', 'windowId', 'openerTabId', 'origin', 'windowType'})
+        if valid:
+            valid = (all(type(source[k]) is int and source[k] >= 0 for k in ('tabId', 'windowId', 'documentGeneration'))
+                     and all(type(candidate[k]) is int and candidate[k] >= 0 for k in ('tabId', 'windowId', 'openerTabId'))
+                     and source['tabId'] == params['tabId'] == candidate['openerTabId']
+                     and source['windowId'] != candidate['windowId'] and source['tabId'] != candidate['tabId']
+                     and candidate['candidateRef'] == params['candidateRef'] and candidate['windowType'] == 'popup'
+                     and source['origin'] in task['allowedOrigins'])
+        for row in (source, candidate):
+            try:
+                parsed = urlsplit(row.get('origin', ''))
+                valid = valid and parsed.scheme in {'http', 'https'} and bool(parsed.hostname) and not parsed.username and not parsed.password and not parsed.path and not parsed.query and not parsed.fragment
+                parsed.port
+            except (ValueError, AttributeError, TypeError):
+                valid = False
+        if not valid:
+            raise ProtocolError('popup_stale', 'popup identity is unavailable or changed', {'outcomeUnknown': False})
+
+    @staticmethod
     def _validate_run_params(action: str, params: Dict[str, Any]) -> None:
         if not isinstance(action, str) or action not in V1_ACTIONS:
             raise ProtocolError("invalid_action", "V1 action is not allowed")
         common = {"owner", "taskId", "requestId", "action"}
         required = {
+            'popup_catalog': {'tabId'}, 'popup_adopt': {'tabId', 'candidateRef'},
             "tabs": set(), "new_tab": {"url"}, "navigate": {"tabId", "url"},
             "official.ready_state": {"tabId"}, "official.goto_url": {"tabId", "url"},
             "official.new_tab": {"url"},
@@ -2323,6 +2417,8 @@ class BridgeDaemon:
 
         if "selector" in params:
             text("selector", 4096)
+        if 'candidateRef' in params:
+            text('candidateRef', 128)
         for name, limit in (("snapshotId", 512), ("ref", 256), ("screenshotId", 256),
                             ("expectedRef", 256), ("source", 4096), ("target", 4096)):
             if name in params:
@@ -2633,12 +2729,16 @@ class BridgeDaemon:
             with self.state_lock:
                 task = self.tasks[key[0]]
                 self._record_request_locked(task, key[1], pending['digest'], None, None)
-                self._revoke_task_locked(task, 'needs_sync')
+                extension = None
+                generation = pending['generation']
+                # 中文注释：只收尾原批准代次；执行器已撤权、新代及终态不能再次撤销。
+                if task['generation'] == generation and task['state'] in {'ready', 'running', 'paused'}:
+                    self._revoke_task_locked(task, 'needs_sync')
+                    extension = self.extensions.get(task['instanceId'])
                 self._persist_tasks()
-                extension = self.extensions.get(task['instanceId'])
             if extension is not None:
                 try:
-                    self._best_effort_release(extension, task['id'], task['generation'], False)
+                    self._best_effort_release(extension, task['id'], generation, False)
                 except Exception:
                     pass  # Revocation is authoritative even if cleanup fails.
         finally:
@@ -2727,6 +2827,7 @@ class BridgeDaemon:
                 return [dict(taskId=key[0], nonce=p['nonce'], digest=p['digest'], expiresAt=p['expiresAt'],
                              generation=p['generation'], modeGeneration=p['modeGeneration'],
                              kind=p.get('kind', 'action'),
+                             **({'popupScope': p['popupScope']} if p.get('popupScope') else {}),
                              **({'readOrigin': p['readOrigin']} if p.get('readOrigin') else {}),
                              **({'fieldKind': p['fieldKind']} if p.get('kind') == 'manual_input' else {}),
                              request={k:v for k,v in p['params'].items()
@@ -3155,6 +3256,18 @@ class BridgeDaemon:
                 self._persist_tasks()
                 return self._public_task(task)
             if self.tab_leases.get((instance_id, tab_id)) != task_id:
+                # 中文注释：接管回执前的关闭只接受本代次已派发且仍在途的精确 popup 目标。
+                pending_adopt = any(row.get('action') == 'popup_adopt'
+                    and row.get('generation') == task['generation'] and row.get('state') == 'dispatched'
+                    and row.get('popupTargetTabId') == tab_id
+                    and (task_id, row.get('requestIdHash')) in self.inflight_requests
+                    for row in task.get('requestHistory', []))
+                if event == 'closed' and (instance_id, tab_id) not in self.tab_leases and pending_adopt:
+                    retired = task.setdefault('retiredPopupTabs', {}).setdefault(str(task['generation']), [])
+                    if tab_id not in retired:
+                        retired.append(tab_id)
+                    self._persist_tasks()
+                    return self._public_task(task)
                 # 中文注释：只接受当前代次在途建页请求的提前关闭通知；其他任务租约不受影响。
                 request_id = params.get("creationRequestId")
                 request_hash = _sha256(request_id) if isinstance(request_id, str) else None
@@ -3181,6 +3294,7 @@ class BridgeDaemon:
                     task["outOfScopeTabIds"] = [value for value in task["outOfScopeTabIds"] if value != tab_id]
                 task["tabIds"] = [value for value in task["tabIds"] if value != tab_id]
                 task["agentTabIds"] = [value for value in task["agentTabIds"] if value != tab_id]
+                task['adoptedPopupTabIds'] = [value for value in task.get('adoptedPopupTabIds', []) if value != tab_id]
                 # 中文注释：建页回执尚未到达时，登记集合为空不代表工作区丢失。
                 opening = any(row.get("action") in {"new_tab", "official.new_tab"}
                               and row.get("state") == "dispatched" and row.get("generation") == task["generation"]

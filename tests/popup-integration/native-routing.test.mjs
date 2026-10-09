@@ -76,38 +76,37 @@ test('握手与弹窗状态读取浏览器 manifest，而非源码版本常量',
  h.dom.window.close();
 });
 
-test('browser identity survives sessions while old preference leaves smart as default',async()=>{
- const old=await harness({preferredMode:'full',browserInstanceId:'durable-instance'});
+test('browser identity survives sessions and obsolete smart preference cannot require another grant',async()=>{
+ const old=await harness({preferredMode:'smart',browserFullConsent:{version:1,enabled:false},browserInstanceId:'durable-instance'});
  assert.equal(old.nativeCalls.find(m=>m.method==='extension.hello').params.instanceId,'durable-instance');
  assert.equal(old.nativeCalls.some(m=>m.method==='extension.approve'),true);
- assert.equal(old.executor.tasks.get('native-task').policy.activeMode,'smart');
+ assert.equal(old.executor.tasks.get('native-task').policy.activeMode,'full');
  const restored=await harness({browserFullConsent:{version:1,enabled:true},browserInstanceId:'durable-instance'});
  assert.equal(restored.executor.tasks.get('native-task').policy.activeMode,'full');
 });
 
-test('browser mode UI upgrades tasks without selecting user tabs and returns to smart',async()=>{
+test('connected task is full-only without selecting user tabs or a mode confirmation',async()=>{
  const h=await harness();
- await h.click('#access-toggle');
  assert.equal(h.nativeCalls.some(x=>x.method==='extension.approve'),true);
- assert.equal(h.executor.tasks.get('native-task').policy.activeMode,'smart');
- await h.click('#confirm-enable');
  const approval=h.nativeCalls.find(x=>x.method==='extension.approve');
  assert.deepEqual(approval.params.tabIds,[]);assert.equal(approval.params.workspaceOnly,true);
  assert.equal(Object.hasOwn(approval.params,'apiBridgeApproved'),false);
  assert.equal(h.executor.tasks.get('native-task').policy.activeMode,'full');
  const status=await h.send({type:'status'});assert.equal(status.result.browserFullConsent,true);
- await h.click('#access-toggle');
- assert.equal(h.executor.tasks.get('native-task').policy.activeMode,'smart');
- assert.equal((await h.send({type:'status'})).result.browserFullConsent,false);
+ assert.equal(h.d.querySelector('#access-toggle,#confirm-enable'),null);
+ assert.equal((await h.send({type:'browser_consent',enabled:false})).error,'不支持的操作');
+ assert.equal((await h.send({type:'mode',taskId:'native-task',mode:'smart'})).error,'不支持的操作');
+ assert.equal(h.executor.tasks.get('native-task').policy.activeMode,'full');
+ assert.equal((await h.send({type:'status'})).result.browserFullConsent,true);
  assert.equal(h.dispatch({type:'browser_consent',enabled:true},{id:'test',url:'https://evil.test'},()=>assert.fail()),false);
 });
 
-test('popup exposes only status and consent; foreign senders cannot change authorization',async()=>{
+test('popup exposes connection status without mode switch; foreign senders cannot change authorization',async()=>{
  const h=await harness();
  assert.match(h.d.querySelector('#connection-label').textContent,/已连接/);
  assert.equal(h.d.querySelector('#tasks'),null);
  assert.equal(h.d.querySelector('#diagnostics'),null);
- assert.equal(h.d.querySelector('#access-toggle').getAttribute('role'),'switch');
+ assert.equal(h.d.querySelector('#access-toggle'),null);
  assert.equal(h.dispatch({type:'mode',taskId:'native-task',mode:'full'},{id:'test',url:'chrome-extension://test/other.html'},()=>assert.fail('foreign sender accepted')),false);
  assert.equal(h.dispatch({type:'mode',taskId:'native-task',mode:'full'},{id:'foreign',url:'chrome-extension://test/popup.html'},()=>assert.fail('foreign extension accepted')),false);
 });

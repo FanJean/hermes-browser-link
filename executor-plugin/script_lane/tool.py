@@ -27,7 +27,7 @@ SCHEMA = {
     'description': (
         '同一页两步以上时，在本会话已就绪的任务中运行一次 Python 脚本并读回核对（填表、翻页、提取、保存）。脚本内可用 new_tab、goto_url、'
         'read_page、wait_for_element、click_element、fill_element、scroll、semantic_snapshot、screenshot、reconcile、wait_pending 等函数，'
-        '每个页面动作仍受审批约束。page_text/read_page 返回 dict，读 elements/items 字段，不能切片 dict；wait_for timeout 上限 60 秒，先检查 satisfied。JS 用 evaluate(function, arguments) 传值。stdout 只打印目标项、coverage、计数和文件路径，大提取物保存在脚本工作区。用法与模板见技能 browser-link:batch-scrape。'),
+        '连接授权后普通动作直接执行，仍校验任务归属、来源与租约，敏感操作保留独立确认。page_text/read_page 返回 dict，读 elements/items 字段，不能切片 dict；wait_for timeout 上限 60 秒，先检查 satisfied。JS 用 evaluate(function, arguments) 传值。stdout 只打印目标项、coverage、计数和文件路径，大提取物保存在脚本工作区。用法与模板见技能 browser-link:batch-scrape。'),
     'parameters': {
         'type': 'object',
         'properties': {

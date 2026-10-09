@@ -59,7 +59,7 @@ class NativeV2WireTests(unittest.TestCase):
             )
         )
 
-    def test_schema_exposes_public_actions_with_two_browser_modes(self):
+    def test_schema_exposes_public_actions_with_connection_authorization(self):
         actions = set(
             self.tools.TOOL_SCHEMAS["browser_shared_run"]["parameters"]["properties"]["action"]["enum"]
         )
@@ -67,18 +67,23 @@ class NativeV2WireTests(unittest.TestCase):
             # 当前共享桥接公开滚动与历史返回动作。
             "navigate", "snapshot", "click", "fill", "press", "screenshot", "tabs", "new_tab",
             "scroll", "back",
+            "popup_catalog", "popup_adopt",
             "page.parse", "semantic_snapshot", "frame_catalog", "ref_click", "ref_fill", "ref_press", "ref_set_checked", "ref_select_option", "api_request",
             "interaction.capture", "interaction.bounds", "interaction.click",
             "interaction.drag_coordinates", "interaction.drag_elements",
             "files.upload",
-            # 中文注释：任意 JS / 原始 CDP 在智能审批下逐项确认，全部访问直接执行。
+            # 中文注释：连接授权后直接执行，凭据互斥与特殊确认不随模式开关移除。
             "js.evaluate", "cdp.send", "cdp.events",
             # 中文注释：官方 get_images/console/dialog 对应的原生动作。
             "images", "console", "dialog",
         }
         self.assertEqual(actions, expected)
         self.assertTrue({"evaluate", "raw_cdp", "javascript"}.isdisjoint(actions))
-        self.assertIn("智能审批逐项确认", self.tools.TOOL_SCHEMAS["browser_shared_run"]["description"])
+        description = self.tools.TOOL_SCHEMAS["browser_shared_run"]["description"]
+        self.assertIn("浏览器连接授权后", description)
+        self.assertNotIn("智能审批", description)
+        self.assertIn("凭据填写", description)
+        self.assertIn("全部访问也必须明确确认", description)
         self.assertIn("paths", self.tools.TOOL_SCHEMAS["browser_shared_run"]["parameters"]["properties"])
 
     def test_semantic_snapshot_and_ref_actions_map_exact_wire_fields(self):

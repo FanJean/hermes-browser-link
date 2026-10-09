@@ -3,21 +3,33 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { setup } from './render-harness.mjs'
 
-// 中文注释：使用真实 React 和 Query 渲染，验证初始加载及授权只触发确认入口。
-test('连接面板只读取浏览器列表，授权请求不会伪造授权已开启', async () => {
-  const h = await setup(async (path, options) => {
-    if (path === '/shared/browsers') return [{instanceId:'edge-a',browser:'edge',connected:true,consentStatus:'disabled',accessRequestSupported:true}]
-    assert.equal(options.method,'POST')
-    assert.equal(path,'/shared/browsers/edge-a/access-request')
-    return {requestId:'r',status:'confirmation_requested'}
+// 中文注释：真实渲染不得重新提供逐项审批或切换模式入口，授权只来自浏览器读回。
+test('连接授权后直接执行任务，桌面不再发起模式确认', async () => {
+  const h = await setup(async path => {
+    assert.equal(path, '/shared/browsers')
+    return [{instanceId:'edge-a',browser:'edge',connected:true,consentStatus:'enabled',accessRequestSupported:true,primary:true}]
   }, '#/browser-link?task=old')
   try {
     assert.match(document.body.textContent,/本地桥接可用/)
-    await h.click(h.button('切换模式'))
-    assert.match(document.body.textContent,/确认页已打开/)
-    assert.match(document.body.textContent,/智能审批/)
+    assert.match(document.body.textContent,/已授权 · 任务直接执行/)
+    assert.doesNotMatch(document.body.textContent,/智能审批|切换模式|查看模式|确认页已打开/)
+    assert.equal(document.querySelector('button'),null)
     assert.equal(h.calls.some(([path])=>path.includes('/tasks')),false)
     assert.equal(document.querySelector('details,select,input,table'),null)
+  } finally { await h.close() }
+})
+
+test('离线或未知授权不会显示任务已授权', async () => {
+  const h = await setup(async () => [
+    {instanceId:'offline',browser:'edge',connected:false,consentStatus:'enabled',primary:true},
+    {instanceId:'unknown',browser:'chrome',connected:true,consentStatus:'unknown',primary:true},
+    {instanceId:'disabled',browser:'chrome',connected:true,consentStatus:'disabled',primary:true}
+  ])
+  try {
+    assert.doesNotMatch(document.body.textContent,/已授权|任务直接执行|智能审批|切换模式|查看模式/)
+    assert.match(document.body.textContent,/授权待确认/)
+    assert.match(document.body.textContent,/请在扩展中连接并授权/)
+    assert.equal(h.calls.length,1)
   } finally { await h.close() }
 })
 

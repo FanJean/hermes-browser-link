@@ -149,7 +149,7 @@ const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).c
 // 中文注释：镜像状态变化只刷新源扩展确认面板，弹窗不保留复制结果。
 const cookieMirror=new CookieMirror(chrome,{onChanged:()=>{void refreshApprovals();}});
 let cloud=null;
-const consent=new BrowserConsent(chrome.storage.local,executor,{modeForTask:task=>cloud?.modeForTask(task)??null});
+const consent=new BrowserConsent(chrome.storage.local,executor);
 // 中文注释：云端状态通知只刷新弹窗，不触发本地任务的全局权限同步。
 cloud=new CloudLink(chrome,{localBridge:()=>connected?bridge:null,executor,consent,changed:()=>chrome.runtime.sendMessage({type:'changed'}).catch(()=>{})});
 const consentLoaded=consent.load();
@@ -160,7 +160,7 @@ const approvalActions={click:'点击页面',fill:'填写内容',press:'按键',r
  snapshot:'读取页面快照',screenshot:'截取页面', 'page.parse':'解析页面','semantic_snapshot':'读取语义快照',frame_catalog:'读取子框架目录','interaction.capture':'截取交互画面','interaction.bounds':'读取元素位置','official.ready_state':'读取页面状态',images:'读取页面图片',console:'读取控制台',
  dialog:'处理页面对话框','js.evaluate':'执行页面 JavaScript','cdp.send':'执行原始 CDP','cdp.events':'读取 CDP 事件','network.inspect':'查看网络记录',
  api_request:'发送页面请求','files.upload':'上传文件','gateway.authorize':'运行 browser_exec 调试脚本','vault.authorize':'使用保险库填写',new_tab:'新建工作页','official.new_tab':'新建工作页',select_tab:'切换标签页',close_tab:'关闭标签页',scroll:'滚动页面',
- 'official.goto_url':'打开网址',
+ 'official.goto_url':'打开网址',popup_adopt:'接管现有登录弹窗',
  'interaction.click':'按截图点击','interaction.drag_coordinates':'按截图拖动','interaction.drag_elements':'拖动元素',navigate:'打开网址',back:'返回上一页'};
 function actionSummary(p,extraOrigins=[]){
  const label=p.action==='ref_click'&&p.clickMode==='pointer'?'按指针点击页面元素':approvalActions[p.action],short=value=>typeof value==='string'?value.slice(0,120):'';
@@ -187,11 +187,12 @@ async function frameOrigins(tabId,allowedOrigins){
  return [...seen].sort();
 }
 const fieldLabels={password:'密码',payment:'支付信息',otp:'验证码',sensitive:'敏感信息'};
+const samePopupScope=(left,right)=>['source','candidate'].every(part=>left?.[part]&&right?.[part]&&Object.keys(left[part]).length===Object.keys(right[part]).length&&Object.entries(left[part]).every(([key,value])=>right[part][key]===value));
 async function pendingAction(a,t,instanceId){
- const local=executor.tasks.get(t?.id),p=a?.request,manual=a?.kind==='manual_input';
+ const local=executor.tasks.get(t?.id),p=a?.request,manual=a?.kind==='manual_input',popup=p?.action==='popup_adopt';
  // A manual-input request is never executed by us, so it is shown in full mode too.
  if(!local||local.revoked||t.instanceId!==instanceId||local.instanceId!==instanceId
-  ||local.generation!==t.generation||(!manual&&(local.policy.activeMode!=='smart'||t.activeMode!=='smart'))
+  ||local.generation!==t.generation||(!manual&&!popup&&(local.policy.activeMode!=='smart'||t.activeMode!=='smart'))
   ||(manual&&!Object.hasOwn(fieldLabels,a.fieldKind))
   ||t.state!=='ready'||a.generation!==t.generation
   ||a.modeGeneration!==t.modeGeneration||local.policy.modeGeneration!==t.modeGeneration
@@ -206,12 +207,19 @@ async function pendingAction(a,t,instanceId){
   const site=tab?origin(tab.url):t.allowedOrigins[0];
   const windowId=tab?.windowId??(await chrome.windows.getLastFocused({windowTypes:['normal']})).id;
   if(!Number.isInteger(windowId)||!t.allowedOrigins.includes(site))return null;
+  let popupSummary='';
+  if(popup){
+   const observed=await executor.preparePopup({...p,generation:a.generation,modeGeneration:a.modeGeneration});
+   if(!samePopupScope(observed,a.popupScope))return null;
+   const candidate=observed.candidate;
+   popupSummary=`接管现有登录弹窗 · ${candidate.origin} · 窗口 ${candidate.windowId} / 标签 ${candidate.tabId}（来源标签 ${p.tabId}）；不移动或自动关闭`;
+  }
   // 中文注释：页面读取审批绑定发起时的顶层来源；换站后旧弹窗不可继续批准。
   if(a.readOrigin&&['snapshot','screenshot','page.parse','semantic_snapshot','frame_catalog','interaction.capture','interaction.bounds','official.ready_state','images','console'].includes(p.action)&&site!==a.readOrigin)return null;
   const extraOrigins=p.action==='cdp.send'?await frameOrigins(p.tabId,t.allowedOrigins).catch(()=>['来源暂不可读取']):[];
   return {id:JSON.stringify([t.id,a.nonce]),instanceId,taskId:t.id,generation:t.generation,
    modeGeneration:t.modeGeneration,nonce:a.nonce,tabId:p.tabId??null,windowId,origin:site,
-   action:manual?`请亲自填写${fieldLabels[a.fieldKind]}`:actionSummary(p,extraOrigins),scope:a.readOrigin?'本任务此网站读取':'本次操作',readOrigin:a.readOrigin,expiresAt:a.expiresAt*1000,digest:a.digest,
+   action:manual?`请亲自填写${fieldLabels[a.fieldKind]}`:popup?popupSummary:actionSummary(p,extraOrigins),scope:a.readOrigin?'本任务此网站读取':'本次操作',readOrigin:a.readOrigin,expiresAt:a.expiresAt*1000,digest:a.digest,
    taskTitle:(t.title||'浏览器任务').slice(0,256),...(manual?{kind:'manual_input',fieldKind:a.fieldKind}:
     {mode:'smart'})};
  }catch{return null;}
@@ -353,7 +361,7 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
   await cloud.connect(instanceId,/Edg/.test(navigator.userAgent)?'Edge':'Chrome');
   return cloud.act('connect',{replace:m.replace===true});
  }
- if(m.type==='cloud_full_access')return cloud.act('full_access',{enabled:m.enabled});
+
  if(m.type==='cloud_disconnect')return cloud.act('disconnect');
  if(m.type==='cloud_open_web'){
   const site=cloud.view().site,url=new URL(site);
@@ -381,12 +389,7 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
  // 中文注释：弹窗仅能打开已有镜像确认请求，不能列站点、发起或轮询复制。
  if(m.type==='cookie_mirror_pending'){await refreshApprovals();const pending=notifier?.pending().find(r=>r.kind==='cookie_mirror');if(pending)await notifier.openPending(pending.id);return {opened:!!pending};}
  // 中文注释：主要链接仅由桌面受保护路由设置，弹窗不再提供写入入口。
- if(m.type==='browser_consent'){
-  // 中文注释：开关在智能审批与全部访问之间切换，并同步当前任务。
-  await consent.setEnabled(m.enabled,connected?bridge:null);
-  if(connected&&bridge)await consent.synchronize(bridge);
-  return {enabled:consent.enabled,consentStatus:await consent.readStatus()};
- }
+
  if(m.type==='diagnostics_export')return executor.diagnostics.exportBundle();
  // 中文注释：弹窗只读取当前浏览器的任务摘要和实际归属页，不返回输入或日志正文。
  if(m.type==='popup_status'){
@@ -417,14 +420,7 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{
  const tasks=await bridge.request('extension.tasks');const task=tasks.find(t=>t.id===m.taskId&&t.state==='pending_approval');if(!task)throw Error('任务不再等待批准');
  const ids=[...new Set(m.tabIds)];for(const id of ids){const tab=await chrome.tabs.get(id);if(!task.allowedOrigins.includes(origin(tab.url)))throw Error('标签页来源不在申请范围');if(executor.leases.has(id))throw Error('标签页已被其他任务占用');}
  return bridge.request('extension.approve',{taskId:task.id,tabIds:ids,allowedOrigins:task.allowedOrigins,generation:task.generation});}
- if(m.type==='mode'){
- const t=executor.tasks.get(m.taskId);if(!t||t.revoked)throw Error('任务已失效，请重新批准');
- const generation=t.generation,modeGeneration=t.policy.modeGeneration;
- if(m.mode==='smart')executor.revokeMode(t.id);
- const updated=await bridge.request('extension.mode',{taskId:t.id,mode:m.mode,generation,modeGeneration});
- if(m.mode==='full')executor.setMode(updated);
- await chrome.storage.local.set({preferredMode:m.mode});return updated;
- }
+
  if(m.type==='decide'){
  const approvals=await bridge.request('extension.approvals');const a=approvals.find(a=>a.taskId===m.taskId&&a.nonce===m.nonce&&a.digest===m.digest);if(!a)throw Error('确认已失效，请刷新');
  if(m.approve===true&&a.kind!=='manual_input')executor.approveAction(a);

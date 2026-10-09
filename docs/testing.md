@@ -1,5 +1,20 @@
 # Testing
 
+## Login surfaces and OAuth popup acceptance
+
+离线回归覆盖账号/密码/验证码用途、模态与固定浮层归属、Shadow DOM 和 iframe 边界、popup 发现与精确审批、操作权和删除权分离、公共结果脱敏及 Vault/script 绑定。
+
+手动验收使用本地双来源和 Chrome/Edge 临时 profile，不复制个人登录态，不访问或登录真实 Google：
+
+```sh
+HERMES_SOURCE="$PWD/.ci/hermes" HERMES_PYTHON="$PWD/.ci/hermes/.venv/bin/python" node tests/complex-ui/real-login-windows.mjs
+HERMES_SOURCE="$PWD/.ci/hermes" HERMES_PYTHON="$PWD/.ci/hermes/.venv/bin/python" node tests/complex-ui/real-login-windows.mjs --edge
+```
+
+运行前将 `TMPDIR` 指向私有 scratch。此 runner 使用 `compactScratch: true`，完整 socket 路径必须不超过 103 字节；不退回系统临时目录。JSON 结果与 1440/375 截图写入 `$TMPDIR/login-windows-{chrome,edge}/`。`--popup-only` 只复现独立小窗，不代表完整验收。
+
+小窗创建入口置前以保留浏览器真实用户激活；批准接管后再最小化，验证账号填写、下一步和敏感字段识别。结束任务只撤销权限，原小窗保持存在。实际 Google 登录、验证码、验证器确认和站点风控需另行获准验收，本地通过不代表已登录真实账号。
+
 ## 1.4.4 bounded waits
 
 离线测试 `tests/v1.4.4/test_round1f.py` 与 `round1f.test.mjs` 已纳入 npm 门禁；`replay-check.py` 只使用动作/错误码白名单和合成契约。
@@ -144,7 +159,7 @@ Set `HERMES_PYTHON` to the existing test Python with FastAPI/HTTPX and Hermes de
 
 `tests/v1.5.2/test_install_flow.py` runs in `npm test` and the offline gate using temporary HOME/HERMES_HOME, a verified package outside Git and command stubs. It covers first installation, repeat-install advice, source packaging, Release without Node.js, upgrade data/identity preservation, late corruption and activation rollback, uninstall/purge, deletion confirmation, dry-run without writes, prerequisites, profiles and read-only connection polling. No real installation or browser is operated. The reviewed baseline has 38 steps.
 
-Manual acceptance still requires loading the printed extension path into a temporary Chrome/Edge profile, confirming doctor detects it, enabling popup access yourself and checking restart behavior. Source tests do not replace that acceptance.
+Manual acceptance still requires loading the printed extension path into a temporary Chrome/Edge profile, confirming doctor detects it, confirming browser connection authorization in the popup and checking restart behavior. Source tests do not replace that acceptance.
 
 ### Orphan overlay (1.5.3)
 
@@ -168,9 +183,9 @@ Run `node tests/v1.6.0/real-work-window.mjs --headed` and repeat with `--edge`. 
 
 To keep gate scratch files outside the user's Hermes directory, set `HERMES_BROWSER_VERIFY_SCRATCH=/private/tmp/b16` together with `TMPDIR=/private/tmp` when running `npm run verify`. The existing gate still isolates HOME inside its scratch snapshot. No live browser profile or plugin installation is modified.
 
-### Current gate declaration (1.7.1)
+### Historical gate declaration (1.7.1)
 
-当前 runner 声明为 44 baseline + 2 supplemental + 49 reviewed = 95 个步骤，known runner inventory 仍为 90 个文件。此处记录门禁组成，不声明 1.7.1 全量测试已通过；完整结果须在冻结候选后统一运行 `npm test` 和 `npm run verify` 并记录。
+1.7.1 时的 runner 声明为 44 baseline + 2 supplemental + 49 reviewed = 95 个步骤，known runner inventory 为 90 个文件。这是历史组成，不是当前门禁或全量通过声明；当前组成以 `scripts/verify-v1.1-offline.py` 和本次 `latest.json` 为准。
 
 版本闭包定向测试只验证受影响的离线 suite；安装流程 suite 使用合成临时 HOME/HERMES_HOME。真实 Chrome/Edge、Hermes Desktop、安装升级和重启行为仍需单独人工验收，历史浏览器结果不能作为当前版本验收证据。
 

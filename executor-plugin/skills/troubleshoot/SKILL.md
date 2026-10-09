@@ -12,12 +12,12 @@ Check `code` (or `bridgeCode`) and `outcome_unknown` in the result. If `outcome_
 | `no_browser`, `instance_unavailable`, `extension_disconnected` | The browser extension is not connected | Ask the user to enable the Hermes extension and check that the Hermes "Browser connections" (浏览器连接) page shows *Connected* (已连接), then try again |
 | `task_paused` | The user has taken over the work tab | Wait for the user to click "Resume" (退出接管), check the task state, re-read the page; old refs are invalid |
 | `browser_choice_required` | Several browsers are connected | Show the list to the user or pass `instance_id` |
-| `awaiting_authorization`, `pending_approval`, `invalid_state` | The task is not authorized yet | Ask the user to approve in the extension, or to click "Enable access" (开启访问) on the Browser connections page. Then `browser_shared_get` until `ready` |
-| `approval_required` | This action needs the user's confirmation | Tell the user; then query again with the same `request_id` and arguments — never change them |
+| `awaiting_authorization`, `pending_approval`, `invalid_state` | The task is not authorized yet | Check browser connection authorization in the extension and wait for task preparation with `browser_shared_get` until `ready`; Desktop has no action-request or mode-switch button |
+| `approval_required` | An independent special confirmation is pending | Tell the user; for requests other than `popup_adopt`, query with the same `request_id` and arguments according to the returned contract. Popup adoption follows the read-only flow below |
 | `user_input_required`, `sensitive_target` | Password / payment / one-time-code field | The browser asked the user to fill it. Do not fill it or ask for the value. After the user clicks "I've filled it" (我已填写), query again with the same arguments to get `completed_by_user` |
 | `approval_denied`, `user_input_declined` | The user refused | Not executed. Tell the user and ask whether to try another way; do not work around it |
 | `approval_expired` | The confirmation timed out | Not executed. Only with the user's agreement, start again with a **new** `request_id` |
-| `approval_consumed` | A prior `browser_exec` or Vault approval was already used | Not executed. Start a new request with a new `request_id` if the user still wants another run |
+| `approval_consumed` | A legacy one-use execution permit was already consumed; this is not a selectable approval mode | Not executed. Start a new request with a new `request_id` if the user still wants another run |
 | `origin_denied` | The site is outside the task's scope | Call `browser_shared_open(url=<new site>)` to create a task for it (authorized automatically when full access is on) |
 | `foreign_tab`, `tab_required` | The tab is not this task's, or none was given | Use the returned `tab_id`; for a new page use `new_tab` or `browser_shared_open` |
 | `stale_reference`, `document_changed` | The page changed | Take a new snapshot, then act |
@@ -34,6 +34,12 @@ Check `code` (or `bridgeCode`) and `outcome_unknown` in the result. If `outcome_
 | `redirected_out_of_scope` | The page committed a redirect to another origin; nothing was dispatched there | Use `final_origin` with `browser_shared_open` to create a new task |
 | `dialog_open` | A JavaScript dialog is blocking the page | Handle it with the `dialog` action (or `browser_dialog`), then continue |
 | `unsupported_operation` | Not available through the shared browser (for example `browser_snapshot(full=true)`) | Use snapshots, screenshots or `browser_shared_script` instead |
+
+## Popup adoption after approval
+
+For `popup_adopt`, never resend the action for a cached receipt. Keep the original same-script catalog candidate. `wait_pending(tab=source)` is read-only: it queries the ledger/current scope and returns `state=confirmed`, not `adopted` or `tabId`.
+
+For single tools, use `browser_shared_get` to check the original/current generation and `adoptedPopupTabIds`; select the known candidate with `browser_shared_use_tab`, then re-read the page. Scripts use `use_tab(candidate['tabId'])` and fresh `read_page`. Metadata is not access proof. Rejected, unknown, expired, revoked or changed-scope requests must not replay.
 
 ## "I approved, but nothing happened in the browser"
 

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { JSDOM } from 'jsdom'
 
 const root = new URL('../../native-extension/', import.meta.url)
-const [html, script] = await Promise.all(['popup.html', 'popup.mjs'].map(file => readFile(new URL(file, root), 'utf8')))
+const [html, script, cloudScript] = await Promise.all(['popup.html', 'popup.mjs', 'cloud-popup.mjs'].map(file => readFile(new URL(file, root), 'utf8')))
 
 async function mount(initial) {
   const dom = new JSDOM(html, { url: 'chrome-extension://test/popup.html', runScripts: 'outside-only' })
@@ -24,15 +24,18 @@ async function mount(initial) {
         const row=status.tasks.find(t=>t.id===message.taskId);row.state=message.kind==='takeover'?'paused':message.kind==='resume'?'ready':'cancelled';
         return {result:{verified:true,state:row.state}};
       }
-      if (message.type === 'browser_consent') {
-        status = { ...status, browserFullConsentStatus: message.enabled ? 'enabled' : 'disabled' }
-        return { result: { consentStatus: status.browserFullConsentStatus } }
+
+      if (message.type === 'connect') {
+        status = { ...status, connected: true }
+        return { result: { connected: true } }
       }
       return { result: { connected: true } }
     },
     onMessage: { addListener: listener => { changed = listener } }
   } }
   dom.window.setInterval = () => 1
+  // 中文注释：先注册云端订阅再读取首次快照，测试中不等待浏览器定时轮询。
+  dom.window.eval(cloudScript)
   dom.window.eval(script)
   const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)) }
   await flush()
@@ -42,7 +45,7 @@ async function mount(initial) {
 test('弹窗只展示当前页归属，不展示其他任务或诊断正文', async () => {
   const h = await mount({ connected: true, browserFullConsentStatus: 'disabled', tasks: [{ id: 'private', title: '不展示的任务' }], tabs: [], approvals: [] })
   assert.equal(h.document.querySelector('#connection-label').textContent, '已连接')
-  assert.equal(h.document.querySelector('#access-toggle').getAttribute('aria-checked'), 'false')
+  assert.equal(h.document.querySelector('#access-toggle,#confirm'), null)
   assert.equal(h.document.querySelector('#tasks'), null)
   assert.equal(h.document.querySelector('#diagnostics'), null)
   assert.doesNotMatch(h.document.body.textContent, /不展示的任务/)
@@ -51,32 +54,97 @@ test('弹窗只展示当前页归属，不展示其他任务或诊断正文', as
   h.dom.window.close()
 })
 
-test('授权开关先确认开启，关闭后读取确认状态', async () => {
+test('连接确认授予任务页直接访问，不再显示权限开关或二次确认', async () => {
   const h = await mount({ connected: true, browserFullConsentStatus: 'disabled', tasks: [], tabs: [] })
-  h.document.querySelector('#access-toggle').click()
-  assert.equal(h.document.querySelector('#confirm').hidden, false)
-  assert.equal(h.calls.filter(call => call.type === 'browser_consent').length, 0)
-  h.document.querySelector('#confirm-enable').click()
-  await h.flush()
-  assert.equal(h.calls.filter(call => call.type === 'browser_consent').length, 1)
-  assert.equal(h.calls.find(call => call.type === 'browser_consent').enabled, true)
-  assert.equal(h.document.querySelector('#access-toggle').getAttribute('aria-checked'), 'true')
-  h.document.querySelector('#access-toggle').click()
-  await h.flush()
-  assert.equal(h.calls.filter(call => call.type === 'browser_consent').at(-1).enabled, false)
-  assert.equal(h.document.querySelector('#access-toggle').getAttribute('aria-checked'), 'false')
-  h.dom.window.close()
+  try {
+    assert.equal(h.document.querySelector('#access-toggle,#confirm,#confirm-enable,#confirm-cancel'), null)
+    assert.match(h.document.querySelector('#access-detail').textContent, /已连接.*任务页.*直接/)
+    assert.doesNotMatch(h.document.querySelector('#access-detail').textContent, /智能审批|逐项确认|首次读网站确认/)
+    assert.equal(h.calls.some(call => call.type === 'browser_consent'), false)
+  } finally { h.dom.window.close() }
 })
 
-test('断线时禁用授权开关，连接恢复后再读取授权', async () => {
-  const h = await mount({ connected: false, browserFullConsentStatus: 'unknown', tasks: [], tabs: [] })
-  assert.equal(h.document.querySelector('#access-toggle').disabled, true)
-  h.setStatus({ connected: true, browserFullConsentStatus: 'enabled', tasks: [], tabs: [] })
-  await h.flush()
-  assert.equal(h.document.querySelector('#connection-label').textContent, '已连接')
-  assert.equal(h.document.querySelector('#access-toggle').disabled, false)
-  assert.equal(h.document.querySelector('#access-toggle').getAttribute('aria-checked'), 'true')
-  h.dom.window.close()
+test('连接前说明授权范围，一次连接点击即读取结果，不追加权限确认', async () => {
+  const h = await mount({ connected: false, browserFullConsentStatus: 'enabled', tasks: [], tabs: [] })
+  try {
+    assert.equal(h.document.querySelector('#connect').hidden, false)
+    assert.match(h.document.querySelector('#access-detail').textContent, /^未连接/)
+    assert.match(h.document.querySelector('#connection-detail').textContent, /确认连接.*允许.*直接.*任务页.*脚本/)
+    assert.doesNotMatch(h.document.querySelector('#access-detail').textContent, /已连接|已授权/)
+    h.document.querySelector('#connect').click()
+    await h.flush()
+    assert.equal(h.document.querySelector('#connection-label').textContent, '已连接')
+    assert.equal(h.document.querySelector('#connect').hidden, true)
+    assert.equal(h.calls.filter(call => call.type === 'connect').length, 1)
+    assert.equal(h.calls.some(call => call.type === 'browser_consent'), false)
+  } finally { h.dom.window.close() }
+})
+
+test('云端配对前明确任务页授权范围，移除云端权限开关和追加确认', async () => {
+  const h = await mount({ connected: false, tasks: [], cloud: {state: 'unpaired', paired: false, online: false} })
+  try {
+    assert.equal(h.document.querySelector('#cloud-access-toggle,#cloud-confirm,#cloud-confirm-enable,#cloud-confirm-cancel'), null)
+    assert.match(h.document.querySelector('#cloud-detail').textContent, /未配对/)
+    assert.match(h.document.querySelector('#cloud-access-detail').textContent, /确认配对.*允许.*直接.*任务页/)
+    assert.match(h.document.querySelector('#cloud-access-detail').textContent, /个人标签页.*不授权/)
+    for (const id of ['cloud-access-detail', 'cloud-dialog-state']) {
+      const detail = h.document.getElementById(id).textContent
+      assert.match(detail, /读取.*点击.*填写/)
+      assert.doesNotMatch(detail, /脚本|JavaScript|CDP/)
+    }
+    assert.doesNotMatch(h.document.body.textContent, /智能审批|逐项确认|按网站确认/)
+    assert.equal(h.document.querySelector('#cloud-dialog').open, false)
+    assert.equal(h.calls.some(call => call.type === 'cloud_full_access' || call.type === 'browser_consent'), false)
+  } finally { h.dom.window.close() }
+})
+
+// 中文注释：读取失败必须显示未知，不能把失败读取当成已断开或继续开放控制。
+test('云端在线时说明直接访问，断线和状态未知时不声称已连接访问', async () => {
+  const initial = {connected: true, tasks: [], cloud: {state: 'active', paired: true, online: true, fullAccess: false}}
+  const h = await mount(initial)
+  try {
+    assert.equal(h.document.querySelector('#cloud-status').textContent, '已在线')
+    assert.match(h.document.querySelector('#cloud-detail').textContent, /云端任务页.*直接/)
+    assert.equal(h.document.querySelector('#cloud-code-panel').hidden, true)
+    assert.equal(h.document.querySelector('#cloud-disconnect').hidden, false)
+    h.setStatus({...initial, cloud: {...initial.cloud, state: 'offline', online: false, fullAccess: true}})
+    await h.flush()
+    assert.equal(h.document.querySelector('#cloud-status').textContent, '离线')
+    assert.match(h.document.querySelector('#cloud-detail').textContent, /未在线.*恢复连接后/)
+    assert.doesNotMatch(h.document.querySelector('#cloud-detail').textContent, /已在线|可直接/)
+    h.dom.window.chrome.runtime.sendMessage = async () => { throw Error('unavailable') }
+    h.setStatus({})
+    await h.flush()
+    assert.equal(h.document.querySelector('#cloud-status').textContent, '未连接')
+    assert.doesNotMatch(h.document.querySelector('#cloud-detail').textContent, /已与网页端配对|可直接/)
+    assert.equal(h.calls.some(call => call.type === 'cloud_full_access'), false)
+  } finally { h.dom.window.close() }
+})
+
+test('新云端连接码不继承旧连接码的复制成功提示', async () => {
+  const dom=new JSDOM(html,{url:'chrome-extension://test/popup.html',runScripts:'outside-only'})
+  try {
+    dom.window.setInterval=()=>1
+    let click,clipboard,finish
+    const button=dom.window.document.querySelector('#cloud-copy-code')
+    button.addEventListener=(_type,handler)=>{click=handler}
+    Object.defineProperty(dom.window.navigator,'clipboard',{value:{writeText:async code=>{clipboard=code;if(finish)await finish.promise}}})
+    dom.window.eval(cloudScript)
+    const update=code=>dom.window.dispatchEvent(new dom.window.CustomEvent('browser-link-status',{detail:{state:'pending_pairing',paired:false,online:false,code,expiresAt:Date.now()+300000}}))
+    update('QADEMO-0001')
+    await click({isTrusted:true})
+    assert.equal(clipboard,'QADEMO-0001')
+    assert.equal(button.textContent,'已复制')
+    update('QADEMO-0002')
+    assert.equal(button.textContent,'复制连接码')
+    let resolve
+    finish={promise:new Promise(done=>{resolve=done})}
+    const copying=click({isTrusted:true})
+    update('QADEMO-0003')
+    resolve();await copying
+    assert.equal(clipboard,'QADEMO-0002')
+    assert.equal(button.textContent,'复制连接码')
+  } finally { dom.window.close() }
 })
 
 // 中文注释：读取失败必须显示未知，不能把失败读取当成已断开或继续开放控制。
@@ -87,7 +155,9 @@ test('状态读取失败时显示未知并禁用页面控制', async () => {
   h.setStatus({})
   await h.flush()
   assert.equal(h.document.querySelector('#connection-label').textContent,'状态待确认')
-  assert.equal(h.document.querySelector('#access-toggle').disabled,true)
+  assert.match(h.document.querySelector('#access-detail').textContent,/状态待确认/)
+  assert.doesNotMatch(h.document.querySelector('#access-detail').textContent,/已连接|已授权|可由 Hermes 直接访问/)
+  assert.equal(h.document.querySelector('#connect').hidden,false)
   assert.equal(h.document.querySelector('#page-task').hidden,true)
   h.dom.window.close()
 })
@@ -124,10 +194,10 @@ test('过滤设置保存失败时显示未确认，不显示为已开启', async
 })
 
 // 中文注释：新弹窗只保留当前页一行任务状态，模拟鼠标和过滤设置直接展示。
-test('浏览器访问常驻，模拟鼠标和文字过滤常驻且无任务时隐藏任务区',async()=>{
+test('任务页访问说明和文字过滤常驻，无任务时隐藏任务区',async()=>{
  const h=await mount({connected:true,browserFullConsentStatus:'enabled',tasks:[]});
  try{
-  assert.equal(h.document.querySelector('#access-toggle').closest('details'),null);
+  assert.equal(h.document.querySelector('#access-detail').closest('details'),null);
   assert.equal(h.document.querySelector('#filter-toggle').closest('details'),null);
   assert.equal(h.document.querySelector('#page-task').hidden,true);
   assert.equal(h.document.querySelector('#task-list,#verify-control'),null);
@@ -206,7 +276,7 @@ test('暂停进行中显示等待且只允许停止',async()=>{
 
 // 中文注释：弹窗只保留桌面深链和待确认入口，重开不再读取或重发复制。
 // 中文注释：删除的入口不再隐藏在 DOM 或设置折叠区，自动屏蔽仍可单独操作。
-test('弹窗仅保留权限和自动屏蔽，Cookie 与模拟鼠标和额外区域均移除',async()=>{
+test('弹窗仅保留访问说明和自动屏蔽，Cookie 与模拟鼠标和额外区域均移除',async()=>{
  const h=await mount({connected:true,browserFullConsentStatus:'disabled',tasks:[]});
  assert.equal(h.document.querySelector('#cookie-mirror,#cookie-pending,#cookie-desktop,#cursor-toggle,#cursor-label,#shield-settings,#shield-origin,#shield-selectors,#shield-save'),null);
  assert.equal(h.document.querySelector('#filter-toggle').closest('details'),null);

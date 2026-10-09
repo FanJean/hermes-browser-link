@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import signal
 import stat
 import subprocess
@@ -287,10 +288,14 @@ def next_steps(home, user_home, browsers, env, seconds, upgrade, verbose):
     if upgrade:
         print('重载扩展 / Reload extension；旧安装若使用其他目录，请重新加载上面的稳定目录。')
     print('打开 chrome://extensions 或 edge://extensions → 开发者模式 / Developer mode → 加载已解压的扩展程序 / Load unpacked → 粘贴路径 / Paste path。')
-    if seconds:
-        wait_for_extension(home, user_home, seconds)
-    # 中文注释：智能审批是默认模式，首次使用不需要点击开关切到全部访问。
-    print('保留默认智能审批 / Keep the default smart-approval mode；重启 Hermes / Restart Hermes Desktop。')
+    connected = wait_for_extension(home, user_home, seconds) if seconds else False
+    if not connected:
+        # 中文注释：检查必须使用实际共享根和用户目录，不能依赖当前 profile 的 HERMES_HOME。
+        check = shlex.join([sys.executable, str(home / 'plugins/browser-link/native_bridge/doctor.py'),
+                            '--hermes-home', str(home), '--user-home', str(user_home)])
+        print('浏览器连接尚未确认 / Browser connection not yet verified. 检查 / Check: ' + check)
+    # 中文注释：安装完成不代表浏览器已授权；连接后普通任务直接执行，不再切换模式。
+    print('未连接时在扩展弹窗确认浏览器连接授权（全部访问） / Confirm browser connection authorization (full access) in the popup if disconnected；重启 Hermes / Restart Hermes Desktop。')
     running = shutil.which('pgrep', path=env.get('PATH'))
     if running and command([running, '-if', r'hermes[^/]*\.app/Contents/'], env).returncode == 0:
         print('检测到 Hermes 桌面端运行中，请退出后重新打开 / Hermes Desktop is running; quit and reopen it.')
@@ -499,14 +504,16 @@ def _run(args):
         if args.verbose:
             print_plan(home, profiles, args.upgrade, True)
         apply_package(staged, home, user_home, profiles, programs, files, manifest, env, hermes, args.upgrade, args.verbose)
-    print('✅ 程序安装并启用完成 / Program installed and enabled.')
+    print('✅ 程序安装并启用完成 / Program installed and enabled. profiles: ' + ', '.join(profiles))
     # 中文注释：后台更新不打开浏览器、不写剪贴板，也不等待扩展；用户下次启动后重载。
     if not getattr(args, 'background_update', False):
         next_steps(home, user_home, browsers, env, args.wait_seconds, args.upgrade, args.verbose)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Browser Link 安装 / install, --upgrade, --uninstall')
+    parser = argparse.ArgumentParser(
+        description='Browser Link 安装 / install, --upgrade, --uninstall',
+        epilog='Release ZIP 无需 Node.js / Release ZIP: no Node.js. 源码 / Source: Node.js 22.12+.')
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--upgrade', action='store_true')
     action.add_argument('--uninstall', action='store_true')
@@ -517,10 +524,12 @@ def main():
     parser.add_argument('--yes', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--verbose', action='store_true', help='显示安装目录 / show installation directories')
-    parser.add_argument('--profile', action='append')
+    parser.add_argument('--profile', action='append',
+                        help='首次默认 default；多 profile 重复添加 / first install: default; repeat for multiple profiles')
     parser.add_argument('--user-home', type=Path, default=Path.home())
     parser.add_argument('--hermes-home', type=Path, default=Path(os.environ.get('HERMES_HOME', str(Path.home() / '.hermes'))))
-    parser.add_argument('--wait-seconds', type=int, default=180, help='连接等待秒数；0 跳过 / connection wait, 0 skips')
+    parser.add_argument('--wait-seconds', type=int, default=180,
+                        help='默认等 180 秒；0 跳过，不卸载 / waits 180s; 0 skips, does not uninstall')
     args = parser.parse_args()
     if args.update or args.check_update or args.auto_update:
         # 中文注释：更新入口复用维护模块，源码与发行包不另建下载实现。

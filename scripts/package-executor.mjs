@@ -263,7 +263,8 @@ try {
   await writeFile(path.join(output,'INSTALL.txt'),`Browser Link ${releaseVersion || declaredVersion}
 Run ./install.sh. Python 3.11+ and Hermes are needed; source installation also needs Node.js 22.12+.
 Currently supported: macOS + Chrome/Edge. Tested with Hermes 0.21.4.
-Load the printed extension directory, keep the default smart-approval mode and restart Hermes Desktop.
+Load the printed extension directory, confirm connection authorization in the extension and restart Hermes Desktop; ordinary task-page actions run directly.
+Takeover, stop and credential protection remain available. Cookie mirroring and adopting an existing OAuth login window require separate confirmation.
 Upgrade: ./install.sh --upgrade, then reload the extension and restart Hermes Desktop.
 Automatic updates: ./install.sh --auto-update install (hourly, waits until browsers and Hermes exit).
 Check only: ./install.sh --check-update. Update now: ./install.sh --update. Disable: ./install.sh --auto-update off.

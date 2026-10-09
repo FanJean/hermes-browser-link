@@ -1,5 +1,6 @@
 """Exercise public cancellation routing, not the release helper alone."""
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from daemon import BridgeDaemon, ProtocolError
@@ -76,13 +77,37 @@ class CancelRoutingTests(unittest.TestCase):
             daemon._notify_tasks_changed = lambda instance_id: None
             daemon.extensions['browser'] = {'browser': 'chrome'}
             task = daemon._dispatch_client('shared.create', {'owner': 'owner', 'title': 'worker', 'instanceId': 'browser', 'allowedOrigins': ['https://example.test']})
+            internal = daemon.tasks[task['id']]
+            internal.update(state='ready', activeMode='full', tabIds=[7], agentTabIds=[7])
+            daemon.tab_leases[('browser', 7)] = task['id']
+            # 中文注释：由真实批准入口产生 worker 参数，不能伪造缺少代次的 pending。
+            daemon._pending_action(internal, {'requestId': 'request'}, 'request', 'digest', [])
+            pending = daemon.action_approvals[(task['id'], 'request')]
             def fail(*args, **kwargs):
                 raise RuntimeError('worker failed')
             daemon._run_task = fail
             releases = []
             daemon._extension_call = lambda extension, method, params, timeout=15.0: releases.append(params)
-            daemon._approval_worker((task['id'], 'request'), {'params': {}, 'digest': 'digest'})
+            done = threading.Event()
+            worker = daemon._approval_worker
+            def traced_worker(key, pending):
+                try:
+                    worker(key, pending)
+                finally:
+                    done.set()
+            daemon._approval_worker = traced_worker
+            decision = daemon._dispatch_extension('browser', 'extension.decide', {
+                'taskId': task['id'], 'nonce': pending['nonce'], 'digest': pending['digest'], 'approve': True})
+            self.assertEqual(decision, {'status': 'approved'})
+            self.assertTrue(done.wait(5), 'approval worker did not finish')
+            self.assertEqual(len(releases), 1)
             self.assertIs(releases[0]['closeAgentTabs'], False)
+            self.assertEqual(releases[0]['generation'], task['generation'])
+            self.assertEqual(internal['state'], 'needs_sync')
+            # 中文注释：清除操作资格不等于删除浏览器标签，删除开关仍必须为 False。
+            self.assertEqual(internal['tabIds'], [])
+            self.assertEqual(daemon.tab_leases, {})
+            self.assertEqual(daemon.dedupe[task['id']]['request'], ('digest', None, None))
 
     def test_extension_stop_only_revokes_daemon_state_without_nested_rpc(self):
         # The extension already completed its local release. A synchronous

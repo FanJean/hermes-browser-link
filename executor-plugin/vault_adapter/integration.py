@@ -56,17 +56,17 @@ VAULT_TOOL_SCHEMAS = {
         "parameters": _obj({"backend": {"type": "string", "enum": ["onepassword", "bitwarden"]}}, ("backend",)),
     },
     "browser_vault_fill": {
-        "description": "从已有 Vault 句柄填写当前任务工作页的登录密码；智能审批后用相同参数重查，再次独立填写需新 request_id。支付卡和地址暂不支持。结果未知时不得重试。",
+        "description": "从已有 Vault 句柄经私有通道填写当前任务工作页的登录密码；连接授权不替代 Vault 解锁及来源校验，再次独立填写需新 request_id。支付卡和地址暂不支持。结果未知时不得重试。",
         "parameters": _obj({"handle": {"type": "string", "minLength": 1, "maxLength": 512},
                             "request_id": {"type": "string", "minLength": 1, "maxLength": 128}}, ("handle",)),
     },
     "browser_vault_save_login": {
-        "description": "Ask the user through the official masked UI to save a login, then fill through the private native channel. In smart mode retry the same request_id after approval; use a new one for another save. Never accept credentials through chat.",
+        "description": "Ask the user through the official masked UI to save a login, then fill through the private native channel. Connection authorization does not replace the official masked user prompt or origin checks; use a new request_id for another save. Never accept credentials through chat.",
         "parameters": _obj({"label": {"type": "string", "maxLength": 160},
                             "request_id": {"type": "string", "minLength": 1, "maxLength": 128}}),
     },
     "browser_vault_enter_code": {
-        "description": "Enter a saved or user-provided one-time code through the official masked UI and private native channel; the code never enters the conversation. In smart mode retry the same request_id after approval; use a new one for another fill.",
+        "description": "Enter a saved or user-provided one-time code through the official masked UI and private native channel; the code never enters the conversation. Connection authorization does not replace the official masked code prompt or origin checks; use a new request_id for another fill.",
         "parameters": _obj({"handle": {"type": "string", "maxLength": 512},
                             "request_id": {"type": "string", "minLength": 1, "maxLength": 128}}),
     },
@@ -176,8 +176,9 @@ class VaultBindingRegistry:
             raise ValueError("Vault owner mismatch")
         task = _valid_task(self.runtime, owner, task_id)
         rows = task['workTabs']
+        eligible = [row['tabId'] for row in rows] + task.get('adoptedPopupTabIds', [])
         if tab_id is not None and (type(tab_id) is not int or tab_id not in task['tabIds']
-                or not any(row['tabId'] == tab_id for row in rows)):
+                or tab_id not in eligible):
             raise ValueError('Vault target is not a daemon workTab')
         with self._guard:
             # 中文注释：只共享任务/页选择元信息；切页时撤销旧私有 nonce，不复用凭据检查。
@@ -186,7 +187,7 @@ class VaultBindingRegistry:
             explicit = tab_id is not None
             if previous and selected is None and previous.get('explicit_tab') and (
                     previous['generation'], previous['mode_generation']) == (task['generation'], task['modeGeneration']):
-                if any(row['tabId'] == previous.get('tab_id') for row in rows):
+                if previous.get('tab_id') in eligible:
                     selected, explicit = previous['tab_id'], True
             if selected is None and len(rows) == 1:
                 selected = rows[0]['tabId']
@@ -233,7 +234,7 @@ class VaultBindingRegistry:
         if tab_id is None and len(work_tabs) == 1:
             tab_id = work_tabs[0]["tabId"]
         if (type(tab_id) is not int or tab_id not in task["tabIds"]
-                or not any(row["tabId"] == tab_id for row in work_tabs)):
+                or (not any(row["tabId"] == tab_id for row in work_tabs) and tab_id not in task.get('adoptedPopupTabIds', []))):
             return None
         return {
             "owner": owner, "task_id": task["id"], "instance_id": task["instanceId"],

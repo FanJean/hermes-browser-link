@@ -22,14 +22,14 @@ Every `shared.run` carries a `requestId`. The daemon binds each ID to a hash of 
 | Method | Purpose |
 |---|---|
 | `health` | Service check; returns `protocolVersion` |
-| `browser.list` | Connected instances with `consentStatus` (`enabled` = full, `disabled` = smart, `unknown` = unreadable) and `accessRequestSupported` |
-| `browser.access_request {instanceId}` | Ask the extension to open its browser mode window. It never changes the mode by itself. |
-| `shared.create {owner, title, instanceId, allowedOrigins}` | New task; the extension prepares it in smart or full mode |
+| `browser.list` | Connected instances with `consentStatus` (`enabled` = connected full-access authorization, `disabled` = not authorized, `unknown` = unreadable) and `accessRequestSupported` |
+| `browser.access_request {instanceId}` | Compatibility request to show extension connection authorization; not a Desktop action-request or mode-switch control. It never grants authorization itself. |
+| `shared.create {owner, title, instanceId, allowedOrigins}` | New task; after browser connection authorization the extension prepares full-access task authority automatically |
 | `shared.list`, `shared.get`, `shared.cancel`, `shared.close`, `shared.resume` | Task lifecycle. `resume` increments the generation and needs fresh authorization. |
 | `shared.run {owner, taskId, requestId, action, tabId?, ...}` | One page action (see [usage](usage.md#page-actions-browser_shared_run)) |
 | `shared.operation_status` | Read the request ledger for a request ID |
 | `shared.artifacts`, `shared.downloads`, `shared.download_claim` | Task files and downloads |
-| `shared.cdp_gateway`, `shared.cdp_gateway_close` | Local CDP endpoint for `browser_exec`; full mode opens directly, smart mode consumes one approved script permit, then closes the gateway after the script |
+| `shared.cdp_gateway`, `shared.cdp_gateway_close` | Local CDP endpoint for `browser_exec`; connection authorization opens directly; task scope and credential-page exclusion remain enforced, and the gateway closes after the script |
 | `shared.cleanup_status`, `shared.cleanup_retry` | Read-only verification and explicit retry of work-tab cleanup |
 | `shared.handoff {owner, taskId, keepTabs?}` | Revoke task authority; preserve pages needing user input or explicitly handed over, then remove verified task groups. |
 | `shared.activity {owner, taskId?}` | Trusted plugin activity cancels this owner's completion grace; a task ID narrows the idle activity update. It does not start a missing daemon. |
@@ -49,8 +49,8 @@ Public task objects contain `id, title, instanceId, browser, state, generation, 
 | `extension.hello {instanceId, browser, version, capabilities}` | First message; binds the connection to an instance and returns a connection generation |
 | `extension.tasks` | Tasks for this instance (no owners) |
 | `extension.approve`, `extension.reject` | Decide a pending task. Approval can only narrow — never widen — the requested origins and must come from the extension UI. |
-| `extension.mode` | Switch an authorized task between smart and full; switching clears per-site read approvals |
-| `extension.approvals`, `extension.decide` | Pending per-action approvals and the user's decision |
+| `extension.mode` | Internal compatibility scope update; no user-selectable approval mode is exposed, and stale generations remain invalid |
+| `extension.approvals`, `extension.decide` | Pending independent special confirmations (including existing OAuth-window adoption) and the user's decision |
 | `extension.pause`, `extension.unpause`, `extension.stop` | Take-over and stop from the page overlay or popup |
 | `extension.tab_event {taskId, tabId, event, documentGeneration, url?}` | Tab closed or navigated; invalidates references for that document |
 | `extension.download_event`, `extension.cdp_events` | Download attribution and buffered CDP events |
@@ -58,18 +58,18 @@ Public task objects contain `id, title, instanceId, browser, state, generation, 
 
 The daemon sends a `tasks.changed` notification whenever the pending or active task list changes; unknown notifications are ignored.
 
-In smart mode, the first page read for a task and top-level origin creates a pending approval with `readOrigin`. The panel names the task and site and states that it permits reading page content; writes and debug commands remain per-action approvals. The extension reports only the current leased tab origin before displaying the request, and rechecks the origin before and after returning page content. A rejected site read does not dispatch. Navigation or new-tab approval may grant reading its target origin in the same decision. `tabs` returns only leased task tabs, so it does not expose the browser-wide tab list. Site read approvals are cleared on task end, mode change and generation change.
+Browser connection authorization is full-only. Ordinary first-site reads, later reads, navigation, writes, JS/CDP and Python workflows run directly; no per-action permission panels are created. Internal compatibility policy states remain fail-closed before a grant, and identity/origin/lease/generation checks remain independent. `tabs` returns only leased task tabs, not the browser-wide tab list. Cookie mirror and existing OAuth-window adoption retain explicit special confirmation; sensitive-field manual input and the private Vault path remain separate.
 
 ## Daemon → extension
 
 | Method | Purpose |
 |---|---|
 | `browser.execute {taskId, generation, requestId, action, tabId, allowedOrigins, ...}` | Run one action. The daemon injects the current generation and exact origins after checking ownership and the lease. |
-| `browser.assess` | Pre-check the target of `fill` / `press` / `ref_fill` for sensitivity before asking for approval |
-| `browser.read_origin` | Read only the leased tab's current top-level origin before a smart-mode site read approval; no title, DOM or screenshot |
+| `browser.assess` | Pre-check the target of `fill` / `press` / `ref_fill` for sensitivity before execution or manual entry |
+| `browser.read_origin` | Read only the leased tab's current top-level origin for internal scope validation; no title, DOM or screenshot |
 | `browser.release {taskId, generation, closeAgentTabs}` | Revoke a task; close only task-created tabs whose ownership is still proven |
 | `browser.cleanup_status`, `browser.cleanup_retry` | Inspect or retry work-tab cleanup |
-| `browser.credentials` | Cookies for one same-origin `api_request` URL after mode approval (never returned to the model) |
+| `browser.credentials` | Cookies for one same-origin `api_request` URL under connection and task authorization (never returned to the model) |
 | `browser.vault_inspect`, `browser.vault_fill` | Private Vault fill, when enabled |
 | `browser.download_cancel`, `browser.cdp_chunk` | Download cancellation; paging of large CDP results |
 | `extension.consent_status`, `extension.access_request` | Fresh consent read; open the authorization window |
@@ -95,13 +95,13 @@ Snapshot `options`: `mode`, `root`, `query`, `roles`, `viewport`, `composed`, `a
 
 ## Read-only API requests
 
-`api_request` uses the browser mode: smart requests approval, and full runs directly. It accepts a same-origin `GET` or `HEAD` URL and a list of top-level JSON fields to return. Cookies for that URL travel only over the private native channel, are held in memory for the single request, and are never returned. The HTTP client pins the resolved global IP, verifies TLS, ignores proxies, caps time and size, and redacts credential-like fields.
+`api_request` runs directly after browser connection authorization, with the existing task scope and credential protections. It accepts a same-origin `GET` or `HEAD` URL and a list of top-level JSON fields to return. Cookies for that URL travel only over the private native channel, are held in memory for the single request, and are never returned. The HTTP client pins the resolved global IP, verifies TLS, ignores proxies, caps time and size, and redacts credential-like fields.
 
 ## Network evidence and capability discovery
 
-`network.inspect` is an internal `shared.run` action with `{tabId, options}`. `options.operation` is `start`, `list`, `detail` or `stop`; smart mode requests approval and full mode runs directly. It requires the same task, tab lease and credential-page exclusion as raw CDP. The CDP gateway binds to the task’s existing generation and modeGeneration. Raw CDP events are not filtered by origin; credential headers and Bearer values are removed in both modes.
+`network.inspect` is an internal `shared.run` action with `{tabId, options}`. `options.operation` is `start`, `list`, `detail` or `stop`; connection authorization permits execution directly, without per-action approval. It requires the same task, tab lease and credential-page exclusion as raw CDP. The CDP gateway binds to the task’s existing generation and modeGeneration. Raw CDP events are not filtered by origin; credential headers and Bearer values are always removed.
 
-`Page.addScriptToEvaluateOnNewDocument` is available through raw CDP. In smart mode its approval explains that the script persists on later pages, including other sites. The extension records each returned identifier and removes registered scripts when the task ends or its mode changes.
+`Page.addScriptToEvaluateOnNewDocument` is available through raw CDP. It runs directly under connection authorization and can persist on later pages, including other sites; it is not a read-only sandbox. The extension records each returned identifier and removes registered scripts when the task ends or authorization is revoked. Leaving the task origin fences new dispatches, but cannot guarantee that a previously registered script has not already run during navigation.
 
 The extension advertises `browser_core_v1`, `page_parse_v1`, `page_function_v1`, `network_evidence_v1` and `cookie_mirror_v1` in `extension.hello.capabilities.features`. The daemon publishes recognized values in `browser.list`. Missing features are not inferred from version strings. Generated API reference projection describes availability, never authority.
 

@@ -110,7 +110,7 @@ Wait until document.readyState reaches ``until``; returns the final state.  The 
 
 ### `page_request(url, *, fields, method='GET', max_bytes=65536, timeout_ms=10000, tab=None)`
 
-中文注释：同源 GET/HEAD 的有界 JSON 字段读取；智能审批先确认，不推断业务无副作用。
+中文注释：连接授权后直接执行同源 GET/HEAD 的有界 JSON 字段读取；不推断业务无副作用。
 
 扩展能力：`page_function_v1`。
 
@@ -135,6 +135,18 @@ Wait until document.readyState reaches ``until``; returns the final state.  The 
 ### `frame_catalog(*, tab=None)`
 
 列出当前任务页的 frame 及可用的不透明引用。
+
+扩展能力：`browser_core_v1`。
+
+### `popup_catalog(*, tab=None)`
+
+仅列出授权源页新建的独立登录弹窗元数据，不读取内容或接管。
+
+扩展能力：`browser_core_v1`。
+
+### `popup_adopt(candidate_ref, *, tab=None)`
+
+请求精确接管已有弹窗。先在同一脚本调用 popup_catalog 保留 candidate； ApprovalRequired 后用 wait_pending(tab=source) 只读查询账本，不重发接管。 等待返回 state=confirmed，不是 adopted 回执；显式 use_tab(candidate['tabId']) 后重新 read_page 核实原窗口当前权限与内容，不另开登录网址。
 
 扩展能力：`browser_core_v1`。
 
@@ -248,13 +260,13 @@ Wait until document.readyState reaches ``until``; returns the final state.  The 
 
 ### `js(expression, *, world='isolated', await_promise=True, timeout_ms=10000, frame_token=None, tab=None)`
 
-在任务页运行 JavaScript；智能审批需确认，全部访问直接执行。
+在任务页运行 JavaScript；连接授权后直接执行，凭据与内容保护仍生效。
 
 扩展能力：`browser_core_v1`。
 
 ### `cdp(method, frame_token=None, tab=None, **params)`
 
-原始 CDP 方法；智能审批逐项确认，全部访问直接执行。
+原始 CDP 方法；连接授权后直接执行，任务租约、来源和凭据保护仍生效。
 
 扩展能力：`browser_core_v1`。
 
@@ -296,7 +308,7 @@ After BrowserError.outcome_unknown: read the page to check what happened, then c
 
 ### `wait_pending(timeout_s=20.0, *, tab=None)`
 
-After ApprovalRequired, wait for the user's decision on that same request.
+Wait for the same approval/manual-input request (max 300 s). Ordinary requests return their original receipt. Popup adoption queries only the ledger and current scope, returning operation_status fields (state=confirmed), never an adopted/tabId receipt. Select the catalog candidate with use_tab and read_page next; confirmation is not current page-access proof. Unknown outcomes, rejected approvals or changed scope never replay the adoption.
 
 扩展能力：`browser_core_v1`。
 
@@ -509,7 +521,7 @@ After ApprovalRequired, wait for the user's decision on that same request.
 
 ```json
 {
-  "description": "同一页需要两步以上（填表、翻页、采集、点击后读结果）请用一次 browser_shared_script；打开或导航后先看回执摘要，不足再读取页面；同一页不要混用 browser_exec。需要用户处理时列出标签页；会话结束会保留待处理页。在任务的工作页执行一个动作。智能审批下首次读取每个网站需确认，之后同站读取直接执行；tabs 只返回任务标签。返回 approval_required 或 user_input_required 时，等用户处理后用相同 request_id 和参数再查一次，不要改参重发；outcome_unknown 为真时不要重试，先读页面核实。详见技能 browser-link:use-my-browser。 页面执行：智能审批逐项确认 js.evaluate / cdp.send / cdp.events，全部访问直接执行。发生过凭据填写的页面不能运行任意 JS/CDP。原始脚本结果不做字段级脱敏。 read_page/page_text 返回 dict：读 page[\"items\"] / page[\"elements\"]，不能切片 dict；wait_for timeout 上限 60 秒。 JS 用 evaluate(\"(selector)=>document.querySelector(selector)?.textContent\", \"#result\") 传值；isolated 共享 DOM，不共享网站 JS 全局变量，main 需明确理由且不自动切换。 上传：files.upload 传 selector 与 paths（用户在对话中给出的本地文件路径，可用 ~）。",
+  "description": "同一页需要两步以上（填表、翻页、采集、点击后读结果）请用一次 browser_shared_script；打开或导航后先看回执摘要，不足再读取页面；同一页不要混用 browser_exec。需要用户处理时列出标签页；会话结束会保留待处理页。在任务的工作页执行一个动作。浏览器连接授权后，普通读取、导航、写入和 Python 工作流直接执行，不逐项确认；tabs 只返回任务标签。除 popup_adopt 外，返回 approval_required 或 user_input_required 时，等用户处理后用相同 request_id 和参数再查一次，不要改参重发；popup_adopt 的等待只读查询当前任务，不重发接管。outcome_unknown 为真时不要重试，先读页面核实。详见技能 browser-link:use-my-browser。 popup_catalog 使用授权源 tab_id 发现刚创建的独立登录弹窗，只返回元数据；popup_adopt 传同一源 tab_id 和 candidate_ref，全部访问也必须明确确认。不得另开登录网址代替原弹窗；批准后用 browser_shared_get 核对当前代次和 adoptedPopupTabIds，再显式选择已知 candidate 的 tabId 并重新读取。脚本用 wait_pending 只读查询账本，返回 state=confirmed 而非 adopted/tabId 回执；不重发接管，不自动移动或关闭弹窗。元数据不等于当前页面访问证明。 页面执行：连接授权后 js.evaluate / cdp.send / cdp.events 直接执行，不逐项确认。发生过凭据填写的页面不能运行任意 JS/CDP。原始脚本结果不做字段级脱敏。 read_page/page_text 返回 dict：读 page[\"items\"] / page[\"elements\"]，不能切片 dict；wait_for timeout 上限 60 秒。 JS 用 evaluate(\"(selector)=>document.querySelector(selector)?.textContent\", \"#result\") 传值；isolated 共享 DOM，不共享网站 JS 全局变量，main 需明确理由且不自动切换。 上传：files.upload 传 selector 与 paths（用户在对话中给出的本地文件路径，可用 ~）。",
   "parameters": {
     "type": "object",
     "properties": {
@@ -546,6 +558,8 @@ After ApprovalRequired, wait for the user's decision on that same request.
           "navigate",
           "new_tab",
           "page.parse",
+          "popup_adopt",
+          "popup_catalog",
           "press",
           "ref_click",
           "ref_fill",
@@ -733,6 +747,11 @@ After ApprovalRequired, wait for the user's decision on that same request.
       },
       "checked": {
         "type": "boolean"
+      },
+      "candidate_ref": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
       },
       "frame_token": {
         "type": "string",
@@ -990,6 +1009,8 @@ After ApprovalRequired, wait for the user's decision on that same request.
                 "js.evaluate",
                 "navigate",
                 "page.parse",
+                "popup_adopt",
+                "popup_catalog",
                 "press",
                 "ref_click",
                 "ref_fill",
@@ -1085,7 +1106,7 @@ After ApprovalRequired, wait for the user's decision on that same request.
 
 ```json
 {
-  "description": "恢复已取消或需同步的任务（新代次）；新任务使用当前浏览器的智能审批或全部访问模式。不会重放结果不确定的动作。",
+  "description": "恢复已取消或需同步的任务（新代次）；新任务沿用浏览器连接授权（全部访问），无需逐项批准；未连接或授权未确认时不执行。不会重放结果不确定的动作。",
   "parameters": {
     "type": "object",
     "properties": {
@@ -1149,7 +1170,7 @@ After ApprovalRequired, wait for the user's decision on that same request.
 
 ```json
 {
-  "description": "同一页两步以上时，在本会话已就绪的任务中运行一次 Python 脚本并读回核对（填表、翻页、提取、保存）。脚本内可用 new_tab、goto_url、read_page、wait_for_element、click_element、fill_element、scroll、semantic_snapshot、screenshot、reconcile、wait_pending 等函数，每个页面动作仍受审批约束。page_text/read_page 返回 dict，读 elements/items 字段，不能切片 dict；wait_for timeout 上限 60 秒，先检查 satisfied。JS 用 evaluate(function, arguments) 传值。stdout 只打印目标项、coverage、计数和文件路径，大提取物保存在脚本工作区。用法与模板见技能 browser-link:batch-scrape。",
+  "description": "同一页两步以上时，在本会话已就绪的任务中运行一次 Python 脚本并读回核对（填表、翻页、提取、保存）。脚本内可用 new_tab、goto_url、read_page、wait_for_element、click_element、fill_element、scroll、semantic_snapshot、screenshot、reconcile、wait_pending 等函数，连接授权后普通动作直接执行，仍校验任务归属、来源与租约，敏感操作保留独立确认。page_text/read_page 返回 dict，读 elements/items 字段，不能切片 dict；wait_for timeout 上限 60 秒，先检查 satisfied。JS 用 evaluate(function, arguments) 传值。stdout 只打印目标项、coverage、计数和文件路径，大提取物保存在脚本工作区。用法与模板见技能 browser-link:batch-scrape。",
   "parameters": {
     "type": "object",
     "properties": {
@@ -1327,7 +1348,7 @@ After ApprovalRequired, wait for the user's decision on that same request.
 
 ```json
 {
-  "description": "运行已验证的网站工具；沿用当前任务、来源、租约和审批。access 标签不授予权限。结果未知时不重放。",
+  "description": "运行已验证的网站工具；连接授权后普通动作直接执行，沿用当前任务、来源、租约和敏感操作独立确认。access 标签不授予权限。结果未知时不重放。",
   "parameters": {
     "type": "object",
     "properties": {

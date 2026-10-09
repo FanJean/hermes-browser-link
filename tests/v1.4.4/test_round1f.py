@@ -183,7 +183,7 @@ class Round1fTests(unittest.TestCase):
                 os.close(self.fd)
                 self.receipt = {'last_operation': None, 'execution_complete': True, 'outcome_unknown': False}
         bridge = types.SimpleNamespace(prepare=lambda **kwargs: Launch())
-        with tempfile.TemporaryDirectory(prefix='bf-', dir='/tmp') as directory:
+        with tempfile.TemporaryDirectory(prefix='bf-') as directory:
             workspace = Path(directory)
             (workspace / 'tmp').mkdir()
             result = SCRIPT.run_script(bridge, session_id='synthetic', tool_call_id='r', workspace=workspace,

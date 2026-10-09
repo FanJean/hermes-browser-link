@@ -2,7 +2,7 @@
 
 只使用 Hermes 公开的 ``register_tool(..., override=True)``（需要操作者授予 tools.override）与
 Browser Use CLI 公开的 ``BU_CDP_WS`` 连接约定，不修改 Hermes 或 Browser Use 源码。
-未绑定任务的会话保持 Hermes 原行为；已绑定任务在智能审批模式先确认本次脚本。
+未绑定任务的会话保持 Hermes 原行为；已绑定任务在浏览器连接授权后直接执行脚本；凭据页面排斥规则仍生效。
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ _TASK_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 _SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _NOTE = ("\n\n当前会话已绑定 Hermes 浏览器插件的共享任务时，代码驱动的是该任务的工作页："
-         "全部访问直接执行；智能审批会先显示本次脚本批准请求，批准后以相同参数重试；再次执行同一脚本需新 request_id。"
+         "连接授权后直接执行，不逐项批准；再次独立执行同一脚本需新 request_id，结果未知不得重放。"
          "凭据填写过的页面不能执行脚本；upload_file 可使用用户指定的本地文件。")
 
 

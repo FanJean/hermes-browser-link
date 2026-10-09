@@ -15,7 +15,7 @@ def schemas():
             'action': {'type': 'string', 'enum': ['define', 'try', 'activate', 'discard']}, 'definition': obj, 'draft_id': text,
             'args': obj, 'checks': {'type': 'array', 'items': obj, 'minItems': 1, 'maxItems': 16},
             'timeout_s': {'type': 'integer', 'minimum': 1, 'maximum': 600}}, ['action']),
-        'browser_site_run': schema('运行已验证的网站工具；沿用当前任务、来源、租约和审批。access 标签不授予权限。结果未知时不重放。', {'site': text, 'name': text, 'args': obj, 'timeout_s': {'type': 'integer', 'minimum': 1, 'maximum': 600}}, ['site', 'name', 'args']),
+        'browser_site_run': schema('运行已验证的网站工具；连接授权后普通动作直接执行，沿用当前任务、来源、租约和敏感操作独立确认。access 标签不授予权限。结果未知时不重放。', {'site': text, 'name': text, 'args': obj, 'timeout_s': {'type': 'integer', 'minimum': 1, 'maximum': 600}}, ['site', 'name', 'args']),
     }
 
 

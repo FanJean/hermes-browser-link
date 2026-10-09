@@ -288,7 +288,7 @@ _RESULT_ARTIFACT = _scalar_fields('id taskId sha256 mimeType size')
 _RESULT_TASK = {
     **_scalar_fields('id title browser instanceId state generation activeMode modeGeneration nextStep modeStatus '
                      'createdAt updatedAt isolation lastError workspaceState cleanupState open_tabs'),
-    'allowedOrigins': [None], 'tabIds': [None],
+    'allowedOrigins': [None], 'tabIds': [None], 'adoptedPopupTabIds': [None],
     'workTabs': [_scalar_fields('tabId windowId groupId state')],
     'pendingInteraction': _scalar_fields('kind count'),
     'resumeSummary': _scalar_fields('urlChanged documentReplaced referencesInvalid readPageFirst'),
@@ -300,9 +300,9 @@ _RESULT_SEMANTIC = {
     **_scalar_fields('version title snapshotId kind mode nextCursor baselineId frameToken'),
     'binding': _scalar_fields('taskId documentId leaseId'),
     # 中文注释：语义上下文和状态必须穿过公共工具投影，容器引用仍不是动作别名；不放行 value 或原始属性。
-    'items': [{**_scalar_fields('ref role name nameSource parentRef disabled readonly busy checked expanded selected required omittedCells truncated inferred'),
+    'items': [{**_scalar_fields('ref role name nameSource parentRef inputType fieldKind inputRequired disabled readonly busy checked expanded selected required omittedCells truncated inferred'),
                'actions': frozenset({'click', 'press', 'fill', 'set_checked', 'select_option'}),
-               'context': [_scalar_fields('ref role name index')],
+               'context': [_scalar_fields('ref role name index surfaceKind')],
                'targetPath': [_scalar_fields('kind mode frameRef hostRef frameToken documentId')], 'cells': [None]}],
     'removed': [None], 'order': [None], 'resync': _scalar_fields('reason'),
     'coverage': _scalar_fields('scanned matched returned omitted filtered truncated offset complete traversalComplete scope skippedFrames unsupportedCanvas contentShieldSkippedFrames axDiscoveryComplete axEnriched axOmitted'),
@@ -323,13 +323,18 @@ _RESULT_PARSE = {
     'binding': _scalar_fields('taskId documentId leaseId'),
     'coverage': _scalar_fields('scanned skippedFrames traversalComplete scope complete totalRecords observedRecords returned matched offset contentShieldSkippedFrames'),
     'warnings': [None],
-    'regions': [{**_RESULT_SOURCE, **_scalar_fields('kind name parentRef method excludedFromContent')}],
+    'regions': [{**_RESULT_SOURCE, **_scalar_fields('kind name parentRef surfaceKind method excludedFromContent')}],
     'blocks': [{**_RESULT_SOURCE, **_scalar_fields('kind text regionRef level href truncated')}],
     'tables': [{**_RESULT_SOURCE, **_scalar_fields('tableRef row domRow observedRows declaredRows declaredColumns'), 'cells': [{**_RESULT_SOURCE, **_scalar_fields('text row column rowSpan colSpan header headerRole'), 'headerRefs': [None]}]}],
-    'forms': [{**_RESULT_SOURCE, **_scalar_fields('formRef groupRef groupLabel label role description validationMessage'), 'state': _scalar_fields('disabled required readonly checked selected expanded busy invalid'), 'options': [_scalar_fields('text selected')]}],
+    'forms': [{**_RESULT_SOURCE, **_scalar_fields('formRef surfaceRef groupRef groupLabel label role inputType fieldKind inputRequired description validationMessage'),
+               'actions': frozenset({'click', 'press', 'fill', 'set_checked', 'select_option'}),
+               'state': _scalar_fields('disabled required readonly checked selected expanded busy invalid'), 'options': [_scalar_fields('text selected')]}],
     'collections': [{**_RESULT_SOURCE, **_scalar_fields('containerRef text classification method')}],
 }
+_RESULT_POPUP = _scalar_fields('candidateRef tabId windowId openerTabId origin windowType')
 _RESULT_ACTIONS = {
+    'popup_catalog': {**_scalar_fields('sourceTabId observationMs'), 'candidates': [_RESULT_POPUP]},
+    'popup_adopt': {**_RESULT_POPUP, **_scalar_fields('adopted sourceTabId cleanupOwned')},
     'page.parse': _RESULT_PARSE,
     'navigate': _RESULT_TAB, 'new_tab': {**_RESULT_TAB, **_scalar_fields('open_tabs tab_hint')}, 'select_tab': _RESULT_TAB,
     'close_tab': _scalar_fields('closed tabId'), 'tabs': {'tabs': [_RESULT_TAB]},

@@ -5,17 +5,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as module from '../../native-extension/bridge.mjs';
 
-test('browser consent is explicit, persists separately, and never imports preferredMode',async()=>{
- const data={preferredMode:'full'};
- const storage={get:async()=>({...data}),set:async v=>Object.assign(data,v)};
- assert.equal(typeof module.BrowserConsent,'function');
- const executor={tasks:new Map(),revokeMode(){}};
- const consent=new module.BrowserConsent(storage,executor);
- await consent.load();assert.equal(consent.enabled,false);
- await consent.setEnabled(true);assert.equal(consent.enabled,true);
- assert.deepEqual(data.browserFullConsent,{version:1,enabled:true});
- const restored=new module.BrowserConsent(storage,executor);await restored.load();assert.equal(restored.enabled,true);
- await restored.setEnabled(false);assert.equal(data.browserFullConsent.enabled,false);
+test('connection consent ignores obsolete smart preferences without a second grant',async()=>{
+ for(const data of [{},{preferredMode:'smart',browserFullConsent:{version:1,enabled:false}}]){
+  const storage={get:async()=>({...data}),set:async()=>assert.fail('no separate permission preference')};
+  const consent=new module.BrowserConsent(storage,{tasks:new Map()});
+  assert.equal(await consent.load(),'enabled');
+  assert.equal(await consent.readStatus(),'enabled');
+  assert.equal(consent.enabled,true);
+ }
+});
+
+test('connection consent no longer exposes a smart-mode switch',()=>{
+ const consent=new module.BrowserConsent({}, {tasks:new Map()});
+ assert.equal(consent.setEnabled,undefined);
 });
 
 test('full mode installs a new task with empty owned scope',async()=>{
@@ -28,12 +30,11 @@ test('full mode installs a new task with empty owned scope',async()=>{
   let result;
   if(m.method==='extension.tasks')result=[task];
   else if(m.method==='extension.approve')result={...task,state:'ready'};
-  else if(m.method==='extension.mode')result={...task,state:'ready',activeMode:'full',modeGeneration:2};
+  else if(m.method==='extension.mode')result={...task,state:'ready',activeMode:m.params.mode,modeGeneration:2};
   else assert.fail(m.method);
   bridge.receive({id:m.id,result});
  });}};
  bridge=new module.Bridge(port,executor);
- await consent.setEnabled(true);
  await consent.synchronize(bridge);
  assert.equal(executor.tasks.get('new').policy.activeMode,'full');
  assert.deepEqual(sent.find(m=>m.method==='extension.approve').params.tabIds,[]);
@@ -46,18 +47,19 @@ test('auto-authorized empty scope creates grouped background tabs without claimi
  const tabs=new Map([[1,{id:1,url:'https://example.test/',windowId:7,groupId:-1,active:true}]]),data={},created=[];
  let next=10;
  const api={runtime:{getURL:p=>'chrome-extension://test/'+p},storage:{local:{get:async k=>({[k]:data[k]}),set:async v=>Object.assign(data,v)}},windows:{getCurrent:async()=>({id:7}),get:async()=>({id:7}),create:async()=>({id:7,tabs:[{id:9}]})},
-  tabs:{get:async id=>({...tabs.get(id)}),create:async p=>{const t={...p,id:next++,groupId:-1};created.push(t);tabs.set(t.id,t);return {...t};},group:async p=>{for(const id of p.tabIds)tabs.get(id).groupId=p.groupId??20;return p.groupId??20;},remove:async id=>tabs.delete(id)},tabGroups:{update:async()=>{},get:async id=>({id,windowId:7,title:'AI 工作'})},debugger:{detach:async()=>{}}};
+  tabs:{query:async()=>[],get:async id=>({...tabs.get(id)}),create:async p=>{const t={...p,id:next++,groupId:-1};created.push(t);tabs.set(t.id,t);return {...t};},group:async p=>{for(const id of p.tabIds)tabs.get(id).groupId=p.groupId??20;return p.groupId??20;},remove:async id=>tabs.delete(id)},tabGroups:{update:async()=>{},get:async id=>({id,windowId:7,title:'AI 工作'})},debugger:{detach:async()=>{}}};
  const executor=new Executor(api),consent=new module.BrowserConsent({set:async()=>{}},executor);
  const task={id:'grouped',instanceId:'browser',approvalScope:'scope',generation:1,modeGeneration:1,state:'pending_approval',tabIds:[],allowedOrigins:['https://example.test']};
  let bridge;
  bridge=new module.Bridge({onMessage:{addListener(){}},postMessage:m=>queueMicrotask(()=>bridge.receive({id:m.id,result:m.method==='extension.tasks'?[task]:m.method==='extension.approve'?{...task,state:'ready'}:{...task,state:'ready',activeMode:'full',modeGeneration:2}}))},executor);
- await consent.setEnabled(true);await consent.synchronize(bridge);
+ await consent.load();await consent.synchronize(bridge);
  const p={taskId:task.id,generation:1,modeGeneration:2,allowedOrigins:task.allowedOrigins,action:'new_tab',url:'https://example.test/',requestId:'one'};
  const a=await executor.execute(p),b=await executor.execute({...p,requestId:'two'});
  assert.equal(a.groupId,b.groupId);assert.ok(Number.isInteger(a.groupId));
  assert.equal(created.length,2);assert.ok(created.every(t=>t.active===false));
  assert.equal(tabs.get(1).groupId,-1);assert.equal(executor.leases.has(1),false);
- await consent.setEnabled(false);await assert.rejects(executor.execute({...p,requestId:'revoked'}));
+ await executor.release({taskId:task.id,generation:task.generation,closeAgentTabs:false});
+ await assert.rejects(executor.execute({...p,requestId:'revoked'}));
  assert.equal(created.length,2);
 });
 
@@ -70,40 +72,8 @@ test('mode response cannot switch a different task or a different requested mode
  }
 });
 
-test('enabling is not effective until durable consent write succeeds',async()=>{
- let finish;const storage={set:()=>new Promise(r=>finish=r)};
- const consent=new module.BrowserConsent(storage,{tasks:new Map()});
- const pending=consent.setEnabled(true);await new Promise(r=>setImmediate(r));
- assert.equal(consent.enabled,false);finish();await pending;assert.equal(consent.enabled,true);
-});
-
-test('failed full-mode write cannot upgrade an existing smart task',async()=>{
- // 中文注释：偏好写入失败时不得先向宿主发送 full 或在扩展本地放行。
- const {Executor}=await import('../../native-extension/core.mjs');
- const executor=new Executor({tabs:{get:async()=>({id:7,url:'https://example.test/'})}});
- await executor.approve({workWindowMode:'current',id:'smart',instanceId:'browser',approvalScope:'scope',generation:1,tabIds:[7],allowedOrigins:['https://example.test']});
- const consent=new module.BrowserConsent({set:async()=>{throw Error('disk failed');}},executor);
- await assert.rejects(consent.setEnabled(true,{closed:false,request:async()=>assert.fail('full RPC before durable write')}),/disk failed/);
- assert.equal(executor.tasks.get('smart').policy.activeMode,'smart');
-});
-
-// 中文注释：切到智能审批保留任务和低风险读取，不再以关闭访问终止任务。
-test('switching to smart keeps current tasks and reads available',async()=>{
- const {Executor}=await import('../../native-extension/core.mjs');
- const executor=new Executor({tabs:{get:async id=>({id,url:'https://example.test/'})},debugger:{detach:async()=>{}}});
- await executor.approve({workWindowMode:'current',id:'old',instanceId:'browser',approvalScope:'scope',generation:1,tabIds:[7],allowedOrigins:['https://example.test']});
- let finish;const sent=[];
- const consent=new module.BrowserConsent({set:()=>new Promise(resolve=>{finish=resolve;})},executor);
- const disabled=consent.setEnabled(false,{closed:false,request:async(method,params={})=>{sent.push({method,params});return {revoked:true};}});
- try{
-  assert.equal(executor.tasks.get('old').revoked,false);
-  assert.equal(executor.tasks.get('old').policy.activeMode,'smart');
- }finally{await new Promise(resolve=>setImmediate(resolve));finish();await disabled;}
- assert.deepEqual(sent,[]);
-});
-
-// 中文注释：没有活动任务时切换模式只写偏好；存储失败不伪报成功。
-test('trusted popup reports mode-storage failure without revoking tasks',async()=>{
+// 中文注释：旧界面消息也不能恢复智能审批；模式不再是用户可变偏好。
+test('trusted popup rejects removed mode controls without changing tasks',async()=>{
  const {readFile}=await import('node:fs/promises'),vm=await import('node:vm');
  const {Executor}=await import('../../native-extension/core.mjs');
  for(const storageFails of [false,true]){
@@ -117,9 +87,11 @@ test('trusted popup reports mode-storage failure without revoking tasks',async()
   source=source.replace(/^import .*;\n/gm,'').replace(/connect\(\);\s*$/,'bridge=injectedBridge;connected=true;');
   vm.runInNewContext(source,{CloudLink,CookieMirror,chrome,Executor,BrowserConsent:module.BrowserConsent,isUiSender:module.isUiSender,
    registerWorkspaceStartup:()=>{},injectedBridge:{closed:false,request:async method=>{calls.push(method);return method==='extension.tasks'?[]:{revoked:true};}}});
-  const result=await new Promise(resolve=>listener({type:'browser_consent',enabled:false},{id:'extension',url:'chrome-extension://extension/popup.html'},resolve));
-  assert.deepEqual(calls,storageFails?[]:['extension.tasks']);
-  if(storageFails)assert.equal(result.error,'storage failed');else assert.equal(result.result.enabled,false);
+  for(const message of [{type:'browser_consent',enabled:false},{type:'mode',taskId:'task',mode:'smart'}]){
+   const result=await new Promise(resolve=>listener(message,{id:'extension',url:'chrome-extension://extension/popup.html'},resolve));
+   assert.equal(result.error,'不支持的操作');
+  }
+  assert.deepEqual(calls,[]);
  }
 });
 

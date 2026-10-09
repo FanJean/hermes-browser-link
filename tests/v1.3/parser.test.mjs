@@ -228,3 +228,65 @@ test('结构化表单识别空属性和纯文本编辑区',()=>{
  const f=fixture('<form><div contenteditable aria-label="正文"></div><div contenteditable="plaintext-only" aria-label="备注"></div><div contenteditable="false">只读</div></form>');
  try{const page=f.parser.parse({sections:['forms']});assert.deepEqual(page.forms.map(item=>[item.label,item.role]),[['正文','textbox'],['备注','textbox']]);}finally{f.close();}
 });
+
+// 中文注释：登录控件按浮层分组，sourceRef 仍然只作来源；操作需新语义快照。
+test('登录模态层和无 role 的固定浮层都关联账号、密码与提交按钮',()=>{
+ const controls='<input type="email" autocomplete="username" aria-label="账号"><input type="password" aria-label="密码" value="PRIVATE_PASSWORD"><button>登录</button>';
+ const f=fixture(`<main><button>登录</button></main><div role="dialog" aria-modal="true" aria-label="谷歌登录">${controls}</div><div style="position:fixed;z-index:1000" aria-label="置顶登录">${controls}</div>`);
+ try{
+  const page=f.parser.parse({sections:['regions','forms']});
+  const surfaces=page.regions.filter(region=>region.surfaceKind);
+  assert.deepEqual(surfaces.map(region=>region.surfaceKind),['modal','floating']);
+  for(const region of surfaces){
+   const fields=page.forms.filter(field=>field.surfaceRef===region.sourceRef);
+   assert.deepEqual(fields.map(field=>field.fieldKind||field.role),['account','password','button']);
+   assert.ok(fields[0].actions.includes('fill'));assert.deepEqual(fields[1].actions,[]);
+   assert.equal(fields[1].inputRequired,'vault_or_user');assert.ok(fields[2].actions.includes('click'));
+  }
+  assert.doesNotMatch(JSON.stringify(page),/PRIVATE_PASSWORD/);
+  const shot=f.semantics.snapshot({root:'[role="dialog"]'});
+  assert.equal(shot.items.length,3);assert.equal(shot.items[0].context.at(-1).surfaceKind,'modal');
+ }finally{f.close();}
+});
+
+test('Shadow 登录浮层解析自定义提交按钮且排除隐藏或私密的重复表单',()=>{
+ const f=fixture('<div id="host"></div><div role="dialog" hidden><input aria-label="隐藏账号"></div><div role="dialog" data-private><input aria-label="私密账号"></div>');
+ try{
+  // 中文注释：固定本地测试 HTML，不包含网页或用户提供的字符串。
+  f.dom.window.document.querySelector('#host').attachShadow({mode:'open'}).innerHTML='<div role="alertdialog" aria-modal="true"><input autocomplete="username" aria-label="账号"><div role="button" tabindex="0">继续</div></div>';
+  const page=f.parser.parse({composed:true,sections:['regions','forms']});
+  assert.deepEqual(page.forms.map(field=>field.label),['账号','继续']);
+  assert.equal(page.regions[0].surfaceKind,'modal');
+  assert.ok(page.forms[1].actions.includes('click'));assert.equal(page.forms[1].surfaceRef,page.regions[0].sourceRef);
+  assert.equal(page.forms[0].targetPath[0].kind,'shadow');
+ }finally{f.close();}
+});
+
+test('无名固定 section 的 iframe 登录字段保留外层浮层上下文，局部根不越界',()=>{
+ const f=fixture('<section style="position:fixed"><iframe></iframe></section>');
+ try{
+  const inner=f.dom.window.document.querySelector('iframe').contentDocument;
+  inner.defaultView.HTMLElement.prototype.getClientRects=()=>[{width:100,height:30}];
+  // 中文注释：固定测试 HTML，仅补 iframe 的独立布局夹具。
+  inner.body.innerHTML='<input autocomplete="username" aria-label="账号"><button>下一步</button>';
+  const page=f.parser.parse({composed:true,sections:['regions','forms']});
+  assert.equal(page.forms.length,2);
+  const shot=f.semantics.snapshot({composed:true});assert.equal(shot.items.length,2);
+  for(const field of shot.items){
+   assert.equal(field.context?.at(-1).surfaceKind,'floating');
+   assert.equal(field.context.at(-1).ref,page.forms[0].surfaceRef);
+  }
+  const semantics=createPageSemantics({document:inner,taskId:'inner',documentId:'inner',leaseId:'inner'});
+  try{assert.ok(semantics.snapshot().items.every(field=>!field.context));}finally{semantics.revoke();}
+ }finally{f.close();}
+});
+
+test('自定义登录按钮和 dialog 采用首个有效角色，不把后续 button 误认成按钮',()=>{
+ const f=fixture('<div role="future dialog"><input autocomplete="username" aria-label="账号"><div role="future button unknown" tabindex="0">继续</div><div role="checkbox button" aria-checked="false">不是按钮</div><div role="none button">不展示</div></div>');
+ try{
+  const page=f.parser.parse({sections:['regions','forms']});
+  assert.equal(page.regions[0].surfaceKind,'dialog');
+  assert.deepEqual(page.forms.map(field=>field.label),['账号','继续']);
+  assert.equal(page.forms[1].role,'button');assert.ok(page.forms[1].actions.includes('click'));
+ }finally{f.close();}
+});

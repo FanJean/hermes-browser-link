@@ -5,7 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
-import {Executor,pageAction} from '../../native-extension/core.mjs';
+import {JSDOM} from 'jsdom';
+import {Executor,pageAction,semanticWorldDeclaration} from '../../native-extension/core.mjs';
 import {Bridge,isUiSender} from '../../native-extension/bridge.mjs';
 import {workspaceFixture,trustedTask} from './workspace-fixture.mjs';
 import {withSyntheticOverlay} from './overlay-fixture.mjs';
@@ -25,13 +26,18 @@ function cdp(f,inspect=()=>({kind:'blank_anchor',url:'https://example.com/child'
   calls.push(method);
   if(method==='Page.getFrameTree')return {frameTree:{frame:{id:'main',url:'https://example.com/',loaderId:'loader'}}};
   if(method==='Page.createIsolatedWorld')return {executionContextId:1};
+  if(method==='Network.enable')return {};
   if(method==='Runtime.callFunctionOn'){
+   // 中文注释：外部效果探针不伪造效果，只有模拟派发发出的网络事件能让生产观察器确认。
+   if(params.functionDeclaration.startsWith('function effectProbe'))return {result:{value:params.arguments[0].value!=='read'}};
    // 中文注释：语义库安装与动作调用分开模拟，动作断言仍执行生产函数。
    if(params.functionDeclaration.includes('globalThis.__hermesSemanticLibrary={')){installDeclaration=params.functionDeclaration;return {result:{value:true}};}
    return {result:{value:inspect({...params,installDeclaration})}};
   }
   throw Error(`unexpected CDP ${method}`);
- }};f.api.debugger=withSyntheticOverlay(f.api.debugger);return calls;
+ }};f.highlights=[];f.api.debugger=withSyntheticOverlay(f.api.debugger,{calls:f.highlights});
+ f.inputEffect=()=>{for(const listener of f.api.debugger.overlayListeners)listener({tabId:1},'Network.requestWillBeSent',{});};
+ return calls;
 }
 function eventSurface(){
  const listeners=new Map();
@@ -40,6 +46,31 @@ function eventSurface(){
   removeEventListener(type,listener){listeners.get(type)?.delete(listener);},
   emit(type,isTrusted=true){for(const listener of listeners.get(type)||[])listener({type,isTrusted});},
  };
+}
+
+// 中文注释：沿用 complex-ui 的离线 DOM 几何夹具；资格、引用和动作守卫仍执行生产代码。
+function pageFixture(html){
+ const dom=new JSDOM(html,{url:'https://example.com/',runScripts:'outside-only',pretendToBeVisual:true});
+ const {window}=dom,document=window.document,node=document.querySelector('#target');
+ Object.defineProperty(window,'innerWidth',{value:100});Object.defineProperty(window,'innerHeight',{value:100});
+ window.HTMLElement.prototype.getBoundingClientRect=()=>({left:1,top:1,right:21,bottom:21,width:20,height:20});
+ window.HTMLElement.prototype.getClientRects=()=>[{}];
+ document.elementFromPoint=()=>node;
+ // 中文注释：只替换渲染边界，生产 prepare 与 confirm 不跳过。
+ window.__hermesAutomationOverlay={highlight:{prepare:()=>({ok:true}),verify:()=>({ok:true})}};
+ const call=window.eval(`(${semanticWorldDeclaration})`);
+ return {window,document,node,close:()=>window.close(),token(binding){
+  const page=call('semantic_snapshot',{binding,options:{root:'#target',mode:'interactive',budget:5000}});
+  assert.equal(window.__hermesNativeSemanticsV2.version,8);
+  assert.equal(page.items.length,1);
+  return {binding,snapshotId:page.snapshotId,ref:page.items[0].ref};
+ }};
+}
+function semanticCdp(f,page){
+ return cdp(f,p=>{
+  page.window.eval(`(${p.installDeclaration})()`);
+  return page.window.eval(`(${p.functionDeclaration})`)(...p.arguments.map(argument=>argument.value));
+ });
 }
 
 test('production onCreated cannot claim a simultaneous manual tab; safe link opens a task-created grouped child',async()=>{
@@ -134,33 +165,50 @@ test('semantic ref_click uses inspected anchor URL rather than dispatching node.
 });
 
 test('normal click dispatches the requested page action without substituting navigation',async()=>{
- const f=workspaceFixture(),e=new Executor(f.api),ops=[];
- cdp(f,p=>{const op=p.arguments[0].value;if(op==='reveal_ref')return {rect:[60,30,20,30]};if(op==='rect_ref')return [60,30,20,30];if(/^(prepare|verify)_/.test(op))return {ok:true};ops.push(op);return {clicked:true,kind:'dom-synthetic'};});await start(e);
+ const f=workspaceFixture(),e=new Executor(f.api),ops=[];let refuse=false,observe=true;
+ cdp(f,p=>{const op=p.arguments[0].value;ops.push(op);if(op==='confirm_click')return {ok:!refuse};assert.equal(op,'click');if(observe)f.inputEffect();return {clicked:true,kind:'dom-synthetic'};});await start(e);
  const result=await e.execute({...action('a','#button'),clickMode:undefined});
- assert.deepEqual(ops,['click']);assert.equal(result.clicked,true);assert.equal(result.popupOwnership,'uncertain');assert.deepEqual(f.creates,[]);
+ assert.deepEqual(ops,['confirm_click','click']);assert.equal(result.clicked,true);assert.equal(result.popupOwnership,'uncertain');assert.deepEqual(f.creates,[]);
+ assert.deepEqual(f.highlights.filter(call=>call[0]==='overlay.highlight').map(call=>call[1]),['prepare-selector','painted','complete']);
+ // 中文注释：夹具升级不能跳过高亮后的资格复核，也不能把已派发但无效果误报为成功。
+ refuse=true;
+ await assert.rejects(e.execute({...action('a','#button'),clickMode:undefined}),error=>error.message==='INTERACTION_HIGHLIGHT_TARGET_CHANGED'&&error.preDispatch===true);
+ assert.deepEqual(ops,['confirm_click','click','confirm_click']);
+ refuse=false;observe=false;
+ await assert.rejects(e.execute({...action('a','#button'),clickMode:undefined}),error=>error.code==='CLICK_NO_EFFECT'&&error.outcomeUnknown===true);
+ assert.deepEqual(ops,['confirm_click','click','confirm_click','confirm_click','click']);
+ assert.deepEqual(f.creates,[]);
 });
 
 for(const [label,tagName,target] of [['normal button','BUTTON',''],['same-tab link','A',''],['target blank link with handlers','A','_blank']])test(`${label} invokes the original DOM click handler`,()=>{
- let clicked=0;const node={tagName,target,disabled:false,closest:()=>null,click:()=>clicked++};
- const context={document:{querySelector:()=>node},location:{origin:'https://example.com'}};
- const result=vm.runInNewContext(`(${pageAction.toString()})('click','#target',null,null,['https://example.com'])`,context);
- assert.equal(clicked,1);assert.equal(result.clicked,true);
+ const page=pageFixture(`<${tagName.toLowerCase()} id="target" target="${target}">Target</${tagName.toLowerCase()}>`);
+ let clicked=0;page.node.addEventListener('click',()=>clicked++);
+ try{
+  const result=page.window.eval(`(${pageAction.toString()})`)('click','#target',null,null,['https://example.com']);
+  assert.equal(clicked,1);assert.equal(result.clicked,true);
+  page.node.remove();
+  assert.throws(()=>page.window.eval(`(${pageAction.toString()})`)('click','#target',null,null,['https://example.com']),/target not found/);
+  page.document.querySelector=()=>page.node;
+  assert.throws(()=>page.window.eval(`(${pageAction.toString()})`)('click','#target',null,null,['https://example.com']),/TARGET_NOT_ACTIONABLE/);
+  assert.equal(clicked,1);
+ }finally{page.close();}
 });
 
 test('default semantic ref click dispatches trusted pointer once',async()=>{
  const f=workspaceFixture(),e=new Executor(f.api),ops=[];
- cdp(f,p=>{const op=p.arguments[0].value;if(op==='reveal_ref')return {rect:[60,30,20,30]};if(op==='rect_ref')return [60,30,20,30];if(/^(prepare|verify)_/.test(op))return {ok:true};ops.push(op);if(op==='pointer_target')return {x:70,y:45};if(op==='input_visibility'||op==='arm_ref_delivery')return {visibility:'visible'};if(op==='probe_ref_delivery')return {global:{pointerdown:1,mousedown:1,click:1},target:{trustedClick:1}};if(op==='clear_ref_delivery')return {ok:true};throw Error('unexpected synthetic dispatch');});await start(e);
+ cdp(f,p=>{const op=p.arguments[0].value;ops.push(op);if(op==='reveal_ref')return {rect:[60,30,20,30]};if(op==='rect_ref')return [60,30,20,30];if(op==='ref_relocation')return {relocated:false};if(op==='prepare_ref_click')return {ok:true};if(op==='confirm_ref')return {confirmed:true};if(op==='pointer_target')return {x:70,y:45};if(op==='input_visibility'||op==='arm_ref_delivery')return {visibility:'visible'};if(op==='probe_ref_delivery')return {global:{pointerdown:1,mousedown:1,click:1},target:{trustedClick:1}};if(op==='clear_ref_delivery')return {ok:true};throw Error('unexpected synthetic dispatch');});await start(e);
  // 中文注释：复用现有交互器桩，只检查页面坐标读取和单次派发委托。
- let clicks=0;e.interactionsFor=()=>({clickBoundTarget:async (_scope,{readTarget})=>{assert.deepEqual(await readTarget(),{x:70,y:45});clicks++;}});
+ let clicks=0;e.interactionsFor=()=>({clickBoundTarget:async (_scope,{readTarget})=>{assert.deepEqual(await readTarget(),{x:70,y:45});clicks++;f.inputEffect();}});
  const binding=e.semanticBinding(e.tasks.get('a'),1,'loader');
  const result=await e.execute({...action('a'),clickMode:undefined,action:'ref_click',binding,snapshotId:'snap',ref:'button'});
  assert.equal(clicks,1);assert.ok(ops.includes('pointer_target'));assert.equal(result.kind,'trusted-input');assert.equal(result.popupOwnership,'uncertain');assert.deepEqual(f.creates,[]);
+ assert.deepEqual(ops,['input_visibility','reveal_ref','rect_ref','reveal_ref','rect_ref','ref_relocation','prepare_ref_click','confirm_ref','arm_ref_delivery','pointer_target','probe_ref_delivery','clear_ref_delivery']);
 });
 
 test('explicit semantic pointer mode uses the existing interaction executor once',async()=>{
  const f=workspaceFixture(),e=new Executor(f.api),ops=[];let clicks=0;
  cdp(f,p=>{const op=p.arguments[0].value;ops.push(op);
-  if(/^(prepare|verify)_/.test(op))return {ok:true};
+  if(op==='ref_relocation')return {relocated:false};if(op==='prepare_ref_click')return {ok:true};if(op==='confirm_ref')return {confirmed:true};
   if(op==='reveal_ref')return {rect:[60,30,20,30]};if(op==='rect_ref')return [60,30,20,30];
   if(op==='pointer_target')return {x:70,y:45};
   if(op==='input_visibility'||op==='arm_ref_delivery')return {visibility:'visible'};
@@ -170,11 +218,11 @@ test('explicit semantic pointer mode uses the existing interaction executor once
  });
  await start(e);const binding=e.semanticBinding(e.tasks.get('a'),1,'loader');
  e.interactionsFor=()=>({clickBoundTarget:async (_scope,{readTarget,guard})=>{
-  guard();assert.equal((await readTarget()).x,70);assert.equal((await readTarget()).y,45);clicks++;
+  guard();assert.equal((await readTarget()).x,70);assert.equal((await readTarget()).y,45);clicks++;f.inputEffect();
   return {ok:true,kind:'pointer-click'};
  }});
  const result=await e.execute({...action('a'),action:'ref_click',clickMode:'pointer',binding,snapshotId:'snap',ref:'button'});
- assert.equal(clicks,1);assert.equal(result.delivery,'confirmed');assert.equal(result.effect,'unverified');
+ assert.equal(clicks,1);assert.equal(result.delivery,'confirmed');assert.equal(result.effect,'observed');
  assert.equal(result.popupOwnership,'uncertain');assert.equal(ops.filter(op=>op==='ref_click').length,0);
 });
 test('silent semantic pointer delivery falls back once and reports synthetic kind',async()=>{
@@ -183,10 +231,10 @@ test('silent semantic pointer delivery falls back once and reports synthetic kin
   const [op,payload]=p.arguments.map(item=>item.value);ops.push(op);
   if(op==='input_visibility'||op==='arm_ref_delivery')return {visibility:'visible'};
   if(op==='reveal_ref')return {rect:[60,30,20,30]};if(op==='rect_ref')return [60,30,20,30];
-  if(/^(prepare|verify)_/.test(op)||op==='clear_ref_delivery')return {ok:true};
+  if(op==='ref_relocation')return {relocated:false};if(op==='prepare_ref_click'||op==='clear_ref_delivery')return {ok:true};if(op==='confirm_ref')return {confirmed:true};
   if(op==='pointer_target')return {x:70,y:45};
   if(op==='probe_ref_delivery')return {global:{pointerdown:0,mousedown:0,click:0},target:{trustedClick:0}};
-  if(op==='synthetic_ref_click')return {clicked:true,kind:'dom-synthetic',delivery:'confirmed',fallbackReason:payload.fallbackReason};
+  if(op==='synthetic_ref_click'){f.inputEffect();return {clicked:true,kind:'dom-synthetic',delivery:'confirmed',fallbackReason:payload.fallbackReason};}
   throw Error('unexpected semantic operation');
  });await start(e);
  e.interactionsFor=()=>({clickBoundTarget:async()=>{sends++;}});
@@ -201,82 +249,58 @@ test('partial semantic pointer delivery is unknown without fallback',async()=>{
   const op=p.arguments[0].value;ops.push(op);
   if(op==='input_visibility'||op==='arm_ref_delivery')return {visibility:'visible'};
   if(op==='reveal_ref')return {rect:[60,30,20,30]};if(op==='rect_ref')return [60,30,20,30];
-  if(/^(prepare|verify)_/.test(op)||op==='clear_ref_delivery')return {ok:true};
+  if(op==='ref_relocation')return {relocated:false};if(op==='prepare_ref_click'||op==='clear_ref_delivery')return {ok:true};if(op==='confirm_ref')return {confirmed:true};
   if(op==='pointer_target')return {x:70,y:45};
   if(op==='probe_ref_delivery')return {global:{pointerdown:1,mousedown:0,click:0},target:{trustedClick:0}};
   throw Error('unexpected semantic operation');
  });await start(e);
- e.interactionsFor=()=>({clickBoundTarget:async()=>({ok:true})});
+ e.interactionsFor=()=>({clickBoundTarget:async()=>{f.inputEffect();return {ok:true};}});
  const binding=e.semanticBinding(e.tasks.get('a'),1,'loader');
  const result=await e.execute({...action('a'),action:'ref_click',clickMode:undefined,binding,snapshotId:'snap',ref:'button'});
  assert.equal(result.clicked,false);assert.equal(result.outcomeUnknown,true);
  assert.equal(ops.includes('synthetic_ref_click'),false);
 });
 
-test('semantic production world invokes the resolved target handler after actionability checks',async()=>{
- const f=workspaceFixture(),e=new Executor(f.api);let clicked=0;
- const node={isConnected:true,disabled:false,getAttribute:()=>null,closest:()=>null,attributes:[],getClientRects:()=>[{}],getBoundingClientRect:()=>({left:1,top:1,width:20,height:20}),click:()=>{throw Error('synthetic click forbidden');}};
- const doc={elementFromPoint:()=>node,visibilityState:'visible',defaultView:{innerWidth:100,innerHeight:100,getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'})}};
- node.ownerDocument=doc;node.getRootNode=()=>doc;Object.assign(node,eventSurface());
- const pageWindow=eventSurface(),semanticState={binding:null,semantics:{resolve:()=>node}};
- cdp(f,p=>{
-  const [op,payload]=p.arguments.map(x=>x.value);semanticState.binding=payload.binding;
-  return vm.runInNewContext(`(${p.installDeclaration})();(${p.functionDeclaration})(op,payload)`,{op,payload,window:pageWindow,document:doc,innerWidth:100,innerHeight:100,getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'}),__hermesNativeSemanticsV2:semanticState,
-   // Synthetic page overlay: highlight preparation is required before a write.
-   __hermesAutomationOverlay:{highlight:{prepare:()=>({ok:true}),verify:()=>({ok:true})}},requestAnimationFrame:()=>0});
- });await start(e);const binding=e.semanticBinding(e.tasks.get('a'),1,'loader');
+test('semantic production world invokes the resolved target handler after actionability checks',async t=>{
+ const f=workspaceFixture(),e=new Executor(f.api),page=pageFixture('<button id="target">Target</button>');let clicked=0;
+ t.after(page.close);const {node,window:pageWindow}=page;
+ node.click=()=>{throw Error('synthetic click forbidden');};
+ Object.assign(node,eventSurface());Object.assign(pageWindow,eventSurface());
+ semanticCdp(f,page);await start(e);const binding=e.semanticBinding(e.tasks.get('a'),1,'loader');
  // 中文注释：页面执行层只能返回落点，测试桩模拟 CDP 派发，不允许调用 node.click。
- e.interactionsFor=()=>({clickBoundTarget:async (_scope,{readTarget})=>{const point=await readTarget();assert.equal(point.x,11);assert.equal(point.y,11);for(const type of ['pointerdown','mousedown','click']){pageWindow.emit(type);node.emit(type);}clicked++;}});
- const result=await e.execute({...action('a'),clickMode:undefined,action:'ref_click',binding,snapshotId:'snap',ref:'button'});
+ e.interactionsFor=()=>({clickBoundTarget:async (_scope,{readTarget})=>{const point=await readTarget();assert.equal(point.x,11);assert.equal(point.y,11);for(const type of ['pointerdown','mousedown','click']){pageWindow.emit(type);node.emit(type);}clicked++;f.inputEffect();}});
+ const request={...action('a'),clickMode:undefined,action:'ref_click',...page.token(binding)};
+ const result=await e.execute(request);
  assert.equal(clicked,1);assert.equal(result.kind,'trusted-input');
+ // 中文注释：准备成功后目标被禁用，真实 confirm_ref 必须在下一次派发前拒绝。
+ pageWindow.__hermesAutomationOverlay.highlight.prepare=()=>{node.disabled=true;return {ok:true};};
+ await assert.rejects(e.execute(request),error=>error.message==='TARGET_DISABLED'&&error.preDispatch===true);
+ assert.equal(clicked,1);
 });
 
-test('semantic checkbox sets requested state once and verifies page state',async()=>{
- const f=workspaceFixture(),e=new Executor(f.api);let clicks=0;
- const node={tagName:'INPUT',type:'checkbox',checked:false,isConnected:true,disabled:false,
-  getAttribute:()=>null,closest:()=>null,attributes:[],getClientRects:()=>[{}],
-  getBoundingClientRect:()=>({left:1,top:1,width:20,height:20}),click(){throw Error('synthetic click forbidden');}};
- const doc={elementFromPoint:()=>node,visibilityState:'visible',defaultView:{innerWidth:100,innerHeight:100,getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'})}};
- node.ownerDocument=doc;node.getRootNode=()=>doc;Object.assign(node,eventSurface());
- const pageWindow=eventSurface();
- // 中文注释：多次页面调用共享语义状态，以保存点击计划中的目标身份。
- const semanticState={binding:null,semantics:{resolve:()=>node}};
- cdp(f,p=>{
-  const [op,payload]=p.arguments.map(x=>x.value);
-  semanticState.binding=payload.binding;
-  return vm.runInNewContext(`(${p.installDeclaration})();(${p.functionDeclaration})(op,payload)`,{op,payload,window:pageWindow,document:doc,
-   innerWidth:100,innerHeight:100,getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'}),
-   __hermesNativeSemanticsV2:semanticState,
-   __hermesAutomationOverlay:{highlight:{prepare:()=>({ok:true}),verify:()=>({ok:true})}},requestAnimationFrame:()=>0});
- });
- await start(e);const binding=e.semanticBinding(e.tasks.get('a'),1,'loader');
+test('semantic checkbox sets requested state once and verifies page state',async t=>{
+ const f=workspaceFixture(),e=new Executor(f.api),page=pageFixture('<input id="target" type="checkbox" aria-label="Target">');let clicks=0;
+ t.after(page.close);const {node,window:pageWindow}=page;
+ node.click=()=>{throw Error('synthetic click forbidden');};
+ Object.assign(node,eventSurface());Object.assign(pageWindow,eventSurface());
+ // 中文注释：持久页面世界保留生产 v8 语义实例和点击计划中的目标身份。
+ semanticCdp(f,page);await start(e);const binding=e.semanticBinding(e.tasks.get('a'),1,'loader');
  // 中文注释：点击由交互器承担，页面世界只提供状态计划与派发后回读。
  e.interactionsFor=()=>({clickBoundTarget:async (_scope,{readTarget})=>{await readTarget();for(const type of ['pointerdown','mousedown','click']){pageWindow.emit(type);node.emit(type);}clicks++;node.checked=!node.checked;}});
- const request={...action('a'),action:'ref_set_checked',clickMode:undefined,binding,snapshotId:'snap',ref:'check',checked:true};
+ const request={...action('a'),action:'ref_set_checked',clickMode:undefined,...page.token(binding),checked:true};
  const first=await e.execute(request);assert.equal(first.checked,true);assert.equal(first.changed,true);assert.equal(first.verified,true);
  const repeat=await e.execute(request);assert.equal(repeat.checked,true);assert.equal(repeat.changed,false);assert.equal(repeat.verified,true);
  assert.equal(clicks,1);
 });
 
-test('native select supports Unicode labels, values, indexes and multi-select events',async()=>{
+test('native select supports Unicode labels, values, indexes and multi-select events',async t=>{
  const f=workspaceFixture(),e=new Executor(f.api),events=[];let reorder=false;
- const options=[{value:'a',label:' 甲 ',selected:false,disabled:false},{value:'b',label:'乙',selected:false,disabled:false},{value:'c',label:'丙',selected:false,disabled:false}];
- const node={tagName:'SELECT',multiple:true,options,isConnected:true,disabled:false,
-  get selectedOptions(){return options.filter(option=>option.selected);},
-  getAttribute:()=>null,closest:()=>null,attributes:[],getClientRects:()=>[{}],
-  getBoundingClientRect:()=>({left:1,top:1,width:20,height:20}),dispatchEvent:event=>{events.push([event.type,event.bubbles]);if(reorder&&event.type==='change')options.reverse();}};
- const doc={elementFromPoint:()=>node,defaultView:{innerWidth:100,innerHeight:100,getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'})}};
- node.ownerDocument=doc;node.getRootNode=()=>doc;
- cdp(f,p=>{
-  const [op,payload]=p.arguments.map(x=>x.value);
-  return vm.runInNewContext(`(${p.installDeclaration})();(${p.functionDeclaration})(op,payload)`,{op,payload,document:doc,
-   Event:class{constructor(type,options){this.type=type;this.bubbles=options.bubbles;}},
-   innerWidth:100,innerHeight:100,getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'}),
-   __hermesNativeSemanticsV2:{binding:payload.binding,semantics:{resolve:()=>node}},
-   __hermesAutomationOverlay:{highlight:{prepare:()=>({ok:true}),verify:()=>({ok:true})}},requestAnimationFrame:()=>0});
- });
- await start(e);const binding=e.semanticBinding(e.tasks.get('a'),1,'loader');
- const request={...action('a'),action:'ref_select_option',binding,snapshotId:'snap',ref:'select'};
+ const page=pageFixture('<select id="target" multiple aria-label="Target"><option value="a"> 甲 </option><option value="b">乙</option><option value="c">丙</option></select>');
+ t.after(page.close);const {node}=page,options=[...node.options];
+ node.addEventListener('input',event=>events.push([event.type,event.bubbles]));
+ node.addEventListener('change',event=>{events.push([event.type,event.bubbles]);if(reorder)node.append(...[...node.options].reverse());});
+ semanticCdp(f,page);await start(e);const binding=e.semanticBinding(e.tasks.get('a'),1,'loader');
+ const request={...action('a'),action:'ref_select_option',...page.token(binding)};
  // 中文注释：先校验全部目标，再同步设置 selected 并派发冒泡 input/change；回执反映最终选项。
  const first=await e.execute({...request,by:'label',values:['甲','丙']});
  assert.equal(first.kind,'native-select');assert.equal(first.selectedCount,2);
@@ -290,7 +314,8 @@ test('native select supports Unicode labels, values, indexes and multi-select ev
  options[1].disabled=true;
  await assert.rejects(e.execute({...request,by:'value',values:['b']}),/SELECT_OPTION_DISABLED/);
  node.disabled=true;
- await assert.rejects(e.execute({...request,by:'value',values:['a']}),/TARGET_NOT_ACTIONABLE/);
+ // 中文注释：真实资格描述在 settle 阶段更早拒绝禁用控件；仍精确校验错误与无派发。
+ await assert.rejects(e.execute({...request,by:'value',values:['a']}),error=>error.message==='TARGET_DISABLED'&&error.preDispatch===true);
  assert.equal(events.length,before);assert.equal(options[0].selected,true);assert.equal(options[2].selected,true);
  // 中文注释：页面 change 回调重排选项后，回执仍报告当前索引，并标记核实结果未知。
  node.disabled=false;reorder=true;
@@ -300,15 +325,17 @@ test('native select supports Unicode labels, values, indexes and multi-select ev
 });
 
 test('normal popup-capable click preserves uncertain children, concurrent manual pages and startup tabs',async()=>{
- const f=workspaceFixture(),e=new Executor(f.api),events=await listeners(e);
+ const f=workspaceFixture(),e=new Executor(f.api),events=await listeners(e),ops=[];
  cdp(f,p=>{
-  assert.equal(p.arguments[0].value,'click');
+  const op=p.arguments[0].value;ops.push(op);
+  if(op==='confirm_click')return {ok:true};
+  assert.equal(op,'click');f.inputEffect();
   for(const id of [11,12]){f.tabs.set(id,{id,url:'https://example.com/child',openerTabId:1,windowId:7,groupId:-1});events.created({...f.tabs.get(id)});}
   return {clicked:true,kind:'dom-synthetic'};
  });
  await start(e);
  const result=await e.execute({...action('a','#button'),clickMode:undefined});
- assert.equal(result.clicked,true);assert.equal(result.popupOwnership,'uncertain');
+ assert.equal(result.clicked,true);assert.equal(result.popupOwnership,'uncertain');assert.deepEqual(ops,['confirm_click','click']);
  const done=await e.release({taskId:'a',generation:1,closeAgentTabs:true});
  for(const id of [1,9,11,12]){assert.ok(f.tabs.has(id));assert.equal(e.leases.has(id),false);}
  assert.deepEqual(f.groups,[]);assert.deepEqual(f.removed,[]);

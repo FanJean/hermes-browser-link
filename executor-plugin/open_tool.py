@@ -111,8 +111,7 @@ def _pick_browser(rows, instance_id, default_browser=None):
         match = [row for row in connected if row.get('instanceId') == instance_id]
         return (match[0], None) if match else (None, 'instance_unavailable')
     enabled = [row for row in connected if row.get('consentStatus') == 'enabled']
-    # 中文注释：主要链接仅在已连接且已启用时优先；离线或撤销权限时继续按默认值选择。
-    # 中文注释：智能审批也是可用模式；主要链接不要求开启全部访问。
+    # 中文注释：兼容旧状态回执，仅优先已连接的主要链接；实际任务权限仍由宿主核实。
     primary = [row for row in connected if row.get('primary') is True
                and row.get('consentStatus') in {'enabled', 'disabled'}]
     if len(primary) == 1:

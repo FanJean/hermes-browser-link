@@ -33,6 +33,49 @@ class GateNegativeControls(unittest.TestCase):
                 child = Path(call.kwargs['env']['TMPDIR'])
                 self.assertEqual(child, parent)
 
+    # 中文注释：新离线 runner 同时进入两种入口；真实浏览器 runner 不得混入任何默认命令。
+    def test_oauth_and_compact_scratch_are_explicit_offline_runners(self):
+        node_runners = {
+            'tests/native-extension/oauth-popup.test.mjs',
+            'tests/native-extension/oauth-popup-approval.test.mjs',
+            'tests/native-extension/bridge-cleanup-errors.test.mjs',
+            'tests/native-extension/core.test.mjs',
+            'tests/native-extension/package.test.mjs',
+            'tests/native-v2/compact-scratch.test.mjs',
+        }
+        python_runners = {
+            'tests/native-v2/test_oauth_popup.py',
+            'tests/native-v2/test_oauth_popup_executor.py',
+        }
+        real_runner = 'tests/complex-ui/real-login-windows.mjs'
+        root = SCRIPT.parents[1]
+        steps = (gate.matrix(root, sys.executable)
+                 + gate.supplemental_matrix(root, sys.executable)
+                 + gate.reviewed_matrix(root, sys.executable))
+        selected = gate.selected_runner_paths(root, steps)
+        self.assertTrue(node_runners.issubset(set(gate.NODE_TESTS)))
+        self.assertTrue(python_runners.issubset({
+            f'tests/native-v2/{name}' for name in gate.PYTHON_FILES['tests/native-v2']
+        }))
+        self.assertTrue((node_runners | python_runners).issubset(selected))
+        self.assertNotIn(real_runner, selected)
+        self.assertNotIn('tests/native-extension/core-press-cdp.test.mjs', selected)
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.dict(os.environ, {'TMPDIR': temporary}), patch('subprocess.run') as run:
+                run.return_value.returncode = 0
+                runpy.run_path(str(SCRIPT.with_name('test-core.py')), run_name='__main__')
+        core_selected = set().union(*(
+            gate.explicit_runner_paths(call.args[0],
+                                       'tap' if '--test' in call.args[0] else 'unittest', root)
+            for call in run.call_args_list
+        ))
+        self.assertTrue((node_runners | python_runners).issubset(core_selected))
+        self.assertNotIn(real_runner, core_selected)
+        self.assertNotIn('tests/native-extension/core-press-cdp.test.mjs', core_selected)
+        matrix_text = (root / 'tests/v1.1-verification/coverage-matrix.md').read_text()
+        for runner in node_runners | python_runners | {real_runner}:
+            self.assertIn(runner, matrix_text)
+
     # 中文注释：审计报告是生成输出，不能把写报告误判为运行源码漂移；真实源码仍须校验。
     def test_audit_reports_are_outputs_not_runtime_sources(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -462,7 +505,8 @@ class GateNegativeControls(unittest.TestCase):
         # 中文注释：当前显式矩阵已纳入新增基准与版本回归，保持实际审阅后的数量。
         # 中文注释：诊断三个固定 Python runner 各新增一步，原有四十步全部保留。
         # 中文注释：自动更新增加一个固定离线 runner，不改变补充或真实浏览器门禁。
-        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 49)
+        # 中文注释：OAuth popup 两个固定 Python 文件增加两步，Node 合并步骤不变。
+        self.assertEqual(len(gate.matrix(Path('/scratch/source'), '/scratch/python')), 51)
         self.assertEqual(len(gate.supplemental_matrix(Path('/scratch/source'), '/scratch/python')), 2)
 
     def test_browser_use_cli_source_is_discovered_from_cli_without_executing_it(self):

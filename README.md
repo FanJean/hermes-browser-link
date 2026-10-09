@@ -1,6 +1,6 @@
 # Hermes Browser Link
 
-**1.8.5 — macOS stable release.** Authorized browser tasks, automatic text and screenshot shielding, a persistent task cursor, Desktop Cookie mirroring, independent cloud browser access and stable-release updates.
+**1.9.0 — macOS stable release.** Authorized browser tasks, automatic text and screenshot shielding, a persistent task cursor, Desktop Cookie mirroring, independent cloud browser access and stable-release updates.
 
 ![Hermes Browser Link](docs/assets/readme-banner.png)
 
@@ -8,13 +8,15 @@
 
 Let [Hermes Agent](https://github.com/NousResearch/hermes-agent) read and operate task tabs in your existing, logged-in Chrome or Edge.
 
-Read pages and tables, click, fill forms, upload files, track downloads and run Python workflows. Smart approval is the default: first site reads and later writes show confirmation prompts. Full access is a separate explicit choice. See [security](SECURITY.md).
+Read pages and tables, click, fill forms, upload files, track downloads and run Python workflows. Confirm browser connection authorization once in the extension: ordinary reads, navigation, writes, JavaScript, CDP and Python workflows then run directly, without per-action prompts. Takeover, stop, credential protection and special confirmations remain independent. See [security](SECURITY.md).
 
 ## Features
 
 | Capability | Behavior |
 |---|---|
+| Connection authorization | Confirm once in the extension; ordinary task actions execute directly. Takeover, stop, credential protections and Cookie/OAuth-window confirmations remain independent. |
 | Existing browsers | Reuse logged-in Chrome/Edge; task tabs use a separate work window without taking focus from your window. |
+| OAuth login windows | Discover and explicitly adopt an existing login popup with user confirmation; operation access does not grant deletion rights. |
 | Page reading and input | Read text, tables, forms and records; use semantic references, clicks, typing, selection, scrolling and file transfers. |
 | Python workflows | Run multi-step scripts and validated reusable site tools through the same task authorization. |
 | Automatic content shielding | One switch detects matching Chinese/English notices and webpage instructions, hides the text block from Agent output and masks its screenshot region. No site or CSS-selector setup. |
@@ -36,22 +38,24 @@ Shielding protects Browser Link outputs, leaves your visible webpage intact, and
 
 ## Quick start (3 steps)
 
-1. Download a [Release package](https://github.com/fanjing188/hermes-browser-link/releases) and install (no Node.js needed); **Program installed and enabled** confirms success:
+1. With Hermes and Python already installed (`hermes --version`, `python3 --version`), download the [Release asset](https://github.com/fanjing188/hermes-browser-link/releases) named `hermes-browser-link-1.9.0.zip` — not GitHub's **Source code (zip)**. No Node.js or npm is needed. **Program installed and enabled** confirms the local installation only, not a browser connection:
 
    ```sh
-   curl -fL https://github.com/fanjing188/hermes-browser-link/releases/download/v1.8.5/hermes-browser-link-1.8.5.zip -o hermes-browser-link-1.8.5.zip && unzip hermes-browser-link-1.8.5.zip && cd hermes-browser-link-1.8.5 && ./install.sh
+   curl -fL https://github.com/fanjing188/hermes-browser-link/releases/download/v1.9.0/hermes-browser-link-1.9.0.zip -o hermes-browser-link-1.9.0.zip && unzip hermes-browser-link-1.9.0.zip && cd hermes-browser-link-1.9.0 && ./install.sh
    ```
 
-2. Open `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** → paste the absolute path printed and copied by the installer. It waits up to 3 minutes and shows ✅ when connected; Ctrl+C skips the wait.
-3. Keep the default **smart approval** (智能审批) mode for the first trial, then restart Hermes Desktop. Confirm **Connected** (已连接) in the popup and an online browser in Desktop → **Browser connections** (浏览器连接).
+2. While the terminal waits, open `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** → paste the printed absolute **Extension directory** (not the extracted ZIP directory). The installer copies it to the clipboard when available. It waits up to 3 minutes; **Extension connected** confirms the connection. Ctrl+C skips only this wait. A timeout does not undo installation or require reinstalling; load the extension and run the printed **Check** command.
+3. Open the extension popup, click **Connect Hermes** if disconnected, and confirm connection authorization (full access) in the browser. There is no smart-approval mode or per-action permission switch. Restart Hermes Desktop (or start a new CLI session) using the installed profile. Confirm **Connected** (已连接) in the popup and, if using Desktop, an online browser in **Browser connections** (浏览器连接).
+
+The first install enables **default** unless you pass `--profile <name>`, even inside a named profile's environment. For existing profiles, use `./install.sh --profile default --profile work`; for only `work`, use `./install.sh --profile work`. The extension/native connection is shared, but each profile must be enabled separately. See [profiles](docs/installation.md#profiles--多-profile).
 
 Upgrade: run `./install.sh --upgrade` from the new package (automatic backup and rollback), then reload the extension and restart Desktop. Uninstall: `./install.sh --uninstall` keeps task-private data; add `--purge` to delete it.
 
-Automatic updates accept stable releases; 1.8.5 is eligible. Upgrade an older installation manually once to install the current update source. After installing the update component, run `./install.sh --auto-update install`. It checks stable releases hourly and installs after browsers and Hermes exit. Reload the extension before starting Hermes again. Use `--auto-update check` for checks only, `--auto-update off` to disable, or `--update` to update now. See [automatic updates](docs/installation.md#automatic-updates--自动更新).
+Automatic updates accept stable releases; 1.9.0 is eligible. Upgrade an older installation manually once to install the current update source. After installing the update component, run `./install.sh --auto-update install`. It checks stable releases hourly and installs after browsers and Hermes exit. Reload the extension before starting Hermes again. Use `--auto-update check` for checks only, `--auto-update off` to disable, or `--update` to update now. See [automatic updates](docs/installation.md#automatic-updates--自动更新).
 
 [Source/manual installation, profiles and troubleshooting](docs/installation.md) · [Agent installation prompt](docs/agent-install-prompt.md).
 
-Overlay stuck: click “放开页面” (release page) or refresh the page.
+Overlay stuck while disconnected or status is unknown: click “放开页面” (release page) or refresh to remove the local veil. This does not prove background execution stopped; reconnect and verify task state before continuing.
 
 ## First use
 
@@ -59,7 +63,7 @@ Tell Hermes:
 
 > Open https://example.com in my browser, read the page title and the first paragraph, then close the task. Do not submit anything.
 
-Approve the first site read in the extension. Hermes should return the text and close its work tab. It starts with `browser_shared_open`; single actions use `browser_shared_run`, and multi-step work uses `browser_shared_script`. See [usage](docs/usage.md) and the [API reference](docs/browser-api-reference.md).
+With browser connection authorization already confirmed, Hermes should read directly, return the text and close its work tab; no first-site confirmation is needed. It starts with `browser_shared_open`; single actions use `browser_shared_run`, and multi-step work uses `browser_shared_script`. See [usage](docs/usage.md) and the [API reference](docs/browser-api-reference.md).
 
 ## Cookie mirror
 

@@ -76,7 +76,7 @@ test('升级实现版本后重新创建实例并撤销旧引用',async()=>{
   const first=await call(),old=f.w.__hermesNativeSemanticsV2.semantics;
   f.w.__hermesNativeSemanticsV2.version=4;
   const next=await call();assert.notEqual(next.items[0].ref,first.items[0].ref);assert.throws(()=>old.snapshot(),/LEASE_REVOKED/);
-  assert.equal(f.w.__hermesNativeSemanticsV2.version,7);assert.ok(next.items[0].actions.includes('click'));
+  assert.equal(f.w.__hermesNativeSemanticsV2.version,8);assert.ok(next.items[0].actions.includes('click'));
  }finally{f.close();}
 });
 

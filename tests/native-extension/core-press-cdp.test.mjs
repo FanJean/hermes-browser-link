@@ -88,7 +88,7 @@ test('inactive press preserves active tab and produces a trusted DOM click', {ti
   assert.ok(!methods.includes('Page.bringToFront'),'activation forbidden');
   const readback=await pageClient.evaluate('({title:document.title,active:document.activeElement?.id,events:window.events})');
   assert.deepEqual(data.readback,readback);
-  assert.deepEqual(data.result,{ok:true},`press must not return no-op success or failure: ${data.error||''}`);
+  assert.deepEqual(data.result,{ok:true,effect:'observed',delivery:'cdp-key-events'},`press must not return no-op success or failure: ${data.error||''}`);
   assert.equal(methods.filter(method=>method==='Input.dispatchKeyEvent').length,2);
   assert.ok(methods.indexOf('Emulation.setFocusEmulationEnabled')<methods.indexOf('Input.dispatchKeyEvent'));
   assert.deepEqual(data.commands.filter(c=>c.method==='Emulation.setFocusEmulationEnabled').map(c=>c.params.enabled),[true,false]);

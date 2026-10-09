@@ -1,11 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
+import {randomUUID} from 'node:crypto';
 import {once} from 'node:events';
 import {cp,mkdtemp,mkdir,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {stopOldDaemon} from '../../scripts/dev-sync-daemon.mjs';
+
+// 中文注释：保留指定 TMPDIR 的隔离范围；短目录名让 profile scratch 下的 macOS 套接字仍不超限。
+async function daemonHome(){
+ for(let attempt=0;attempt<100;attempt++){
+  const home=path.join(tmpdir(),`d${randomUUID().slice(0,3)}`);
+  try{await mkdir(home,{mode:0o700});return home;}
+  catch(error){if(error.code!=='EEXIST')throw error;}
+ }
+ throw Error('无法分配临时 daemon 目录');
+}
 
 test('dev-sync 不向 PID 文件指向的无关进程发送 SIGTERM',async t=>{
  const home=await mkdtemp(path.join(tmpdir(),'dev-sync-pid-'));
@@ -26,7 +37,7 @@ test('dev-sync 不向 PID 文件指向的无关进程发送 SIGTERM',async t=>{
 });
 
 test('dev-sync 只停止认证套接字及启动命令均匹配的 daemon',async t=>{
- const home=await mkdtemp(path.join(tmpdir(),'ds-live-'));
+ const home=await daemonHome();
  let daemon;
  t.after(async()=>{
   if(daemon&&daemon.exitCode===null&&daemon.signalCode===null){daemon.kill('SIGKILL');await once(daemon,'exit');}

@@ -44,14 +44,37 @@ class CloudTests(unittest.TestCase):
         self.addCleanup(self.scratch.cleanup)
         self.path = Path(self.scratch.name)
         self.bridge = FakeBridge()
+        def bind(task):
+            self.bridge.tasks[task['id']]['activeMode']='full'
         self.executor = CloudExecutor(self.path / 'home', self.path / 'cloud', 'device-a', 'paired-browser',
-                                      ['https://example.com'], client=self.bridge)
+                                      client=self.bridge,bind_task=bind)
         self.addCleanup(self.executor.close)
     def command(self, tool, args, **extra):
         return {'id': 'command-a', 'device_id': 'device-a', 'session_id': 'cloud-session-a',
                 'expires_at': time.time() + 20, 'tool': tool, 'args': args, **extra}
     def create(self):
         return self.executor.execute(self.command('create', {'title': '测试', 'allowed_origins': ['https://example.com']}))
+    def test_paired_executor_creates_new_origin_task_in_full_mode(self):
+        bindings=[]
+        def bind(task):
+            bindings.append((task['id'],task['generation']))
+            self.bridge.tasks[task['id']]['activeMode']='full'
+        self.executor.bind_task=bind
+        task=self.executor.execute(self.command('create',{'title':'new site','allowed_origins':['https://new.test']}))
+        self.assertEqual(task['allowedOrigins'],['https://new.test'])
+        self.assertEqual(bindings,[('cloud-task',1)])
+        self.assertEqual(task['activeMode'],'full')
+        self.assertEqual(self.bridge.tasks['local-task']['state'],'ready')
+
+    def test_create_refuses_unconfirmed_full_binding_and_hands_back_only_cloud_task(self):
+        self.executor.bind_task=lambda task:None
+        with self.assertRaisesRegex(CloudDenied,'cloud_authorization_unavailable'):
+            self.create()
+        self.assertEqual(self.bridge.tasks['cloud-task']['state'],'closed')
+        self.assertEqual(self.bridge.tasks['local-task']['state'],'ready')
+        calls=[params for method,params in self.bridge.calls if method=='shared.handoff']
+        self.assertEqual(len(calls),1);self.assertTrue(calls[0]['keepTabs'])
+
     def test_cloud_owner_and_shutdown_leave_local_task_unchanged(self):
         self.assertEqual(self.create()['id'], 'cloud-task')
         self.assertNotEqual(self.bridge.tasks['cloud-task']['owner'], 'local-owner')
@@ -89,9 +112,9 @@ class CloudTests(unittest.TestCase):
         self.assertFalse(worker.is_alive());self.assertFalse(closer.is_alive())
         self.assertEqual(closed,['cloud-session-a']);self.assertEqual(self.bridge.tasks['cloud-task']['state'],'closed')
         self.assertEqual(self.bridge.tasks['local-task']['state'],'ready')
-    def test_cloud_cannot_choose_owner_device_browser_or_unpaired_origin(self):
+    def test_cloud_cannot_choose_owner_device_browser_or_empty_task_scope(self):
         for args, extra in [({'owner': 'local-owner'}, {}), ({'instance_id': 'other'}, {}),
-                            ({'title': 'x', 'allowed_origins': ['https://other.test']}, {}),
+                            ({'title': 'x', 'allowed_origins': []}, {}),
                             ({}, {'device_id': 'device-b'})]:
             with self.subTest(args=args, extra=extra), self.assertRaises(CloudDenied):
                 self.executor.execute(self.command('create', args, **extra))

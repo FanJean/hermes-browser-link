@@ -6,7 +6,6 @@ import queue
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unittest
@@ -19,7 +18,7 @@ BRIDGE_DIR = ROOT / "native-bridge"
 sys.path.insert(0, str(BRIDGE_DIR))
 
 from client import BridgeClient, BridgeError, ensure_service  # noqa: E402
-from tests.support import stop_fixture_daemon  # noqa: E402
+from tests.support import stop_fixture_daemon, temporary_bridge_home  # noqa: E402
 
 ORIGIN = "https://example.test"
 INSTANCE = {"chrome": "chrome-synthetic", "edge": "edge-synthetic"}
@@ -122,12 +121,7 @@ class ProductionConcurrencyTests(unittest.TestCase):
     """Real daemon/client/Bridge/Executor; only browser APIs are synthetic."""
 
     def setUp(self):
-        scratch = (Path(tempfile.gettempdir())).resolve()
-        scratch.mkdir(parents=True, exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(prefix="c12-", dir=scratch)
-        self.work = Path(self.temp.name)
-        self.home = self.work / "h"
-        self.home.mkdir()
+        self.home = self.enterContext(temporary_bridge_home())
         self.socket_path = self.home / "plugin-data" / "browser-link-native" / "bridge.sock"
         self.assertLess(len(os.fsencode(self.socket_path)), 104, "fixture AF_UNIX path exceeds macOS limit")
         self.peer = None
@@ -289,7 +283,7 @@ class ProductionConcurrencyTests(unittest.TestCase):
                        else tools.make_tool_handler(name, profile, host_bridge=bridge))
             return json.loads(handler({**args, **hook['args']}, session_id=session))
         try:
-            self.control('consent', instanceId=INSTANCE['chrome'], enabled=True)
+            self.control('consent', instanceId=INSTANCE['chrome'])
             parent = invoke('browser_shared_open', {'url': ORIGIN + '/parent'}, 'parent-session')
             child = invoke('browser_shared_open', {'url': ORIGIN + '/child'}, 'subagent-session')
             second = invoke('browser_shared_open', {'url': ORIGIN + '/second'}, 'parent-session')
@@ -344,45 +338,81 @@ class ProductionConcurrencyTests(unittest.TestCase):
             script_bridge.close()
             profile.close()
 
-    def test_browser_mode_downgrade_keeps_tasks_and_isolated_browser(self):
-        # 中文注释：真实 client → daemon → Bridge → Executor 链路；切换模式保留旧任务，其他浏览器不受影响。
+    def test_connection_authorizes_new_tasks_full_only_and_direct_writes_without_cross_browser_effects(self):
+        # 中文注释：旧偏好为关闭也不能降级连接；新任务只取得自己的工作页权限。
         old = self.tasks[("chrome", 1)]
-        self._run_task(old, "before-revoke")
-        self.control("consent", instanceId=INSTANCE["chrome"], enabled=False)
-        pending = self.rpc("shared.create", {"owner": old["owner"], "title": "smart-task",
+        edge = self.tasks[("edge", 1)]
+        edge_before = self.rpc("shared.get", {"owner": edge["owner"], "taskId": edge["id"]})
+        edge_tabs_before = self.stats("edge")["tabs"]
+        self.assertEqual([tab["id"] for tab in self._run_task(old, "before-connection")], [old["tabId"]])
+        connected = self.control("consent", instanceId=INSTANCE["chrome"])
+        self.assertEqual(connected, {"enabled": True, "status": "enabled"})
+        fresh = self.rpc("shared.create", {"owner": old["owner"], "title": "connected-full-task",
             "instanceId": INSTANCE["chrome"], "allowedOrigins": [ORIGIN]})
-        for task in (old, {**pending, "owner": old["owner"]}):
+        fresh = {**fresh, "owner": old["owner"]}
+        for task in (old, fresh):
             current = self.wait_task_state(task, "ready")
-            self.assertEqual(current["activeMode"], "smart")
-            self._run_task(task, "after-downgrade")
-        pending_write = self._run_task(old, "smart-write", "click", selector="#save")
-        self.assertEqual(pending_write["status"], "approval_required")
-        self.control("consent", instanceId=INSTANCE["chrome"], enabled=True)
-        current = self.rpc("shared.get", {"owner": old["owner"], "taskId": old["id"]})
-        self.assertEqual(current["activeMode"], "full")
-        fresh = self.rpc("shared.create", {"owner": old["owner"], "title": "fresh",
-            "instanceId": INSTANCE["chrome"], "allowedOrigins": [ORIGIN]})
-        # 中文注释：任务变更通知与自动授权异步进行；只在明确 ready 后运行新任务。
-        self.wait_task_state({**fresh, "owner": old["owner"]}, "ready")
-        self.assertEqual(self._run_task({**fresh, "owner": old["owner"]}, "fresh-read"), [])
-        self.assertEqual(len(self._run_task(self.tasks[("edge", 1)], "edge-still-ready")), 1)
+            self.assertEqual(current["activeMode"], "full")
+            self.assertEqual(current["generation"], task["generation"])
+        self.assertEqual(self._run_task(fresh, "fresh-read"), [])
+        opened = self._run_task(fresh, "direct-new-tab", "new_tab", url=ORIGIN + "/created")
+        fresh["tabId"] = opened["tabId"]
+        self.assertNotIn(fresh["tabId"], (71, 72))
+        self.assertEqual([tab["id"] for tab in self._run_task(fresh, "fresh-owned-read")], [fresh["tabId"]])
+        self.control("reset_counts", instanceId=INSTANCE["chrome"])
+        target = ORIGIN + "/direct-write"
+        written = self._run_task(fresh, "direct-navigate", "navigate", url=target)
+        self.assertEqual(written["url"], target)
+        self.assertNotEqual(written.get("status"), "approval_required")
+        self.assertEqual(self.stats("chrome")["updates"], {str(fresh["tabId"]): 1})
+        self.assertEqual(self.stats("chrome")["tabs"][str(fresh["tabId"])]["url"], target)
+        with self.assertRaises(BridgeError) as denied:
+            self._run_task(fresh, "foreign-existing-tab", "navigate", tabId=old["tabId"], url=target)
+        self.assertEqual(denied.exception.code, "foreign_tab")
+        self.assertEqual(self.stats("chrome")["updates"], {str(fresh["tabId"]): 1})
+        self.assertEqual([tab["id"] for tab in self._run_task(old, "old-still-ready")], [old["tabId"]])
+        edge_after = self.rpc("shared.get", {"owner": edge["owner"], "taskId": edge["id"]})
+        for field in ("state", "generation", "modeGeneration", "activeMode", "tabIds"):
+            self.assertEqual(edge_after[field], edge_before[field])
+        self.assertEqual(self.stats("edge")["tabs"], edge_tabs_before)
+        self.assertEqual([tab["id"] for tab in self._run_task(edge, "edge-still-ready")], [edge["tabId"]])
 
-    def test_mode_change_during_inflight_read_does_not_replay(self):
-        # 中文注释：人为挂起浏览器 API，切换模式后只让在途读取完成或明确报错，不重放。
+    def test_extension_stop_releases_inflight_read_without_replay(self):
+        # 中文注释：浏览器 API 的挂起/放行是唯一合成边界；撤权和停止都调用生产方法。
         task = self.tasks[("chrome", 1)]
+        request_id = "stopped-inflight"
+        self.control("reset_counts", instanceId=INSTANCE["chrome"])
         self.control("pause_get", instanceId=INSTANCE["chrome"], tabId=task["tabId"])
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            running = pool.submit(self._run_task, task, "revoked-inflight")
-            self._wait_message(lambda item: item.get("type") == "get_entered", 5)
-            stopped = pool.submit(self.control, "consent", instanceId=INSTANCE["chrome"], enabled=False)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            running = pool.submit(self._run_task, task, request_id)
+            self._wait_message(lambda item: item.get("type") == "get_entered"
+                               and item.get("instanceId") == INSTANCE["chrome"]
+                               and item.get("tabId") == task["tabId"], 5)
+            stopped = self.control("stop", instanceId=INSTANCE["chrome"],
+                                   taskId=task["id"], generation=task["generation"])
+            self.assertTrue(stopped["revoked"])
             self.control("resume_get", instanceId=INSTANCE["chrome"], tabId=task["tabId"])
-            stopped.result(timeout=5)
-            try:
+            with self.assertRaises(BridgeError) as caught:
                 running.result(timeout=5)
-            except BridgeError as caught:
-                self.assertFalse(caught.data.get("outcomeUnknown"))
-            current = self.rpc("shared.get", {"owner": task["owner"], "taskId": task["id"]})
-            self.assertEqual(current["activeMode"], "smart")
+            self.assertEqual(caught.exception.code, "permission_denied")
+            self.assertEqual(caught.exception.data, {"outcomeUnknown": False, "retryable": False})
+            terminal = self.control("wait_stopped", instanceId=INSTANCE["chrome"])
+            self.assertEqual((terminal["state"], terminal["cleanupState"]), ("cancelled", "succeeded"))
+        current = self.wait_task_state(task, "cancelled")
+        self.assertEqual(current["generation"], task["generation"])
+        self.assertEqual(current["tabIds"], [])
+        local = next(row for row in self.stats("chrome")["executorTasks"] if row["id"] == task["id"])
+        self.assertTrue(local["revoked"])
+        self.assertEqual(self.stats("chrome")["gets"], {str(task["tabId"]): 1})
+        self.assertEqual(self.stats("chrome")["updates"], {})
+        for retry_id in (request_id, "fresh-after-stop"):
+            with self.assertRaises(BridgeError) as denied:
+                self._run_task(task, retry_id)
+            self.assertEqual(denied.exception.code, "task_closed")
+            self.assertFalse(denied.exception.data.get("outcomeUnknown"))
+        self.assertEqual(self.stats("chrome")["gets"], {str(task["tabId"]): 1})
+        for sibling in (self.tasks[("chrome", 2)], self.tasks[("edge", 1)]):
+            self.assertEqual([tab["id"] for tab in self._run_task(sibling, "survives-stop")], [sibling["tabId"]])
 
     def test_two_browsers_each_keep_two_task_leases_with_same_numeric_tab_ids(self):
         for ordinal in (1, 2):
@@ -495,7 +525,8 @@ class ProductionConcurrencyTests(unittest.TestCase):
         request_id = f"lost-response-{uuid.uuid4().hex}"
         target_url = f"{ORIGIN}/after-lost-response"
         params = self.run_params(task, request_id, "navigate", url=target_url)
-        proxy_data = self.work / "proxy" / "plugin-data" / "browser-link-native"
+        proxy_home = self.enterContext(temporary_bridge_home())
+        proxy_data = proxy_home / "plugin-data" / "browser-link-native"
         proxy_data.mkdir(parents=True)
         (proxy_data / "token").write_text((self.home / "plugin-data" / "browser-link-native" / "token").read_text().strip() + "\n")
         os.chmod(proxy_data / "token", 0o600)
@@ -503,7 +534,7 @@ class ProductionConcurrencyTests(unittest.TestCase):
         self.assertLess(len(os.fsencode(proxy_socket)), 104, "proxy AF_UNIX path exceeds macOS limit")
         self.proxy = DroppingResponseProxy(self.socket_path, proxy_socket, request_id)
 
-        lost_client = BridgeClient(self.work / "proxy", timeout=8)
+        lost_client = BridgeClient(proxy_home, timeout=8)
         try:
             with self.assertRaises(BridgeError) as caught:
                 lost_client.call("shared.run", params)
@@ -546,7 +577,7 @@ class ProductionConcurrencyTests(unittest.TestCase):
         if self.proxy is not None:
             self.proxy.close()
         stop_fixture_daemon(self.home)
-        self.temp.cleanup()
+
 
 
 if __name__ == "__main__":

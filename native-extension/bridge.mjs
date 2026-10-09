@@ -4,7 +4,7 @@ export const isUiSender=(sender,id)=>sender?.id===id&&sender?.url===`chrome-exte
 const sameValues=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&JSON.stringify([...a].sort())===JSON.stringify([...b].sort());
 function executionError(error,message){
  // 中文注释：滚动会触发页面副作用，不归入只读动作，丢失回执时禁止自动重试。
- const readOnly=['browser.assess','browser.read_origin','browser.cleanup_status'].includes(message.method)||['browser.cdp_targets','browser.cdp_version','browser.cdp_chunk','browser.cdp_subscribe'].includes(message.method)||(message.method==='browser.execute'&&['tabs','snapshot','page.observe','page.parse','semantic_snapshot','frame_catalog','screenshot','interaction.capture','interaction.bounds','official.ready_state','cdp.events','network.inspect','images','console'].includes(message.params?.action));
+ const readOnly=['browser.assess','browser.popup_prepare','browser.read_origin','browser.cleanup_status'].includes(message.method)||['browser.cdp_targets','browser.cdp_version','browser.cdp_chunk','browser.cdp_subscribe'].includes(message.method)||(message.method==='browser.execute'&&['tabs','snapshot','page.observe','page.parse','semantic_snapshot','frame_catalog','screenshot','interaction.capture','interaction.bounds','official.ready_state','cdp.events','network.inspect','images','console'].includes(message.params?.action));
  // CDP exception descriptions contain `Error: CODE` followed by a stack.
  // Match only the complete first-line reason against the allowlists below;
  // never search stack frames or expose arbitrary page exception text.
@@ -13,6 +13,7 @@ function executionError(error,message){
  let code='execution_denied',text='Browser operation could not be completed.';
  // 中文注释：并发资源冲突只拒绝当前请求，保留是否已创建页面的派发事实。
  if(reason==='TASK_BUSY'){code='task_busy';text='任务标签正被其他操作使用，请先核对本次结果。';}
+ else if(reason==='POPUP_STALE'){code='popup_stale';text='登录弹窗身份、来源或授权已变化；请重新发现候选，不会自动重试。';}
  // 中文注释：已派发但未观察到效果是失败，禁止当作点击成功。
  else if(reason==='CLICK_NO_EFFECT'){code='click_no_effect';text='输入已派发，但在观察期限内没有效果；请先读取页面核对。';}
  else if(reason==='TASK_PAUSED'||reason==='task paused'){code='task_paused';text='用户已接管，任务已暂停；请等待用户继续，不会自动重试。';}
@@ -134,22 +135,15 @@ function executionError(error,message){
   ...(obstruction?{obstruction}:{}),
   ...(code==='redirected_out_of_scope'&&typeof error?.finalOrigin==='string'?{finalOrigin:error.finalOrigin}:{})}};
 }
-// Only the extension UI calls setEnabled; native messages cannot create consent.
+// 中文注释：连接授权就是任务页的完整访问授权；旧智能审批偏好不再参与连接。
 export class BrowserConsent {
- constructor(storage,executor,{modeForTask=()=>null}={}){this.storage=storage;this.executor=executor;this.modeForTask=modeForTask;this.enabled=false;this.status='unknown';this.epoch=0;this.writes=Promise.resolve();}
+ constructor(_storage,executor){this.executor=executor;this.enabled=false;this.status='unknown';}
  async readStatus(){
-  try{
-   const value=(await this.storage.get('browserFullConsent'))?.browserFullConsent;
-   // 中文注释：旧安装没有模式偏好时默认智能审批。
-   if(!value)return 'disabled';
-   if(value.version!==1||typeof value.enabled!=='boolean')return 'unknown';
-   return value.enabled?'enabled':'disabled';
-  }catch{return 'unknown';}
+  return 'enabled';
  }
  async load(){this.status=await this.readStatus();this.enabled=this.status==='enabled';return this.status;}
  synchronize(bridge){
-  const epoch=this.epoch;
-  const valid=()=>this.epoch===epoch&&!bridge.closed;
+  const valid=()=>!bridge.closed;
   const run=async()=>{
    if(!valid())return;
    const tasks=await bridge.request('extension.tasks');
@@ -159,10 +153,8 @@ export class BrowserConsent {
     try{
      const approved=await bridge.request('extension.approve',{taskId:task.id,generation:task.generation,tabIds:[],allowedOrigins:task.allowedOrigins,workspaceOnly:true},valid);
      if(!valid())throw Error('browser consent revoked');
-     // 中文注释：工作区授权先进入 authorizing；两档模式都需向宿主确认后才能成为 ready。
-     // 中文注释：云端任务使用独立授权；普通本地任务继续使用原浏览器开关。
-     const taskMode=this.modeForTask(task);
-     const updated=await bridge.request('extension.mode',{taskId:task.id,generation:approved.generation,modeGeneration:approved.modeGeneration,mode:taskMode??(this.enabled?'full':'smart')});
+     // 中文注释：完整访问仍需宿主确认当前任务代次，连接不能授权浏览器里原有的个人标签页。
+     const updated=await bridge.request('extension.mode',{taskId:task.id,generation:approved.generation,modeGeneration:approved.modeGeneration,mode:'full'});
      if(!valid())throw Error('browser mode changed');
      this.executor.setMode(updated);
     }catch(error){
@@ -174,39 +166,6 @@ export class BrowserConsent {
    }
   };
   const next=(this.syncQueue||Promise.resolve()).catch(()=>{}).then(run);this.syncQueue=next;return next;
- }
- async setEnabled(enabled,bridge=null){
-  if(typeof enabled!=='boolean')throw Error('invalid browser consent');
-  this.enabled=false;this.status='unknown';const epoch=++this.epoch;
-  const changeModes=async()=>{
-   // 中文注释：切换本地全局权限不能改写已登记的云端任务权限。
-   const changes=[...this.executor.tasks.values()].filter(t=>!t.revoked&&this.modeForTask(t)===null&&t.policy.activeMode!==(enabled?'full':'smart')).map(async t=>{
-    const modeGeneration=t.policy.modeGeneration;
-    if(!enabled){this.executor.revokeMode(t.id);await t.scriptCleanup;}
-    if(bridge&&!bridge.closed){
-     const updated=await bridge.request('extension.mode',{taskId:t.id,generation:t.generation,modeGeneration,mode:enabled?'full':'smart'});
-     if(enabled)this.executor.setMode(updated);
-    }
-   });
-   const results=await Promise.allSettled(changes),failed=results.find(result=>result.status==='rejected');
-   if(failed)throw failed.reason;
-  };
-  // 中文注释：降级先撤本地权限；升级先确认偏好已落盘，避免写入失败时任务短暂取得全部访问。
-  const downgraded=!enabled?changeModes().then(()=>null,error=>error):null;
-  const value={version:1,enabled};
-  const write=this.writes.catch(()=>{}).then(()=>this.storage.set({browserFullConsent:value}));this.writes=write;
-  try{
-   await write;
-   if(enabled)await changeModes();else {const error=await downgraded;if(error)throw error;}
-   if(this.epoch===epoch){this.enabled=enabled;this.status=enabled?'enabled':'disabled';}
-  }catch(e){
-   if(enabled){
-    const cleanup=[];for(const t of this.executor.tasks.values())if(!t.revoked&&t.policy.activeMode==='full'){this.executor.revokeMode(t.id);if(t.scriptCleanup)cleanup.push(t.scriptCleanup);}
-    await Promise.allSettled(cleanup);
-   }
-   if(this.epoch===epoch){this.enabled=false;this.status='unknown';this.epoch++;}
-   throw e;
-  }
  }
 }
 export class Bridge {
@@ -245,9 +204,13 @@ export class Bridge {
    if(this.executor.shieldResponse){const result=await this.executor.shieldResponse(request,response.result);this.send({...response,result:enabled&&result?.contentFilter?.enabled!==true?filterPageResult(request.params?.action,result):result});return;}
    this.send(enabled?{...response,result:filterPageResult(request.params.action,response.result)}:response);
   } catch(error) {
-   if(error?.message==='CONTENT_SHIELD_STALE'){this.send({id:response.id,error:{code:'content_shield_stale',message:'屏蔽设置或页面已变化，请使用新请求读取。',data:{outcomeUnknown:false,retryable:false}}});return;}
+   if(error?.message==='CONTENT_SHIELD_STALE'){
+    const data={outcomeUnknown:request.params.action==='popup_adopt',retryable:false};
+    this.send({id:response.id,error:{code:'content_shield_stale',message:'屏蔽设置或页面已变化，请核对结果；不要重放写入。',data}});return;
+   }
    // 中文注释：配置读取失败时不泄露未过滤正文，也不把已执行的脚本报告为未执行。
-   this.send({id:response.id,error:{code:'content_filter_unavailable',message:'Content filter settings could not be read; result withheld.',data:{outcomeUnknown:request.params.action==='js.evaluate',retryable:request.params.action!=='js.evaluate'}}});
+   const outcomeUnknown=['js.evaluate','popup_adopt'].includes(request.params.action);
+   this.send({id:response.id,error:{code:'content_filter_unavailable',message:'Content filter settings could not be read; result withheld.',data:{outcomeUnknown,retryable:!outcomeUnknown}}});
   }
  }
  validateApproval(request,result) {
@@ -353,7 +316,7 @@ export class Bridge {
    try{
     await this.approvalBarrier;
     if(this.closed)throw Error('native disconnected');
-    let result;if(m.method==='browser.status')result=await this.executor.status(m.params);else if(m.method==='browser.assess')result=await this.executor.assess(m.params);else if(m.method==='browser.read_origin')result=await this.executor.readOrigin(m.params);else if(m.method==='browser.execute')result=await this.executor.execute(m.params);else if(m.method==='browser.release')result=await this.executor.release(m.params);else if(m.method==='browser.cleanup_status')result=await this.executor.cleanupStatus(m.params);else if(m.method==='browser.cleanup_retry')result=await this.executor.cleanupRetry(m.params);else if(m.method==='browser.download_cancel'){if(!this.executor.downloads)throw Error('DOWNLOADS_UNAVAILABLE');result=await this.executor.downloads.cancel(m.params);}else throw Error('unsupported method');
+    let result;if(m.method==='browser.popup_prepare')result=await this.executor.preparePopup(m.params);else if(m.method==='browser.status')result=await this.executor.status(m.params);else if(m.method==='browser.assess')result=await this.executor.assess(m.params);else if(m.method==='browser.read_origin')result=await this.executor.readOrigin(m.params);else if(m.method==='browser.execute')result=await this.executor.execute(m.params);else if(m.method==='browser.release')result=await this.executor.release(m.params);else if(m.method==='browser.cleanup_status')result=await this.executor.cleanupStatus(m.params);else if(m.method==='browser.cleanup_retry')result=await this.executor.cleanupRetry(m.params);else if(m.method==='browser.download_cancel'){if(!this.executor.downloads)throw Error('DOWNLOADS_UNAVAILABLE');result=await this.executor.downloads.cancel(m.params);}else throw Error('unsupported method');
     return {id:m.id,result};
    } catch(e){return {id:m.id,error:executionError(e,m)};}
  }

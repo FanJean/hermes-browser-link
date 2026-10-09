@@ -53,6 +53,15 @@ NODE_TESTS = (
     # 中文注释：后台审批、权限提醒、弹窗与图标只运行离线合成 API。
     'tests/v1.5.1/approval-background.test.mjs',
     'tests/native-extension/background-access-request.test.mjs',
+    # 中文注释：pure-offline；真实 Executor/后台审批配合合成 tabs、windows 和 VM，不启动浏览器。
+    'tests/native-extension/oauth-popup.test.mjs',
+    'tests/native-extension/oauth-popup-approval.test.mjs',
+    # 中文注释：核心范围/隐私回归仅用合成 API；打包回归只构建并解压到 scratch，不安装或启动浏览器。
+    'tests/native-extension/core.test.mjs',
+    'tests/native-extension/package.test.mjs',
+    # 中文注释：scratch-only；仅隔离构建/安装与临时 daemon/UDS，不打开或注册个人浏览器。
+    'tests/native-v2/compact-scratch.test.mjs',
+    # 中文注释：tests/complex-ui/real-login-windows.mjs 属于 non-offline 手动真实浏览器门禁，禁止加入默认清单。
     # 中文注释：基准站离线测试覆盖目录、第二主机及原页面，直接调用处理器而不绑定端口。
     'bench/site/server.test.mjs',
     'bench/mechanical-metrics.test.mjs',
@@ -107,6 +116,7 @@ NODE_TESTS = (
     'tests/complex-ui/accessibility.test.mjs',
     'tests/native-extension/sensitive-fields.test.mjs',
     'tests/native-extension/bridge-cdp-errors.test.mjs',
+    'tests/native-extension/bridge-cleanup-errors.test.mjs',
     'tests/native-extension/file-upload-visual.test.mjs',
     # 中文注释：1.3.6 同站并发、慢页、标签回收与选择器居中进入固定离线清单。
     'tests/v1.3.6/efficiency.test.mjs',
@@ -149,7 +159,9 @@ PYTHON_FILES = {
     'tests/v1.1-interactions': ('test_interaction_wire.py',),
     # 中文注释：1.3.6 同任务并发开页用例显式登记，避免清单检查把它当作未审阅文件。
     'tests/v1.3.6': ('test_concurrent_tabs.py',),
-    'tests/native-v2': ('test_wire_contract.py', 'test_daemon_wire.py', 'test_click_mode.py'),
+    # 中文注释：pure-offline；popup 使用进程内 daemon 和合成扩展/工具/Vault scope，按文件限制执行。
+    'tests/native-v2': ('test_wire_contract.py', 'test_daemon_wire.py', 'test_click_mode.py',
+                        'test_oauth_popup.py', 'test_oauth_popup_executor.py'),
     'executor-plugin/tests': ('test_native_tools.py', 'test_api_native.py',
                               'test_native_integration.py', 'test_plugin.py', 'test_open_tool.py',
                               # 中文注释：结果隐私用例包含 1.3.3 复杂界面的跨层字段与错误摘要。

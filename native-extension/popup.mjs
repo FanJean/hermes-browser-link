@@ -5,9 +5,7 @@ let known = false
 let statusData = null
 let refreshing = false
 let uncertainControl = null
-let consentStatus = 'unknown'
 let busy = false
-let confirming = false
 let revision = 0
 // 中文注释：过滤偏好可在本地桥断线时设置，与浏览器访问授权分开。
 let filterEnabled = false
@@ -25,16 +23,10 @@ function render() {
   const title = $('#connection-label')
   title.textContent = !known ? '状态待确认' : connected ? '已连接' : busy ? '正在处理…' : '未连接'
   title.dataset.state = known && connected ? 'connected' : 'disconnected'
-  $('#connection-detail').textContent = connected ? '' : '请确认本机服务已启动。'
-  $('#connect').hidden = connected || busy
+  $('#connection-detail').textContent = known && connected ? '' : '确认连接即允许 Hermes 直接读取、点击和执行任务页脚本，无须逐站或逐项审批。请先启动本机服务。'
+  $('#connect').hidden = known && connected || busy
   $('#connection-card').hidden = known && connected
-  const access = $('#access-toggle')
-  access.setAttribute('aria-checked', String(consentStatus === 'enabled'))
-  access.disabled = busy || !connected || !known
-  $('#access-detail').textContent = consentStatus === 'enabled' ? '全部访问 · 工具直接执行' : consentStatus === 'disabled' ? '智能审批 · 首次读网站确认，写入逐项确认' : '模式待确认'
-  $('#confirm').hidden = !confirming
-  $('#confirm-enable').disabled = busy
-  $('#confirm-cancel').disabled = busy
+  $('#access-detail').textContent = !known ? '连接状态待确认。' : connected ? '已连接 · 任务页可由 Hermes 直接访问。' : '未连接 · 确认连接后才能直接访问任务页。'
   $('#filter-toggle').setAttribute('aria-checked', String(filterEnabled))
   $('#filter-toggle').disabled = busy || !filterKnown
   // 中文注释：主流程明确显示自动匹配，额外选择器不是使用前提。
@@ -56,7 +48,6 @@ async function refresh() {
     connected = result.connected === true
     filterEnabled = result.pageContentFilter === true
     filterKnown = true
-    consentStatus = result.browserFullConsentStatus || 'unknown'
     if(uncertainControl){
       const task=statusData.tasks?.find(t=>t.id===uncertainControl.taskId)
       if(!task||['cancelled','closed'].includes(task.state)||task.generation!==uncertainControl.generation||uncertainControl.kind==='takeover'&&task.state==='paused'||uncertainControl.kind==='resume'&&['paused','ready','running'].includes(task.state))uncertainControl=null
@@ -66,7 +57,6 @@ async function refresh() {
     if (token !== revision) return
     known = false
     filterKnown = false
-    consentStatus = 'unknown'
     $('#error').textContent = '连接状态暂时无法读取。'
     $('#error').hidden = false
   } finally { refreshing = false }
@@ -95,31 +85,6 @@ async function setContentFilter() {
   }
 }
 $('#filter-toggle').addEventListener('click', () => void setContentFilter())
-async function setConsent(enabled) {
-  if (busy || !connected) return
-  busy = true
-  confirming = false
-  ++revision
-  render()
-  try {
-    await call({ type: 'browser_consent', enabled })
-    const result = await call({ type: 'popup_status' })
-    const expected = enabled ? 'enabled' : 'disabled'
-    if (result.browserFullConsentStatus !== expected) throw Error('授权状态未确认')
-    connected = result.connected === true
-    statusData = result
-    known = true
-    consentStatus = expected
-    $('#error').hidden = true
-  } catch {
-    consentStatus = 'unknown'
-    $('#error').textContent = '无法核实浏览器模式，请检查连接。'
-    $('#error').hidden = false
-  } finally {
-    busy = false
-    render()
-  }
-}
 
 // 中文注释：只控制已确认的当前页；任务切换后不会复用旧的停止请求。
 function renderWork(){
@@ -149,13 +114,6 @@ $('#stop-task').addEventListener('click',()=>void controlTask('stop'));
 // 中文注释：接管/继续走后台任务控制，不能只切换页面样式。
 $('#takeover').addEventListener('click',()=>{const task=statusData?.tasks?.find(t=>t.id===statusData?.page?.taskId);void controlTask(task?.state==='paused'?'resume':'takeover');});
 
-$('#access-toggle').addEventListener('click', () => {
-  if (busy || !connected) return
-  if (consentStatus === 'enabled') void setConsent(false)
-  else { confirming = true; render() }
-})
-$('#confirm-cancel').addEventListener('click', () => { confirming = false; render() })
-$('#confirm-enable').addEventListener('click', () => void setConsent(true))
 $('#connect').addEventListener('click', async () => {
   if (busy) return
   busy = true

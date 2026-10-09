@@ -1,5 +1,5 @@
 /** Browser ESM; does not execute actions or bypass the host's approval gate. */
-export function createPageSemantics({document: doc = globalThis.document, taskId, documentId, leaseId, expiresAt = Infinity, maxScan = 20000, maxItems = 200, maxText = 400, shadowRootOf = node => node.shadowRoot} = {}) {
+export function createPageSemantics({document: doc = globalThis.document, taskId, documentId, leaseId, expiresAt = Infinity, maxScan = 20000, maxItems = 200, maxText = 400, shadowRootOf = node => node.shadowRoot, classifyField = () => null} = {}) {
   for (const v of [taskId, documentId, leaseId]) if (typeof v !== 'string' || !v || v.length > 128) throw new Error('BINDING_REQUIRED');
   if (typeof expiresAt !== 'number' || Number.isNaN(expiresAt)) throw new Error('INVALID_EXPIRY');
   for (const v of [maxScan,maxItems,maxText]) if (!Number.isSafeInteger(v) || v < 1) throw new Error('INVALID_LIMIT');
@@ -14,7 +14,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   // 中文注释：无障碍补充只保存在真实节点上，任何 DOM epoch 变化都会使其失效。
   const accessibilityNames=new WeakMap();
   // 中文注释：样式和上下文缓存只活在一次同步解析内，下一次读或动作必定重新计算。
-  let styles=new WeakMap(),contextNames=new WeakMap();
+  let styles=new WeakMap(),contextNames=new WeakMap(),surfaces=new WeakMap();
   const computed=node=>{if(!styles.has(node))styles.set(node,node.ownerDocument.defaultView.getComputedStyle(node));return styles.get(node);};
   const documentRoot=doc.documentElement;
   const isOverlay=node=>{
@@ -31,7 +31,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
   const observer=new doc.defaultView.MutationObserver(changed);
   observer.observe(doc,{subtree:true,childList:true,attributes:true,characterData:true});
   function sync(){
-    styles=new WeakMap();contextNames=new WeakMap();
+    styles=new WeakMap();contextNames=new WeakMap();surfaces=new WeakMap();
     changed(observer.takeRecords());
     if(revoked)throw new Error('LEASE_REVOKED');if(Date.now()>=expiresAt)throw new Error('LEASE_EXPIRED');if(doc.documentElement!==documentRoot)throw new Error('DOCUMENT_REPLACED');
     for(const [frame,state] of frameDocuments){
@@ -273,9 +273,32 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     }
     return false;
   }
-  function interaction(node){
+  // 中文注释：只返回标准用途，不序列化 autocomplete 中的任意值，也不读取字段内容。
+  function inputMetadata(node){
+    if(node.localName!=='input')return {};
+    const tokens=(node.getAttribute('autocomplete')||'').toLowerCase().split(/\s+/),inputType=node.type;
+    const standardKind=inputType==='password'||tokens.some(token=>['current-password','new-password'].includes(token))?'password'
+      :tokens.some(token=>/^cc-[a-z0-9-]+$/.test(token))?'payment':tokens.includes('one-time-code')?'otp'
+      :inputType==='email'||tokens.includes('username')?'account':null;
+    const fieldKind=classifyField(node)||standardKind;
+    return {inputType,...(fieldKind?{fieldKind}:{}),...(['password','payment','otp'].includes(fieldKind)?{inputRequired:'vault_or_user'}:{})};
+  }
+  // 中文注释：布局只帮助区分浮层，不授予权限或猜测登录提供商；顶层特性按浏览器真实状态读取。
+  function surfaceMetadata(node){
+    if(surfaces.has(node))return surfaces.get(node);
+    const topLayer=pseudo=>{try{return node.matches(pseudo);}catch{return false;}};
+    let surfaceKind=null;
+    if(node.localName==='dialog'||['dialog','alertdialog'].includes(role(node))||node.getAttribute('aria-modal')==='true')surfaceKind=node.getAttribute('aria-modal')==='true'||topLayer(':modal')?'modal':'dialog';
+    else if(node.hasAttribute('popover')&&topLayer(':popover-open'))surfaceKind='popover';
+    else if(node.matches('div,section,aside,form')){
+      const style=computed(node);
+      if((style.position==='fixed'||style.position==='absolute'&&Number(style.zIndex)>0)&&node.querySelector('input,iframe,frame')&&node.querySelector('button,[role="button"],input[type="submit"],iframe,frame'))surfaceKind='floating';
+    }
+    const result=surfaceKind?{surfaceKind}:{};surfaces.set(node,result);return result;
+  }
+  function interaction(node,metadata=inputMetadata(node)){
     const result={role:role(node),actions:[],editable:Boolean(node.isContentEditable||node.matches(editable)),disabled:disabled(node),readonly:Boolean(node.readOnly||node.getAttribute('aria-readonly')==='true')};
-    if(result.disabled||!node.isConnected||node.matches('input[type="password"],input[type="file"],input[type="hidden"]'))return result;
+    if(result.disabled||!node.isConnected||metadata.inputRequired||node.matches('input[type="file"],input[type="hidden"]'))return result;
     result.actions.push('click','press');
     const textInput=node.localName==='input'&&!['checkbox','radio','range','button','submit','reset','image','color'].includes(node.type);
     if(!result.readonly&&(textInput||node.localName==='textarea'||result.editable))result.actions.push('fill');
@@ -371,22 +394,24 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
       }
     }
     const placeholder=!content && node.matches('input,textarea')?node.getAttribute('placeholder'):null;
-    const result={ref:ref(node),role:r,name:clip(content||placeholder||'')};
+    const result={ref:ref(node),role:r,name:clip(content||placeholder||''),...inputMetadata(node)};
     const ax=accessibilityNames.get(node);
     if(ax?.epoch===epoch){const currentState={role:r};controlState(node,currentState);if(ax.signature===JSON.stringify(currentState)){result.name=clip(ax.name);result.nameSource='accessibility';if(ax.role)result.role=ax.role;Object.assign(result,ax.states);}}
     // 中文注释：上下文只保留有语义的区域和记录，不给容器创建可操作引用。
     const context=[];
-    for(let parent=node===scope?null:node.assignedSlot||node.parentElement||node.getRootNode().host;parent&&context.length<6;parent=parent.parentElement||parent.getRootNode().host){
-      if(!parent.matches('main,nav,section,article,li,fieldset,dialog,[role=region],[role=dialog],[role=row],[role=listitem],[role=group],[role=listbox],[role=tablist],[role=menu]')){if(parent===scope)break;continue;}
+    const contextParent=node=>node.assignedSlot||node.parentElement||node.getRootNode().host||(node.ownerDocument!==doc?node.ownerDocument.defaultView?.frameElement:null);
+    for(let parent=node===scope?null:contextParent(node);parent&&context.length<6;parent=contextParent(parent)){
+      const surface=surfaceMetadata(parent);
+      if(!surface.surfaceKind&&!parent.matches('main,nav,section,article,li,fieldset,dialog,[role=region],[role=dialog],[role=row],[role=listitem],[role=group],[role=listbox],[role=tablist],[role=menu]')){if(parent===scope)break;continue;}
       if(!contextNames.has(parent)){
         // 中文注释：区域只采用自己的直接标题，避免拿内部另一条记录的标题命名整个区域。
         const heading=Array.from(parent.children).find(child=>child.matches('legend,h1,h2,h3,h4,h5,h6'));
         const label=parent.getAttribute('aria-label')|| (heading&&visible(heading,false)?text(heading):parent.matches('li,article,[role=row],[role=listitem]')?text(parent):'');
         const rowIndex=Number(parent.getAttribute('aria-rowindex')||parent.getAttribute('aria-posinset'));
-        contextNames.set(parent,{ref:ref(parent),role:parent.getAttribute('role')||parent.localName,name:clip(label).slice(0,120),...(Number.isSafeInteger(rowIndex)&&rowIndex>0?{index:rowIndex}:{})});
+        contextNames.set(parent,{ref:ref(parent),role:parent.getAttribute('role')||parent.localName,name:clip(label).slice(0,120),...surface,...(Number.isSafeInteger(rowIndex)&&rowIndex>0?{index:rowIndex}:{})});
       }
       const entry=contextNames.get(parent);
-      if(entry.name||parent.localName!=='section'||parent===scope)context.unshift(entry);
+      if(entry.surfaceKind||entry.name||parent.localName!=='section'||parent===scope)context.unshift(entry);
       if(parent===scope)break;
     }
     if(context.length){result.context=context;result.parentRef=context.at(-1).ref;}
@@ -411,7 +436,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     if(inferred)result.inferred=true;
     controlState(node,result);
     // 中文注释：动作清单与宿主的预审和派发资格共用同一描述，只表达能力，不授予权限。
-    result.actions=interaction(node).actions;
+    result.actions=interaction(node,result).actions;
     if(r==='row' && cells.length>40){result.omittedCells=cells.length-40;truncated=true;}
     if(truncated)result.truncated=true;
     return result;
@@ -592,7 +617,7 @@ export function createPageSemantics({document: doc = globalThis.document, taskId
     return node;
   }
   // 中文注释：解析器仅复用受限读取，不向模型暴露节点或可执行引用。
-  const parsingContext=()=>({doc,binding,visible,editable,describe:item,cells:rowCells,optionVisible,
+  const parsingContext=()=>({doc,binding,visible,editable,describe:item,cells:rowCells,optionVisible,surface:surfaceMetadata,role,
     revision:()=>{sync();return epoch;},
     read:node=>{truncated=false;const value=readText(node,true,4096);return {text:value.trim(),truncated};},
     option:node=>{truncated=false;return {text:bounded(node.label||node.textContent||'',1024),truncated};},

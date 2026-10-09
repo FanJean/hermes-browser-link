@@ -4,25 +4,30 @@ import json
 import os
 from pathlib import Path
 import select
+import signal
 import socket
 import struct
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 
 BRIDGE_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BRIDGE_DIR))
+from tests.support import stop_fixture_daemon, temporary_bridge_home
+
 ORIGIN = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
 
 
-class NativeHostShutdownTests(unittest.TestCase):
+class NativeHostFixture(unittest.TestCase):
+    bootstrap = ""
+    initial_native_message = None
+
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="hs-", dir="/tmp")
-        self.addCleanup(self.temp.cleanup)
-        home = Path(self.temp.name)
+        home = self.enterContext(temporary_bridge_home())
         data = home / "plugin-data" / "browser-link-native"
+        self.fixture_data = data
         data.mkdir(parents=True)
         (data / "token").write_text("fixture-token", encoding="ascii")
         (data / "host-config.json").write_text(json.dumps({"allowedOrigins": [ORIGIN]}))
@@ -32,13 +37,26 @@ class NativeHostShutdownTests(unittest.TestCase):
         server.listen(1)
         server.settimeout(2)
         # 中文注释：只连接测试套接字，绝不启动或重启用户的 Hermes daemon。
-        script = "import sys; sys.path.insert(0, sys.argv.pop(1)); import host; host.ensure_service = lambda home: None; raise SystemExit(host.main())"
+        script = "\n".join((
+            "import faulthandler, signal, sys",
+            "faulthandler.register(signal.SIGUSR1, all_threads=True)",
+            "sys.path.insert(0, sys.argv.pop(1))",
+            "import host",
+            "host.ensure_service = lambda home: None",
+            self.bootstrap,
+            "raise SystemExit(host.main())",
+        ))
         self.process = subprocess.Popen(
             [sys.executable, "-c", script, str(BRIDGE_DIR), ORIGIN],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env={**os.environ, "HERMES_HOME": str(home), "PYTHONDONTWRITEBYTECODE": "1"},
         )
         self.addCleanup(self._cleanup_process)
+        if self.initial_native_message is not None:
+            payload = json.dumps(self.initial_native_message).encode()
+            assert self.process.stdin is not None
+            self.process.stdin.write(struct.pack("<I", len(payload)) + payload)
+            self.process.stdin.flush()
         self.peer, _ = server.accept()
         self.addCleanup(self.peer.close)
         self.peer.settimeout(2)
@@ -60,19 +78,35 @@ class NativeHostShutdownTests(unittest.TestCase):
 
     def _assert_clean_exit(self):
         # 中文注释：旧实现会等待约一秒后 abort，先终止超时夹具，避免制造系统崩溃弹窗。
+        error_stream = self.process.stderr
+        assert error_stream is not None
         try:
             code = self.process.wait(timeout=0.8)
         except subprocess.TimeoutExpired:
+            # 中文注释：只向本次夹具发诊断信号，短暂收集现场后仍立即终止并失败。
+            self.process.send_signal(signal.SIGUSR1)
+            captured = b""
+            if select.select([error_stream], [], [], 0.05)[0]:
+                captured = os.read(error_stream.fileno(), 64 * 1024)
             self.process.kill()
             self.process.wait(timeout=2)
-            self.fail("Native host 在断连后未及时退出")
-        stderr = self.process.stderr.read()
+            stderr = captured + error_stream.read()
+            self.fail("Native host 在断连后未及时退出\n" + stderr.decode(errors="replace"))
+        stderr = error_stream.read()
         self.assertEqual(code, 0, stderr.decode(errors="replace"))
         self.assertEqual(stderr, b"")
 
+
+class NativeHostShutdownTests(NativeHostFixture):
     def test_bridge_eof_with_browser_input_still_open(self):
         self._close_bridge()
         self._assert_clean_exit()
+
+    def test_exit_timeout_retains_fixture_thread_stacks(self):
+        # 中文注释：故意不关闭夹具管道；真实超时必须失败并保留现场，不能重试或放宽期限。
+        with self.assertRaisesRegex(AssertionError, r"(?s)Native host.*Thread.*host\.py"):
+            self._assert_clean_exit()
+        self.assertIsNotNone(self.process.poll())
 
     def test_bridge_eof_during_partial_native_header(self):
         self.process.stdin.write(b"\x20\x00")
@@ -147,15 +181,59 @@ class NativeHostShutdownTests(unittest.TestCase):
         self._assert_clean_exit()
 
 
+class NativeHostStartupShutdownTests(NativeHostFixture):
+    initial_native_message = {"id": "fixture-early", "method": "extension.tasks", "params": {}}
+    # 中文注释：只延迟隔离夹具启动；记录真实线程启动数，认证仍走生产 host。
+    bootstrap = """
+import json, os, threading, time
+from pathlib import Path
+started_threads = []
+early_frame_writing = threading.Event()
+original_start = threading.Thread.start
+def tracked_start(thread):
+    if not started_threads:
+        time.sleep(1.1)
+    original_start(thread)
+    started_threads.append(thread.ident)
+threading.Thread.start = tracked_start
+original_write = host._write_json_line
+def tracked_write(sock, value, lock):
+    if value.get('role') == 'extension':
+        data = Path(os.environ['HERMES_HOME']) / 'plugin-data/browser-link-native'
+        (data / 'startup-state.json').write_text(json.dumps({'startedThreads': len(started_threads)}))
+        if started_threads:
+            assert early_frame_writing.wait(1), 'early native frame did not reach the writer'
+    else:
+        early_frame_writing.set()
+    original_write(sock, value, lock)
+host._write_json_line = tracked_write
+"""
+
+    def test_authorization_hello_waits_for_both_forwarding_threads(self):
+        state = json.loads((self.fixture_data / "startup-state.json").read_text())
+        self.assertEqual(state["startedThreads"], 2)
+        self._close_bridge()
+        self._assert_clean_exit()
+
+    def test_early_native_frame_is_forwarded_after_authorization_hello(self):
+        self.assertEqual(json.loads(self.reader.readline()), self.initial_native_message)
+        assert self.process.stdin is not None
+        self.process.stdin.close()
+        self._assert_clean_exit()
+
+    def test_delayed_start_does_not_consume_partial_header_shutdown_deadline(self):
+        assert self.process.stdin is not None
+        self.process.stdin.write(b"\x20\x00")
+        self.process.stdin.flush()
+        self._close_bridge()
+        self._assert_clean_exit()
+
+
 class NativeHostHistoryIntegrationTests(unittest.TestCase):
     def test_large_history_cleanup_over_real_host_and_daemon_keeps_connection_open(self):
         sys.path.insert(0, str(BRIDGE_DIR))
         from client import ensure_service
-        from tests.support import stop_fixture_daemon
-
-        temp = tempfile.TemporaryDirectory(prefix="hh-", dir="/tmp")
-        self.addCleanup(temp.cleanup)
-        home = Path(temp.name).resolve()
+        home = self.enterContext(temporary_bridge_home())
         data = home / "plugin-data" / "browser-link-native"
         data.mkdir(parents=True, mode=0o700)
         operation = {"action": "snapshot", "state": "succeeded", "startedAt": 1, "completedAt": 2, "durationMs": 1000}

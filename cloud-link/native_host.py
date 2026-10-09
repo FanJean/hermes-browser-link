@@ -70,8 +70,6 @@ def main():
                 result = service.view()
             elif method == 'connect' and set(params) <= {'replace'} and type(params.get('replace', False)) is bool:
                 result = service.start_pairing(params.get('replace', False))
-            elif method == 'full_access' and set(params) == {'enabled'}:
-                result = service.set_full_access(params['enabled'])
             elif method == 'disconnect' and not params:
                 result = service.disconnect()
             else:

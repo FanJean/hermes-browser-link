@@ -61,6 +61,22 @@ class NativeTests(unittest.TestCase):
         self.assertIn('全部访问', self.tools.TOOL_SCHEMAS['browser_shared_resume']['description'])
         self.assertIn('授权', self.tools._public({'state': 'authorizing'})['message'])
 
+    # 中文注释：模型说明不宣传旧模式，但仍说明特殊确认和凭据隔离。
+    def test_descriptions_use_connection_authorization_and_keep_independent_protections(self):
+        descriptions = '\n'.join(schema['description'] for schema in self.tools.TOOL_SCHEMAS.values())
+        self.assertNotIn('智能审批', descriptions)
+        self.assertIn('连接授权', descriptions)
+        run = self.tools.TOOL_SCHEMAS['browser_shared_run']['description']
+        self.assertIn('直接执行', run)
+        self.assertIn('凭据填写', run)
+        self.assertIn('popup_adopt', run)
+        self.assertIn('必须明确确认', run)
+        self.assertIn('popup_adopt 的等待只读', run)
+        self.assertIn('browser_shared_get', run)
+        self.assertNotIn('切到返回 tabId', run)
+        self.assertIn('源浏览器扩展确认', self.tools.TOOL_SCHEMAS['browser_shared_cookie_mirror']['description'])
+        self.assertNotIn('智能审批', self.tools._public({'state': 'pending_approval'})['message'])
+
     # 中文注释：桥接丢失滚动回执时不能被工具层的只读分类覆盖。
     def test_browser_access_revocation_is_explicit_and_keeps_write_uncertainty(self):
         for dispatched in (False, True):

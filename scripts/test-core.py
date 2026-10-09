@@ -22,6 +22,9 @@ with (nullcontext(os.environ['TMPDIR']) if 'TMPDIR' in os.environ else tempfile.
         ['node', '--test', '--test-concurrency=1', *gate.NODE_TESTS],
         # 中文注释：首次网站读取确认覆盖 daemon 审批与浏览器来源回读的离线往返。
         [sys.executable, 'tests/v1.1-approval-notify/test_site_read.py'],
+        # 中文注释：OAuth popup 的进程内 daemon 与工具/Vault 回归仅运行两个已审阅文件；不扩大发现范围。
+        *[[sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/native-v2', '-p', name, '-v']
+          for name in ('test_oauth_popup.py', 'test_oauth_popup_executor.py')],
         [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/v1.1-script-lane', '-v'],
         [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/v1.3', '-v'],
         # 中文注释：新增并行、身份隔离、传输恢复与诊断回归均为离线合成测试。

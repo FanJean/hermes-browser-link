@@ -70,7 +70,7 @@ count = evaluate('(selector)=>document.querySelectorAll(selector).length', '#res
 print({'text': text, 'count': count})
 ```
 
-`isolated` 共享 DOM，不共享网站 JS 全局变量；需要已确认的网站变量才显式 `world='main'`。隔离世界不是只读沙箱；JS 仍受审批约束。语法/selector 错误先修正，不自动切 main 或重放有副作用的函数；点击/填写优先用已有 locator/ref helper。
+`isolated` 共享 DOM，不共享网站 JS 全局变量；需要已确认的网站变量才显式 `world='main'`。隔离世界不是只读沙箱；连接授权后 JS 直接执行，任务来源、租约、凭据排斥和内容保护仍生效。语法/selector 错误先修正，不自动切 main 或重放有副作用的函数；点击/填写优先用已有 locator/ref helper。
 
 ## 填表与人工交接
 

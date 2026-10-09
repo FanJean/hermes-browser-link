@@ -89,6 +89,9 @@ class ApprovalTests(unittest.TestCase):
     def test_pending_does_not_block_other_owner_and_boundaries_stay_on(self):
         self.d._dispatch_client('shared.run', self.params())
         other=self.task('bob',2)
+        # 中文注释：另一任务已完成连接授权；Alice 的兼容审批不得阻塞 Bob 的普通读取。
+        self.d._dispatch_extension('browser','extension.mode',dict(taskId=other['id'],mode='full',
+            generation=other['generation'],modeGeneration=other.get('modeGeneration',1)))
         self.assertEqual(self.d._dispatch_client('shared.run',dict(owner='bob',taskId=other['id'],requestId='read',action='snapshot',tabId=2)),{'ok':True})
         self.mode('full')
         p=self.params();p['owner']='bob'

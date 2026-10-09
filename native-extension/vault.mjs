@@ -60,7 +60,7 @@ export class VaultController{
   const executor=this.executor,t=executor.tasks.get(p.taskId);executor.check(t,p);
   if(p.instanceId!==t.instanceId||p.modeGeneration!==t.policy.modeGeneration)throw denied('VAULT_SCOPE_CHANGED');
   if(executor.leases.get(p.tabId)!==t.id)throw denied('tab lease denied');
-  if(!t.agentTabs.has(p.tabId))throw denied('tab lease denied');
+  if(!t.agentTabs.has(p.tabId)&&!t.adoptedPopupTabs?.has(p.tabId))throw denied('tab lease denied');
   // 中文注释：私有宿主通道已经核实本次智能审批或全部访问；扩展继续校验任务代次与同页互斥。
   // 中文注释：页面执行过任意 JS/CDP 时禁止凭据填写，互斥由扩展与宿主双侧校验。
   if(t.scriptedTabs?.has(p.tabId))throw denied('CREDENTIAL_MODE_CONFLICT');

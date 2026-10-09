@@ -3,26 +3,128 @@ import assert from 'node:assert/strict';
 import {CloudLink} from '../../native-extension/cloud-link.mjs';
 import {BrowserConsent} from '../../native-extension/bridge.mjs';
 
-// 中文注释：真实授权类配合合成传输，检查云端、本地两种权限不会相互覆盖。
-test('本地开关只同步本地任务，云端模式独立',async()=>{
- const stored={},local={id:'local',generation:1,policy:{activeMode:'smart',modeGeneration:1}},remote={id:'cloud',generation:1,policy:{activeMode:'full',modeGeneration:7}};
- const calls=[],executor={tasks:new Map([['local',local],['cloud',remote]]),revokeMode:id=>{calls.push(['revoke',id]);},setMode:task=>{calls.push(['grant',task.id]);},};
- const consent=new BrowserConsent({get:async()=>({}),set:async value=>Object.assign(stored,value)},executor,{modeForTask:t=>t.id==='cloud'?'full':null});
- const bridge={closed:false,request:async(method,p)=>{calls.push([method,p.taskId]);return {...local,modeGeneration:2,activeMode:'full'};}};
- await consent.setEnabled(true,bridge);
- assert.deepEqual(calls,[['extension.mode','local'],['grant','local']]);
- assert.equal(remote.policy.activeMode,'full');assert.equal(stored.browserFullConsent.enabled,true);
+test('云端绑定仅明确 active 在线授权可用，未知和 connecting 不能沿用旧 full',async()=>{
+ for(const state of ['unknown','error','connecting','offline','pending_pairing','unavailable']){
+  const calls=[],task={id:'cloud',generation:1,instanceId:'browser',state:'ready',activeMode:'full'};
+  const link=new CloudLink({}, {localBridge:()=>({request:async method=>{calls.push(method);return [task];}}),executor:{},consent:{synchronize:async()=>{}},changed:()=>{}});
+  link.instanceId='browser';link.state={paired:true,fullAccess:true,online:true,state};
+  await assert.rejects(link.bind({taskId:'cloud',generation:1,instanceId:'browser',mode:'full'}));
+  assert.deepEqual(calls,[]);assert.equal(link.modeForTask(task),null);
+ }
 });
 
-test('云端绑定重验本实例，并将旧 full 任务切回云端 smart',async()=>{
+test('云端状态跨每个 await 失效，恢复 active 不能接受旧绑定回执',async()=>{
+ for(const seam of ['first-list','consent','second-list','mode']){
+  let task={id:'cloud',generation:1,instanceId:'browser',state:'ready',activeMode:'smart',modeGeneration:2};
+  let release,enteredResolve;const entered=new Promise(resolve=>{enteredResolve=resolve;});
+  const gate=new Promise(resolve=>{release=resolve;});const modes=[],grants=[],revoked=[];let lists=0;
+  async function pause(at){if(at===seam){enteredResolve();await gate;}}
+  const bridge={request:async(method,params)=>{
+   if(method==='extension.tasks'){await pause(++lists===1?'first-list':'second-list');return [task];}
+   assert.equal(method,'extension.mode');modes.push(params);await pause('mode');
+   task={...task,activeMode:'full',modeGeneration:3};return task;
+  }};
+  const link=new CloudLink({}, {localBridge:()=>bridge,executor:{setMode:t=>grants.push(t.id),revokeMode:id=>revoked.push(id)},consent:{synchronize:()=>pause('consent')},changed:()=>{}});
+  link.instanceId='browser';link.state={paired:true,fullAccess:true,online:true,state:'active'};
+  const binding=link.bind({taskId:'cloud',generation:1,instanceId:'browser',mode:'full'});
+  const rejected=assert.rejects(binding);await entered;
+  await link.receive({method:'cloud.status_changed',params:{instanceId:'browser',paired:true,fullAccess:false,online:false,state:'offline'}});
+  assert.equal(link.modeForTask(task),null);
+  await link.receive({method:'cloud.status_changed',params:{instanceId:'browser',paired:true,fullAccess:true,online:true,state:'active'}});
+  release();await rejected;
+  assert.deepEqual(grants,[]);assert.equal(link.modeForTask(task),null);
+  assert.equal(modes.length,seam==='mode'?1:0);
+ }
+});
+
+test('云端端口断开撤销已绑定权限，旧端口消息不能复活授权',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});const ports=[],revoked=[];
+ const chrome={runtime:{connectNative:()=>{
+  const port={onMessage:{addListener:fn=>{port.receive=fn;}},onDisconnect:{addListener:fn=>{port.drop=fn;}},
+   postMessage:message=>{if(message.method==='hello')queueMicrotask(()=>port.receive({id:message.id,result:{instanceId:'browser',state:'active',paired:true,fullAccess:true,online:true}}));},disconnect:()=>port.drop()};
+  ports.push(port);return port;
+ }}};
+ const task={id:'cloud',generation:1,instanceId:'browser',state:'ready',activeMode:'full'};
+ const link=new CloudLink(chrome,{localBridge:()=>({request:async()=>[task]}),executor:{revokeMode:id=>revoked.push(id)},consent:{synchronize:async()=>{}},changed:()=>{}});
+ await link.connect('browser','Chrome');await link.bind({taskId:'cloud',generation:1,instanceId:'browser',mode:'full'});
+ assert.equal(link.modeForTask(task),'full');ports[0].drop();assert.equal(link.modeForTask(task),null);assert.deepEqual(revoked,['cloud']);
+ t.mock.timers.tick(1500);await link.connecting;
+ ports[0].receive({method:'cloud.status_changed',params:{instanceId:'browser',state:'unknown',paired:true,fullAccess:true,online:true}});
+ assert.equal(link.view().state,'active');assert.equal(link.modeForTask(task),null);
+});
+
+test('延迟 status 回执不能覆盖较新的 Native fence 代次',async()=>{
+ const link=new CloudLink({}, {localBridge:()=>null,executor:{},consent:{},changed:()=>{}});
+ link.instanceId='browser';link.port={};
+ await link.receive({method:'cloud.status_changed',params:{instanceId:'browser',state:'active',online:true,paired:true,fullAccess:true,authorizationGeneration:4}});
+ let resolve;link.request=()=>new Promise(done=>{resolve=done;});const refresh=link.refresh();
+ await link.receive({method:'cloud.status_changed',params:{instanceId:'browser',state:'offline',online:false,paired:true,fullAccess:false,authorizationGeneration:5}});
+ resolve({instanceId:'browser',state:'active',online:true,paired:true,fullAccess:true,authorizationGeneration:4});await refresh;
+ assert.equal(link.view().state,'offline');assert.equal(link.view().fullAccess,false);
+});
+
+test('真实 BrowserConsent 在云端审批 await 中撤权不能晚授 full 或审批本地任务',async()=>{
+ const cloud={id:'cloud',generation:1,instanceId:'browser',state:'pending_approval',allowedOrigins:['https://example.com'],modeGeneration:1};
+ const local={...cloud,id:'local'};let release,enter;const entered=new Promise(resolve=>{enter=resolve;});
+ const gate=new Promise(resolve=>{release=resolve;});const approvals=[],grants=[];
+ const executor={tasks:new Map([['cloud',{...cloud}],['local',{...local}]]),
+  revokeMode:id=>{executor.tasks.get(id).revoked=true;},setMode:task=>grants.push(task.id),release:async()=>{}};
+ const bridge={closed:false,request:async(method,params)=>{
+  if(method==='extension.tasks')return [cloud,local];
+  if(method==='extension.approve'){approvals.push(params.taskId);enter();await gate;return {...cloud,state:'ready'};}
+  if(method==='extension.mode')return {...cloud,state:'ready',activeMode:'full'};
+  if(method==='extension.stop')return {};
+  assert.fail(method);
+ }};
+ const link=new CloudLink({}, {localBridge:()=>bridge,executor,consent:new BrowserConsent({},executor),changed:()=>{}});
+ link.instanceId='browser';link.state={state:'active',online:true,paired:true,fullAccess:true};
+ const binding=link.bind({taskId:'cloud',generation:1,instanceId:'browser',mode:'full'}),rejected=assert.rejects(binding);
+ await entered;
+ await link.receive({method:'cloud.status_changed',params:{instanceId:'browser',state:'offline',online:false,paired:true,fullAccess:false}});
+ await link.receive({method:'cloud.status_changed',params:{instanceId:'browser',state:'active',online:true,paired:true,fullAccess:true}});
+ release();await rejected;
+ assert.deepEqual(grants,[]);assert.deepEqual(approvals,['cloud']);assert.equal(executor.tasks.get('local').revoked,undefined);
+});
+
+test('已配对云端拒绝 smart 降级，不改变任务或本地权限',async()=>{
  let task={id:'cloud',generation:1,instanceId:'browser',state:'ready',activeMode:'full',modeGeneration:2};
- const calls=[],executor={revokeMode:id=>calls.push(['revoke',id]),setMode:()=>assert.fail('smart 不能二次授予模式')};
+ const calls=[],executor={revokeMode:()=>assert.fail('不能撤回 full'),setMode:()=>assert.fail('拒绝不改变权限')};
  const bridge={request:async(method,p)=>{calls.push([method,p]);if(method==='extension.tasks')return [task];if(method==='extension.mode'){task={...task,activeMode:p.mode,modeGeneration:p.modeGeneration+1};return task;}throw Error(method);}};
- const link=new CloudLink({}, {localBridge:()=>bridge,executor,consent:{synchronize:async()=>{}},changed:()=>{}});link.instanceId='browser';
- assert.equal((await link.bind({taskId:'cloud',generation:1,instanceId:'browser',mode:'smart'})).verified,true);
- assert.equal(link.modeForTask(task),'smart');assert.equal(link.modeForTask({id:'local',generation:1}),null);
- assert.equal(calls.filter(([method])=>method==='extension.mode').length,1);
- const before=calls.length;await assert.rejects(link.bind({taskId:'cloud',generation:1,instanceId:'other',mode:'full'}));assert.equal(calls.length,before);
+ const link=new CloudLink({}, {localBridge:()=>bridge,executor,consent:{synchronize:async()=>{}},changed:()=>{}});link.instanceId='browser';link.state={paired:true,fullAccess:true,online:true,state:'active'};
+ await assert.rejects(link.bind({taskId:'cloud',generation:1,instanceId:'browser',mode:'smart'}));
+ assert.deepEqual(calls,[]);assert.equal(task.activeMode,'full');assert.equal(link.modeForTask(task),null);
+});
+
+test('未配对云端不能通过绑定 full 授予任务权限',async()=>{
+ const calls=[],task={id:'cloud',generation:1,instanceId:'browser',state:'ready',activeMode:'full'};
+ const bridge={request:async method=>{calls.push(method);return [task];}};
+ const link=new CloudLink({}, {localBridge:()=>bridge,executor:{},consent:{synchronize:async()=>{}},changed:()=>{}});link.instanceId='browser';
+ await assert.rejects(link.bind({taskId:'cloud',generation:1,instanceId:'browser',mode:'full'}));
+ assert.deepEqual(calls,[]);assert.equal(link.modeForTask(task),null);assert.equal(link.view().paired,false);
+});
+
+test('已配对云端将旧 smart 云端任务升级 full，代次不匹配不能沿用模式',async()=>{
+ let task={id:'cloud',generation:1,instanceId:'browser',state:'running',activeMode:'smart',modeGeneration:2};
+ const modes=[],grants=[];
+ const bridge={request:async(method,p)=>{
+  if(method==='extension.tasks')return [task];
+  assert.equal(method,'extension.mode');modes.push(p);task={...task,activeMode:p.mode,modeGeneration:3};return task;
+ }};
+ const link=new CloudLink({}, {localBridge:()=>bridge,executor:{setMode:t=>grants.push(t.id)},consent:{synchronize:async()=>{}},changed:()=>{}});
+ link.instanceId='browser';link.state={paired:true,fullAccess:true,online:true,state:'active'};
+ assert.deepEqual(await link.bind({taskId:'cloud',generation:1,instanceId:'browser',mode:'full'}),{verified:true,taskId:'cloud'});
+ assert.deepEqual(modes,[{taskId:'cloud',generation:1,modeGeneration:2,mode:'full'}]);assert.deepEqual(grants,['cloud']);
+ assert.equal(link.modeForTask(task),'full');assert.equal(link.modeForTask({...task,generation:2}),null);
+ assert.equal(link.modeForTask({id:'local',generation:1}),null);
+});
+
+test('云端绑定不能给其他实例的任务授予 full',async()=>{
+ const task={id:'cloud',generation:1,instanceId:'other-browser',state:'ready',activeMode:'full'};
+ const bridge={request:async method=>{assert.equal(method,'extension.tasks');return [task];}};
+ const link=new CloudLink({}, {localBridge:()=>bridge,executor:{},consent:{synchronize:async()=>assert.fail('错误实例不能同步授权')},changed:()=>{}});
+ link.instanceId='browser';link.state={paired:true,fullAccess:true,online:true,state:'active'};
+ await assert.rejects(link.bind({taskId:'cloud',generation:1,instanceId:'browser',mode:'full'}));
+ assert.equal(link.modeForTask(task),null);
 });
 
 test('Native 反向请求不能开启云端完全访问，错误实例状态不能改界面',async()=>{

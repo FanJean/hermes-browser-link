@@ -7,6 +7,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -31,20 +32,43 @@ def load(path: Path, name: str):
 
 def paths(work: Path):
     work = work.expanduser().resolve()
-    # Keep AF_UNIX bridge.sock below macOS' short path limit.
     home = work / "h"
-    installed = home / ".hermes" / "plugins" / "browser-link"
+    config_path = work / "fixture-paths.json"
+    config = json.loads(config_path.read_text()) if config_path.is_file() else {}
+    hermes = compact_home(work, Path(config["hermesHome"])) if config.get("hermesHome") else home / ".hermes"
+    installed = hermes / "plugins" / "browser-link"
     return {
         "work": work,
         "home": home,
-        "hermes": home / ".hermes",
+        "hermes": hermes,
         "plugin": installed if installed.is_dir() else work / "plugin" / "browser-link",
-        "extension": work / "dist-native",
+        "extension": work / "package/native-extension" if config.get("packageMode") else work / "dist-native",
     }
 
 
-def stage(work: Path, origins: list[str]):
-    value = paths(work)
+def compact_home(work: Path, home: Path):
+    # 中文注释：只接受 runner 在同一 scratch 下独占创建的短目录，不允许链接到个人配置。
+    work = work.expanduser().resolve()
+    if (home.is_symlink() or home.resolve() != home or home.parent != work.parent
+            or not re.fullmatch(r"[a-f0-9]{4}", home.name) or not home.is_dir()):
+        raise ValueError("compact Hermes home must be a private scratch sibling")
+    if len(os.fsencode(home / "plugin-data/browser-link-native/bridge.sock")) > 103:
+        raise ValueError("compact fixture socket path is too long")
+    return home
+
+
+def configure_paths(work: Path, hermes_home: Path | None, *, package_mode=False):
+    work = work.expanduser().resolve()
+    config: dict = {"packageMode": package_mode}
+    if hermes_home is not None:
+        config["hermesHome"] = str(compact_home(work, hermes_home))
+    # 中文注释：后续 RPC 是新进程，必须读回同一 fixture 的 home 和包布局。
+    (work / "fixture-paths.json").write_text(json.dumps(config), encoding="utf-8")
+    return paths(work)
+
+
+def stage(work: Path, origins: list[str], hermes_home: Path | None = None):
+    value = configure_paths(work, hermes_home)
     if value["plugin"].exists():
         raise FileExistsError("fixture plugin already exists")
     value["plugin"].parent.mkdir(parents=True, exist_ok=True)
@@ -52,6 +76,20 @@ def stage(work: Path, origins: list[str]):
     shutil.copytree(ROOT / "native-bridge", value["plugin"] / "native_bridge", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
     installer = load(ROOT / "native-bridge/install.py", "native_v2_installer_" + uuid.uuid4().hex)
     staged = installer.stage(value["home"], origins)
+    if hermes_home is not None:
+        # 中文注释：源码 installer 固定 home/.hermes；只迁移本 fixture 并改写其 launcher/manifest，不改生产安装器。
+        original = value["home"] / ".hermes"
+        for entry in original.iterdir():
+            shutil.move(str(entry), value["hermes"] / entry.name)
+        original.rmdir()
+        host = value["hermes"] / Path(staged["host"]).relative_to(original)
+        host.write_text(host.read_text().replace(str(original), str(value["hermes"])), encoding="utf-8")
+        for filename in staged["manifests"]:
+            manifest_path = Path(filename)
+            manifest = json.loads(manifest_path.read_text())
+            manifest["path"] = str(host)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        staged["host"] = str(host)
     return {
         "plugin": str(value["plugin"]),
         "extension": str(value["extension"]),
@@ -63,9 +101,9 @@ def stage(work: Path, origins: list[str]):
     }
 
 
-def stage_package(work: Path, package: Path, origins: list[str]):
+def stage_package(work: Path, package: Path, origins: list[str], hermes_home: Path | None = None):
     """在隔离 HOME 中安装候选包，并以安装后的文件运行所有后续工具调用。"""
-    value = paths(work)
+    value = configure_paths(work, hermes_home, package_mode=True)
     package = package.expanduser().resolve()
     # 中文注释：以正式 CLI 调用安装脚本；模块导入会在待验包内写入 __pycache__，破坏摘要清单。
     command = [sys.executable, str(package / "install-executor.py"),
@@ -215,7 +253,8 @@ def inspect(work: Path):
     installed_daemon = value["plugin"] / "native_bridge/daemon.py"
     host_daemon = value["hermes"] / "plugin-data/browser-link-native/host-bin/daemon.py"
     # 中文注释：源码阶段 daemon 可由隔离 host-bin 或临时安装的插件拉起，二者都必须在本次临时目录内。
-    candidates = [path for path in (installed_daemon, host_daemon) if path.is_file() and path.is_relative_to(value["work"])]
+    candidates = [path for path in (installed_daemon, host_daemon) if path.is_file() and
+                  (path.is_relative_to(value["work"]) or path.is_relative_to(value["hermes"]))]
     expected = next((path for path in candidates if str(path) in command), None)
     if expected is None or str(value["hermes"]) not in command:
         raise RuntimeError("daemon is not using staged bridge code")
@@ -534,7 +573,7 @@ def cleanup(work: Path):
     command = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True)
     # 中文注释：daemon 可能由 Native host（host-bin）或插件客户端（插件内 native_bridge）拉起，二者都在本次临时目录内。
     candidates = (value["plugin"] / "native_bridge/daemon.py", value["hermes"] / "plugin-data/browser-link-native/host-bin/daemon.py")
-    expected = [str(path) for path in candidates if path.is_relative_to(value["work"])]
+    expected = [str(path) for path in candidates if path.is_relative_to(value["work"]) or path.is_relative_to(value["hermes"])]
     if command.returncode == 0 and any(path in command.stdout for path in expected) and str(value["hermes"]) in command.stdout:
         # 中文注释：daemon 被测试终止后可能由临时插件目录内的客户端重新拉起，该路径也在本次临时目录内。
         stop_fixture_daemon(value["hermes"], extra_daemons=[path for path in expected])
@@ -559,9 +598,9 @@ def main():
     mode = sys.argv[1]
     work = Path(sys.argv[2])
     if mode == "stage":
-        result = stage(work, json.loads(sys.argv[3]))
+        result = stage(work, json.loads(sys.argv[3]), Path(sys.argv[4]) if len(sys.argv) > 4 else None)
     elif mode == "stage_package":
-        result = stage_package(work, Path(sys.argv[3]), json.loads(sys.argv[4]))
+        result = stage_package(work, Path(sys.argv[3]), json.loads(sys.argv[4]), Path(sys.argv[5]) if len(sys.argv) > 5 else None)
     elif mode == "rpc":
         result = rpc(work, sys.argv[3], sys.argv[4], json.loads(sys.argv[5]))
     elif mode == "batch":

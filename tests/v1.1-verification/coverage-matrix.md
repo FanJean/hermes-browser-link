@@ -44,7 +44,11 @@
 - `page-semantics/interaction-contract.test.mjs`：标准角色 token、控件动作清单、禁用继承、只读拒绝及增量能力变化
 - `tests/complex-ui/semantics.test.mjs`：重定位的原文档/Shadow 树身份及边界重挂拒绝、Shadow/iframe、推断点击、组合框、富文本、虚拟列表、表格和 canvas
 - `tests/native-extension/sensitive-fields.test.mjs`：普通字段误判与密码、卡号、验证码正例；旧版失败已复现。
+- `tests/native-extension/core.test.mjs`：合成 API 验证当前/待提交 URL、隐私截图拒绝、创建与租约冲突、释放和无重放；缺失 committed URL 不借 pendingUrl 授予读取。
+- `tests/native-extension/package.test.mjs`：MV3 权限及无旧审批开关的 UI 边界；只在 scratch 构建、校验和解压当前包，不安装或注册浏览器。
+- `tests/native-extension/core-press-cdp.test.mjs` 是隔离 Chrome 的真实可信键盘验收，不进入默认离线门禁。
 - `tests/native-extension/bridge-cdp-errors.test.mjs`：扩展固定错误码及结果不确定语义。
+- `tests/native-extension/bridge-cleanup-errors.test.mjs`：清理读回与显式重试、文档变化阶段码、未知写入不可重放及异常正文脱敏。
 - `tests/complex-ui/actions.test.mjs`：公共 ref_fill 跨同源 iframe 旧引用拒绝、引用操作、受控输入读回、portal 选择计划和遮挡拒绝；实际 CDP 安装及热调用执行填写资格、ARIA 选项和 frame 坐标换算回归
 - `executor-plugin/tests/test_result_privacy.py`：新增字段经公共工具投影到 Hermes，并过滤输入值、属性值和页面异常原文
 - `native-bridge/tests/test_tasks.py`：daemon 错误摘要裁剪；涉及 socket 的集成用例需本机补跑
@@ -206,3 +210,11 @@
 
 - 新增版本设置回归后，固定 reviewed 门禁为 50 步，已知 runner 允许清单为 91 项。
 - `tests/v1.1-build-closure/version-set.test.mjs`：在临时副本中验证 `npm run version:set` 同步全部版本副本、拒绝降级与重复版本、生成 CHANGELOG 节与发布说明草稿，以及单处版本漂移报出具体文件行。
+
+## OAuth popup 与短 socket 离线回归
+
+- `tests/native-extension/oauth-popup.test.mjs`、`tests/native-extension/oauth-popup-approval.test.mjs`：pure-offline；真实 Executor/后台审批配合合成 tabs/windows/VM，覆盖全访问仍需确认、精确窗口身份、失效拒绝、无清理权和私有审批投影。
+- `tests/native-v2/test_oauth_popup.py`、`tests/native-v2/test_oauth_popup_executor.py`：pure-offline；进程内 daemon/请求账本、工具和脚本契约、显式接管页的 Vault scope；两个入口均按固定文件执行。
+- `tests/native-v2/compact-scratch.test.mjs`：scratch-only；隔离源码/包 staging、真实临时 UDS bind、仅查询空实例的临时 daemon、布局恢复和清理，不启动或注册个人浏览器。与上述两个 Node runner 一并进入核心 Node 清单；baseline 增至 51 步，reviewed/supplemental 不变。
+- `tests/complex-ui/real-login-windows.mjs`：non-offline；仅手动真实临时 profile 验收，不进入 `npm test` 或 `npm run verify` 的默认执行清单。
+- 相对 HEAD：语义声明 72883→75313 字节（+2430），首批九条 CDP 消息 76910→79371 字节（+2461）；账号字段、登录浮层及宿主 classifier 只增加冷安装。声明仍受 ≤76000、冷消息 ≤80000 的硬上限约束；只安装一次，八次热调用仍为 2600 字节，保留 `<6000` 上限。

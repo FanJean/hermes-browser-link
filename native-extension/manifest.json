@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hermes Browser Link",
-  "version": "1.8.5",
+  "version": "1.9.0",
   "permissions": [
     "nativeMessaging",
     "debugger",
@@ -42,5 +42,5 @@
     "48": "icon-48.png",
     "128": "icon-128.png"
   },
-  "description": "连接 Hermes 与已登录的 Chrome/Edge，支持智能审批、自动文本与截图屏蔽、持续任务鼠标及 Cookie 镜像。"
+  "description": "连接 Hermes 与已登录的 Chrome/Edge，连接授权后直接执行任务页操作，保留接管、停止、凭据保护、自动文本与截图屏蔽及 Cookie 镜像。"
 }

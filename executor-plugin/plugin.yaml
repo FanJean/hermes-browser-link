@@ -1,9 +1,9 @@
 name: browser-link
-version: 1.8.5
+version: 1.9.0
 manifest_version: 2
 api_version: 1
 # 中文注释：按宿主钩子能力注册，不用版本号阻止加载。
-description: 在已登录的 Chrome 和 Edge 中执行受授权网页任务，支持智能审批、Python 工作流、自动文本与截图屏蔽、持续任务鼠标和 Cookie 镜像。
+description: 在已登录的 Chrome 和 Edge 中执行受授权网页任务，连接授权后直接执行，支持 Python 工作流、自动文本与截图屏蔽、持续任务鼠标和 Cookie 镜像。
 author: FanJean
 license: MIT
 tags: [browser, automation, native-messaging, desktop, privacy, python, cookie-mirror]

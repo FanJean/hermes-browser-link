@@ -29,6 +29,7 @@ import {PageRuntime} from './page-runtime.mjs';
 import {observePage} from './page-observation.mjs';
 import {PageObservers,listImages} from './page-observers.mjs';
 import {VaultController} from './vault.mjs';
+import {OAuthPopups} from './oauth-popups.mjs';
 
 const MAX_PENDING_INTERACTION_PROBES=32;
 const MAX_PENDING_INTERACTION_CLEANUPS=32;
@@ -160,7 +161,7 @@ export const semanticWorldDeclaration=`function(op,p){
  const createPageParser=${createPageParser.toString().replace(/^\s*\/\/[^\n]*\n/gm,'')};
  const same=(a,b)=>a&&b&&a.taskId===b.taskId&&a.documentId===b.documentId&&a.leaseId===b.leaseId;
  // 中文注释：扩展重载后旧隔离世界还可能存在；实现版本变化必须撤销旧引用并重新创建语义实例。
- const make=()=>({version:7,binding:p.binding,semantics:createPageSemantics({document,taskId:p.binding.taskId,documentId:p.binding.documentId,leaseId:p.binding.leaseId,
+ const make=()=>({version:8,binding:p.binding,semantics:createPageSemantics({document,taskId:p.binding.taskId,documentId:p.binding.documentId,leaseId:p.binding.leaseId,classifyField:classifySensitiveField,
   shadowRootOf:node=>node.shadowRoot||globalThis.__hermesClosedShadowRoots?.get(node)||null})});
  const classifySensitiveField=${classifySensitiveField.toString()};
  const sensitive=e=>classifySensitiveField(e)!==null;
@@ -252,13 +253,13 @@ export const semanticWorldDeclaration=`function(op,p){
  };
  let state=globalThis.__hermesNativeSemanticsV2;
  if(op==='semantic_snapshot'||op==='page.parse'){
-  if(!state||state.version!==7||!same(state.binding,p.binding)){try{state?.semantics.revoke();}catch{}state=make();globalThis.__hermesNativeSemanticsV2=state;}
+  if(!state||state.version!==8||!same(state.binding,p.binding)){try{state?.semantics.revoke();}catch{}state=make();globalThis.__hermesNativeSemanticsV2=state;}
   try{if(op==='page.parse'){state.parser??=createPageParser(state.semantics.parsingContext());return state.parser.parse(p.options||{});}return state.semantics.snapshot(p.options||{});}catch(error){
    if(error?.message!=='DOCUMENT_REPLACED')throw error;
    try{state.semantics.revoke();}catch{}state=make();globalThis.__hermesNativeSemanticsV2=state;if(op==='page.parse'){state.parser=createPageParser(state.semantics.parsingContext());return state.parser.parse(p.options||{});}return state.semantics.snapshot(p.options||{});
   }
  }
- if(!state||state.version!==7||!same(state.binding,p.binding))throw Error('BINDING_MISMATCH');
+ if(!state||state.version!==8||!same(state.binding,p.binding))throw Error('BINDING_MISMATCH');
  const semantics=state.semantics,token={...p.binding,snapshotId:p.snapshotId,ref:p.ref},highlightBinding=p.highlightBinding;
  // 中文注释：只有宿主内部 CDP 查询使用节点对象，模型工具不会公开这两个操作。
  if(op==='accessibility_node')return semantics.accessibilityNode(token);
@@ -729,7 +730,7 @@ export function preveilSource(allowedOrigins,{taskId='',generation=0}={}){
 }catch{}})()`;
 }
 
-export const V1_ACTIONS = Object.freeze(['tabs','new_tab','navigate','snapshot','click','fill','press','screenshot','page.observe','page.parse','semantic_snapshot','frame_catalog','ref_click','ref_fill','ref_press','ref_set_checked','ref_select_option','files.upload','interaction.capture','interaction.bounds','interaction.click','interaction.drag_coordinates','interaction.drag_elements','official.ready_state','official.goto_url','official.new_tab','scroll','back',
+export const V1_ACTIONS = Object.freeze(['popup_catalog','popup_adopt','tabs','new_tab','navigate','snapshot','click','fill','press','screenshot','page.observe','page.parse','semantic_snapshot','frame_catalog','ref_click','ref_fill','ref_press','ref_set_checked','ref_select_option','files.upload','interaction.capture','interaction.bounds','interaction.click','interaction.drag_coordinates','interaction.drag_elements','official.ready_state','official.goto_url','official.new_tab','scroll','back',
  'js.evaluate','cdp.send','cdp.events','network.inspect','images','console','dialog']);
 const SCRIPT_ACTIONS=new Set(['js.evaluate','cdp.send','cdp.events','network.inspect']);
 const SITE_READ_ACTIONS=new Set(['snapshot','screenshot','page.observe','page.parse','semantic_snapshot','frame_catalog','interaction.capture','interaction.bounds','official.ready_state','images','console']);
@@ -748,6 +749,7 @@ export class Executor {
   this.pageRuntime=new PageRuntime(this,{pushEvents:typeof onCdpEvents==='function'?onCdpEvents:async()=>{}});
   this.observers=new PageObservers(this);
   this.vault=new VaultController(this);
+  this.popups=new OAuthPopups(this);
  }
  // 中文注释：网关请求不进入普通动作队列，但每一步都重新核实任务、代次、租约与浏览器访问。
  async gateway(method,p){
@@ -888,6 +890,52 @@ export class Executor {
   if(tab.pendingUrl&&origin(tab.pendingUrl)!==origin(tab.url))throw Error('PAGE_NOT_READY');
   return {origin:origin(tab.url)};
  }
+ // 中文注释：仅 native 私有通道准备候选身份，公开动作不能自行提供审批范围。
+ popupGuard(t,p){return ()=>{this.check(t,p);if(t.paused||t.pauseRequested||p.modeGeneration!==t.policy.modeGeneration||this.leases.get(p.tabId)!==t.id)throw Object.assign(Error('POPUP_STALE'),{preDispatch:true});};}
+ async preparePopup(p){
+  const t=this.tasks.get(p.taskId),guard=this.popupGuard(t,p);guard();
+  return this.popups.inspect(t,p.tabId,p.candidateRef,guard);
+ }
+ async adoptPopup(t,p){
+  const guard=this.popupGuard(t,p);guard();
+  if(!p.approval)throw Object.assign(Error('confirmation required'),{preDispatch:true});
+  const grant=this.actionGrants.get(p.approval.nonce);this.actionGrants.delete(p.approval.nonce);
+  const {generation,modeGeneration,allowedOrigins,approval,popupScope,...request}=p;
+  if(!grant||grant.taskId!==t.id||grant.generation!==generation||grant.modeGeneration!==modeGeneration||grant.expiresAt*1000<=Date.now()||grant.digest!==approval.digest||canonical(grant.request)!==canonical(request)||!popupScope||canonical(grant.popupScope)!==canonical(popupScope))throw Object.assign(Error('approval mismatch or consumed'),{preDispatch:true});
+  const ids=[p.tabId,popupScope.candidate.tabId].sort((a,b)=>a-b);
+  return this.taskBarrier(t.id,true,()=>this.withLocks(ids,async()=>{
+   const current=await this.popups.inspect(t,p.tabId,p.candidateRef,guard);guard();
+   if(grant.expiresAt*1000<=Date.now())throw Object.assign(Error('approval expired'),{preDispatch:true});
+   if(canonical(current)!==canonical(popupScope))throw Object.assign(Error('POPUP_STALE'),{preDispatch:true});
+   this.popups.current(current.source,p.candidateRef);
+   const {candidate}=current,addedOrigin=!t.allowedOrigins.includes(current.candidate.origin);
+   if(addedOrigin)t.allowedOrigins.push(candidate.origin);
+   let initializing=true;
+   const wasAttached=this.attached.has(candidate.tabId),documentGeneration=this.docs.get(candidate.tabId)||0;
+   const initializationGuard=()=>{guard();this.popups.current(current.source,p.candidateRef);if(!initializing||this.leases.has(candidate.tabId)||(this.docs.get(candidate.tabId)||0)!==documentGeneration||grant.expiresAt*1000<=Date.now())throw Error('POPUP_STALE');};
+   try{
+    // 中文注释：沿用持续浮层初始化；双页锁已持有，遮罩确认前不发布操作/Vault 租约。
+    if(!await this.restoreOverlay(t,candidate.tabId,{locked:true,guard:initializationGuard}))throw Error('overlay injection failed');
+    if(await this.documentChanged(t,candidate.tabId))throw Error('POPUP_STALE');
+    const latest=await this.popups.inspect(t,p.tabId,p.candidateRef,initializationGuard);
+    if(canonical(latest)!==canonical(current))throw Error('POPUP_STALE');
+    initializationGuard();
+   }catch(error){
+    initializing=false;
+    if(addedOrigin)t.allowedOrigins=t.allowedOrigins.filter(site=>site!==candidate.origin);
+    await this.closeTabResources(t,candidate.tabId).catch(()=>{});
+    if(!wasAttached&&this.attached.has(candidate.tabId)&&!this.leases.has(candidate.tabId)){
+     await this.api.debugger.detach({tabId:candidate.tabId}).catch(()=>{});this.attached.delete(candidate.tabId);
+    }
+    error.preDispatch=true;throw error;
+   }
+   initializing=false;
+   t.tabIds.add(candidate.tabId);(t.adoptedPopupTabs??=new Set()).add(candidate.tabId);this.leases.set(candidate.tabId,t.id);
+   void this.syncPreveil(t,candidate.tabId);
+   this.popups.candidates.delete(p.candidateRef);
+   return {adopted:true,...candidate,sourceTabId:p.tabId,cleanupOwned:false};
+  }));
+ }
  async assess(p){
   const t=this.tasks.get(p.taskId);this.check(t,p);
   if(!['fill','press','ref_fill','ref_press'].includes(p.action)||this.leases.get(p.tabId)!==t.id||
@@ -982,11 +1030,14 @@ export class Executor {
  }
  async withLocks(ids,fn,index=0) {return index>=ids.length?fn():this.lock(ids[index],()=>this.withLocks(ids,fn,index+1));}
  async withSpawnScope(t,tabId,fn){
+  await this.popups.arm(t,tabId,()=>this.check(t,{generation:t.generation}));
   const prior=this.spawnScopes.get(tabId),scope={task:t,root:tabId};
   this.spawnScopes.set(tabId,scope);
   try{return await fn();}finally{if(prior)this.spawnScopes.set(tabId,prior);else this.spawnScopes.delete(tabId);}
  }
  tabCreated(tab){
+  if(!Number.isInteger(tab?.openerTabId))return this.popups.recoverCreated(tab).then(()=>null);
+  if(this.popups.created(tab))return Promise.resolve(null);
   if(!Number.isInteger(tab?.id)||!Number.isInteger(tab.openerTabId))return Promise.resolve(null);
   const lineage=this.spawnLineage.get(tab.openerTabId),direct=this.spawnScopes.get(tab.openerTabId);
   const scope=direct||(lineage&&this.spawnScopes.get(lineage.root)===lineage.scope?lineage.scope:null);
@@ -1210,6 +1261,8 @@ export class Executor {
  }
  async disconnect() {await Promise.all([...this.tasks.values()].map(t=>this.release({taskId:t.id,generation:t.generation,closeAgentTabs:false})));}
  async tabEvent(tabId,event,url,{status=null,urlChanged=true}={}) {
+  // 中文注释：导航/关闭先同步撤销候选，异步资源清理期间旧审批也不能继续授予租约。
+  this.popups.invalidate(tabId,event);
   const t=this.tasks.get(this.leases.get(tabId));if(!t)return;
   // 中文注释：浏览器事件会跨异步清理，旧任务回调不得修改新任务的标签租约。
   const current=()=>this.tasks.get(t.id)===t&&!t.revoked&&this.leases.get(tabId)===t.id;
@@ -1234,7 +1287,7 @@ export class Executor {
    this.closingTabs.delete(tabId);
    // 中文注释：关闭工作页时同时清除该页凭据和页面脚本的互斥记录。
    t.credentialTabs?.delete(tabId);t.scriptedTabs?.delete(tabId);
-   t.tabIds.delete(tabId);t.agentTabs.delete(tabId);t.agentTabGroups?.delete(tabId);t.officialBlank?.delete(tabId);t.officialBlankSeeds?.delete(tabId);t.officialBlankSeen?.delete(tabId);t.officialTargets?.delete(tabId);t.offScopeTabs?.delete(tabId);t.preveils?.delete(tabId);this.leases.delete(tabId);this.attached.delete(tabId);
+   t.tabIds.delete(tabId);t.agentTabs.delete(tabId);t.adoptedPopupTabs?.delete(tabId);t.agentTabGroups?.delete(tabId);t.officialBlank?.delete(tabId);t.officialBlankSeeds?.delete(tabId);t.officialBlankSeen?.delete(tabId);t.officialTargets?.delete(tabId);t.offScopeTabs?.delete(tabId);t.preveils?.delete(tabId);this.leases.delete(tabId);this.attached.delete(tabId);
    // 中文注释：关闭通知可能早于建页回执；宿主以原请求核对这个尚未登记的模型页。
    const creationRequestId=t.agentTabRequests?.get(tabId);t.agentTabRequests?.delete(tabId);
    this.onEvent({taskId:t.id,generation:t.generation,tabId,event,documentGeneration,...(creationRequestId?{creationRequestId}:{})});return;
@@ -1282,14 +1335,14 @@ export class Executor {
   catch{return true;}
  }
  // 中文注释：页面刷新或跳转后立即重新盖上遮罩；任务结束前页面始终不可点击，接管后才放开。
- restoreOverlay(t,tabId){
+ restoreOverlay(t,tabId,{locked=false,guard:initializationGuard=null}={}){
   if(!this.api.debugger?.onEvent?.addListener||!this.api.debugger?.attach)return Promise.resolve(null);
   const generation=t.generation;
-  const guard=()=>{this.check(t,{generation});if(this.leases.get(tabId)!==t.id)throw Error('tab lease denied');};
+  const guard=initializationGuard||(()=>{this.check(t,{generation});if(this.leases.get(tabId)!==t.id)throw Error('tab lease denied');});
   // 中文注释：后台补遮罩有上限时间，CDP 卡住时也不会长期占用该标签页的动作锁。
   let timer;
   const bounded=work=>Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('overlay restore timeout')),OVERLAY_RESTORE_TIMEOUT_MS);})]).finally(()=>clearTimeout(timer));
-  return this.lock(tabId,()=>bounded((async()=>{
+  const restore=()=>bounded((async()=>{
    guard();
    const tab=await this.api.tabs.get(tabId);guard();this.allowed(t,tab.url);
    const target={tabId};
@@ -1299,9 +1352,13 @@ export class Executor {
     this.attached.add(tabId);
    }
    const entry=await this.ensureOverlay(t,tabId,target,guard);
-   if(entry){await this.overlayCall(tabId,entry,'update',{update:{state:t.pauseRequested&&!t.paused?'pausing':t.paused?'paused':'waiting'}});guard();}
+   if(entry){
+    const updated=await this.overlayCall(tabId,entry,'update',{update:{state:t.pauseRequested&&!t.paused?'pausing':t.paused?'paused':'waiting'}});guard();
+    if(initializationGuard&&updated!==true)throw Error('overlay injection failed');
+   }
    return entry;
-  })())).then(entry=>{if(entry)void this.syncPreveil(t,tabId);return entry;},()=>null);
+  })());
+  return (locked?restore():this.lock(tabId,restore)).then(entry=>{if(entry&&this.leases.get(tabId)===t.id)void this.syncPreveil(t,tabId);return entry;},()=>null);
  }
  // 中文注释：新文档一开始就先挂一层简易遮罩（仅授权网站、仅顶层框架），完整遮罩注入后替换它。
  async syncPreveil(t,tabId){
@@ -1509,6 +1566,13 @@ export class Executor {
    throw error;
   }
  }
+ // 中文注释：弹窗回执只有执行器身份元数据，仍登记保护设置，发送/回放不能绕过复核。
+ async popupReceipt(t,p,work){
+  const settings=await this.shieldSettings();
+  const result=await work();
+  this.shieldResults.set(result,{settings:JSON.stringify(settings),popupMetadata:{task:t,generation:p.generation,modeGeneration:p.modeGeneration,tabIds:result.adopted?[p.tabId,result.tabId]:[p.tabId]}});
+  return result;
+ }
  async shieldResponse(request,result){
   const settings=await this.shieldSettings(),prior=result&&typeof result==='object'?this.shieldResults.get(result):null;
   // 中文注释：输出仍拒绝；确认事实只来自执行器自己的动作元数据，不从页面返回值推断。
@@ -1516,7 +1580,12 @@ export class Executor {
   // 中文注释：状态页标题是未经页面探测的汇总字段；当前过滤同样适用于旧缓存。
   if(request.method==='browser.status')return settings.enabled?{...result,pages:(result.pages||[]).map(({title:_title,...page})=>page)}:result;
   // 中文注释：回放不得重新执行操作；设置变更、文档变更或未经过保护的旧结果要求读取新请求。
-  if(settings.enabled&&(!prior||prior.settings!==JSON.stringify(settings)))throw rejected('CONTENT_SHIELD_STALE');
+  const popup=request.method==='browser.execute'&&['popup_catalog','popup_adopt'].includes(request.params?.action);
+  if((settings.enabled||popup)&&(!prior||prior.settings!==JSON.stringify(settings)))throw rejected('CONTENT_SHIELD_STALE');
+  if(popup){
+   const scope=prior?.popupMetadata,t=scope?.task;
+   if(!scope||this.tasks.get(request.params.taskId)!==t||t.revoked||t.paused||t.pauseRequested||t.overlayStopping||t.generation!==scope.generation||t.policy.modeGeneration!==scope.modeGeneration||scope.tabIds.some(id=>this.leases.get(id)!==t.id))throw rejected('CONTENT_SHIELD_STALE');
+  }
   if(settings.enabled&&prior?.document){
    const t=this.tasks.get(request.params.taskId);let inventory;
    try{inventory=await this.shieldInventory(t,request.params,settings,prior.writeTarget);}
@@ -1542,6 +1611,8 @@ export class Executor {
    if(!Number.isInteger(p.tabId))throw Error('explicit tabId required');
    if(this.leases.get(p.tabId)!==t.id)throw Error('tab lease denied');
   }
+  if(p.action==='popup_catalog')return this.taskBarrier(t.id,false,()=>this.lock(p.tabId,()=>this.popupReceipt(t,p,()=>this.popups.catalog(t,p,this.popupGuard(t,p)))));
+  if(p.action==='popup_adopt')return this.popupReceipt(t,p,()=>this.adoptPopup(t,p));
   p={...p,[OVERLAY_ACTION_TOKEN]:crypto.randomUUID()};
   const queuedAt=performance.now();
   // 中文注释：工作区管理器串行登记建页；页面加载等待不占任务写屏障，多个新页可同时等待。
@@ -2339,7 +2410,7 @@ export class Executor {
   let world=executionContextId?{executionContextId}:await createWorld();guard();
   const key=()=>JSON.stringify([target.tabId,target.sessionId,world.executionContextId]);
   const install=async()=>{const installed=await this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:world.executionContextId,functionDeclaration:`function(){globalThis.__hermesSemanticLibrary={version:1,call:(${semanticWorldDeclaration})};return true;}`,returnByValue:true});guard();if(installed.exceptionDetails||installed.result?.value!==true)throw Object.assign(Error('SEMANTIC_LIBRARY_UNAVAILABLE'),{preDispatch:true});this.semanticWorlds.add(key());};
-  const invoke=()=>this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:world.executionContextId,functionDeclaration:op==='page.observe'?`function(op,p){const library=globalThis.__hermesSemanticLibrary;if(library?.version!==1)return {hermesSemanticMissing:true};const state=globalThis.__hermesNativeSemanticsV2;if(!state||state.version!==7||JSON.stringify(state.binding)!==JSON.stringify(p.binding))library.call('semantic_snapshot',{binding:p.binding,options:{root:'head',mode:'content',budget:512}});return (${observePage.toString()})(globalThis.__hermesNativeSemanticsV2.semantics.parsingContext(),p.options);}`:'function(op,p){const library=globalThis.__hermesSemanticLibrary;return library?.version===1?library.call(op,p):{hermesSemanticMissing:true};}',arguments:[{value:op},{value:payload}],returnByValue:true,awaitPromise:true});
+  const invoke=()=>this.api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:world.executionContextId,functionDeclaration:op==='page.observe'?`function(op,p){const library=globalThis.__hermesSemanticLibrary;if(library?.version!==1)return {hermesSemanticMissing:true};const state=globalThis.__hermesNativeSemanticsV2;if(!state||state.version!==8||JSON.stringify(state.binding)!==JSON.stringify(p.binding))library.call('semantic_snapshot',{binding:p.binding,options:{root:'head',mode:'content',budget:512}});return (${observePage.toString()})(globalThis.__hermesNativeSemanticsV2.semantics.parsingContext(),p.options);}`:'function(op,p){const library=globalThis.__hermesSemanticLibrary;return library?.version===1?library.call(op,p):{hermesSemanticMissing:true};}',arguments:[{value:op},{value:payload}],returnByValue:true,awaitPromise:true});
   let result;
   try{if(!this.semanticWorlds.has(key()))await install();result=await invoke();}
   catch(error){
@@ -2535,7 +2606,13 @@ export class Executor {
  // 中文注释：读取只等 DOM 可用；导航仍保留完整加载的 8 秒等待。
  async domReadyTab(t,p,guard){
   const target={tabId:p.tabId},deadline=Date.now()+1500;
-  let tab=await this.api.tabs.get(p.tabId);guard();try{this.allowed(t,tab.url);}catch{throw Object.assign(Error('TAB_OUT_OF_SCOPE'),{preDispatch:true,currentOrigin:origin(tab.url)});}
+  // 中文注释：当前网址缺失时仍给出范围拒绝；错误元数据只包含已解析来源，不借 pendingUrl 放行。
+  const assertScope=tab=>{
+   let currentOrigin;
+   try{currentOrigin=origin(tab.url);this.allowed(t,tab.url);}
+   catch{throw Object.assign(Error('TAB_OUT_OF_SCOPE'),{preDispatch:true,...(currentOrigin?{currentOrigin}:{})});}
+  };
+  let tab=await this.api.tabs.get(p.tabId);guard();assertScope(tab);
   // 中文注释：丢弃页不能自动重载（可能重发页面业务请求），只返回明确停点。
   if(tab.discarded)throw Object.assign(Error('TAB_DISCARDED'),{preDispatch:true});
   if(tab.status==='complete')return {tab,ready:true};
@@ -2548,7 +2625,7 @@ export class Executor {
     if(['interactive','complete'].includes(result.result?.value))return {tab,ready:true};
    }catch(error){if(!isTransientLoadError(error))throw error;}
    await new Promise(resolve=>setTimeout(resolve,40));guard();
-   tab=await this.api.tabs.get(p.tabId);guard();this.allowed(t,tab.url);
+   tab=await this.api.tabs.get(p.tabId);guard();assertScope(tab);
    if(tab.status==='complete')return {tab,ready:true};
   }
   return {tab,ready:false};
@@ -2660,6 +2737,8 @@ export class Executor {
     // 中文注释：来源、代次及模式仍逐次核验，新增同任务标签不属于授权变化。
     if(this.leases.get(tab.id)!==t.id)throw Object.assign(Error('TASK_BUSY'),{code:'TASK_BUSY',preDispatch:false});
     const settledUrl=value.tab.url||(value.tab.status==='loading'?value.tab.pendingUrl:undefined);
+    // 中文注释：建页已发生但没有可核实的网址，返回未就绪而非 URL 解析异常；不能借 pendingUrl 伪报完成。
+    if(!settledUrl)throw Object.assign(Error('PAGE_NOT_READY'),{preDispatch:false});
     this.allowed(t,settledUrl);
     return {tabId:tab.id,url:settledUrl,ready:value.ready,groupId:work.groupId,windowId:value.tab.windowId,closedTabs};
    });
@@ -3174,7 +3253,8 @@ export class Executor {
    if(doc!==(this.docs.get(p.tabId)||0)||frame.loaderId!==initialTree.frame.loaderId)return {...result,documentChanged:true,url:frame.url};
    return result;
   }
-  if(doc!==(this.docs.get(p.tabId)||0))throw Error('document changed');
+  // 中文注释：末尾只读复查使用统一固定码，旧结果仍拒绝，导航恢复和桥接不会误判为安全拒绝。
+  if(doc!==(this.docs.get(p.tabId)||0))throw Error('DOCUMENT_CHANGED');
   await this.timed(p,'post_check',()=>get(p.tabId));
   // 中文注释：复用截图标注的引用矩形读取，只标出本次顶层快照实际返回的元素；装饰失败不改变解析结果。
   if(overlay&&p.action==='semantic_snapshot'&&!p.options?.frameToken&&result?.items?.length){

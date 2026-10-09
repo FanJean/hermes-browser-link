@@ -40,6 +40,7 @@ Use `browser_shared_close(task_id, keep_tabs=true)` for pages the user must fini
 
 | Group | Actions |
 |---|---|
+| Login windows | `popup_catalog`, `popup_adopt` (metadata discovery, explicit adoption confirmation; no deletion grant) |
 | Navigation | `new_tab`, `navigate`, `back`, `tabs`, `scroll` |
 | Reading | `semantic_snapshot`, `snapshot`, `frame_catalog`, `screenshot`, `images`, `console` |
 | Semantic writes | `ref_click`, `ref_fill`, `ref_press`, `ref_set_checked`, `ref_select_option` (use `binding`, `snapshot_id` and `ref` from the latest snapshot) |
@@ -64,17 +65,19 @@ When the plugin has the `tools.override` capability and the session is bound to 
 5. Moving to another site: call `browser_shared_open` with the new URL.
 6. Done: `browser_shared_close(task_id)`.
 
-## Approvals, sensitive fields and take-over
+## Connection authorization, sensitive fields and take-over
 
-- **Smart approval** (default): new tasks are prepared automatically. The first read of each site in a task needs confirmation; later reads of that site run directly. A navigation or new-tab approval can include the site's read permission when its panel says so. Writes, page requests, JavaScript, raw CDP and `browser_exec` still request approval each time. The tool returns `approval_required`; Hermes must query again with the **same** `request_id` and arguments after the decision. `tabs` lists only the task's leased tabs.
-- **Full access**: task tools and debug commands run directly. Cookie mirror always needs a fresh source-extension confirmation.
-- `browser_exec` and Vault fill/save/code calls in smart mode use a one-time approval for the whole tool call. Retry with the same `request_id` after approval; use a new one for another independent run. A consumed approval returns `approval_consumed` without dispatch.
+- **Browser connection authorization (full access only)**: confirm once in the extension. New tasks are prepared automatically; ordinary reads (including first site reads), navigation, writes, page requests, JavaScript, raw CDP, `browser_exec` and Python workflows run directly without per-action prompts. There is no smart-approval mode or mode switch. `tabs` lists only the task's leased tabs. Offline or unknown state is not proof of authorization.
+- **Special confirmations**: Cookie mirror and adopting an existing OAuth login window still require explicit confirmation. Wait for the user's decision; never auto-approve or replay an unknown result. For confirmations other than popup adoption, query with the same `request_id` and arguments according to the returned contract; Cookie mirror uses `status` with the original `transfer_id`.
+- **Popup adoption**: for `popup_adopt`, never resend the action to obtain a cached receipt. Keep the original same-script catalog candidate. `wait_pending(tab=source)` is read-only: it queries the ledger/current scope and returns `state=confirmed`, not `adopted` or `tabId`. For single tools, use `browser_shared_get` to check the original/current generation and `adoptedPopupTabIds`; select the known candidate with `browser_shared_use_tab`, then re-read the page (scripts use `use_tab(candidate['tabId'])` and fresh `read_page`). Metadata is not access proof; rejected, unknown, expired, revoked or changed-scope requests must not replay.
+- **Vault**: optional capability grants, manager unlock, official masked prompts, same-origin checks and the private native credential channel remain independent. Use a new `request_id` for another independent script or credential operation.
 - **Sensitive fields** (passwords, payment data, one-time codes): the tool returns `user_input_required`, the browser asks you to fill the field yourself, and the result becomes `completed_by_user` after you confirm. The model never sees or types the value. With the Vault integration enabled, login passwords and OTP codes can instead be filled through a private channel.
 - **Take over** (接管页面 on the page overlay) pauses the task so you can use the page; **Resume** (退出接管) hands it back. Actions sent while paused return `task_paused` and are not dispatched. **Stop task** (停止任务) ends the task.
+- **Release page** (放开页面) appears only when the overlay is disconnected or its state is unknown. It removes the local input blocker so you can recover the page; it does **not** confirm that the task has paused or stopped. Check the task in Hermes before resuming. This recovery control is not an old approval mode.
 
 While a task is active its pages are covered by a translucent overlay that blocks clicks and key presses. Each target is highlighted just before an action is dispatched.
 
-The extension popup shows the installed extension version in the top right, **浏览器权限**, and **自动屏蔽网页干扰**. Cookie mirror controls and the primary browser link are on Hermes Desktop → **浏览器连接**. There is no popup cursor switch or additional selector form.
+The extension popup shows the installed extension version in the top right, **连接授权**, and **自动屏蔽网页干扰**. Cookie mirror controls and the primary browser link are on Hermes Desktop → **浏览器连接**. There is no popup cursor switch or additional selector form.
 
 The task cursor is always enabled. It stays visible during active work and between steps, keeps its last position, and moves between targets with a 240 ms transform transition. Drag previews move to the start and then the end without restarting during geometry updates. Pausing, stopping, disconnection and hidden tabs hide it; returning to active work restores it. System reduced-motion preferences disable cursor travel. Capture temporarily hides the overlay and restores it afterward. These visuals do not synthesize extra webpage input or change action authorization.
 
@@ -96,7 +99,7 @@ Keep both Desktop options off to preserve target cookies and source session life
 
 Hermes can call `browser_shared_cookie_mirror` with `action="list_sites"` and `source`, then `action="request_mirror"` with `source`, `target`, `sites` and optional `options`. It must wait for your confirmation and query `action="status"` with the returned ID in `transfer_id`. Query the same transfer; do not reissue `request_mirror` after a timeout. Neither tool nor popup exposes values to the model, logs, diagnostics or task files.
 
-Background focus failure no longer prevents creating the confirmation panel. If focus cannot be verified, the extension sends a generic system notification using the `notifications` permission. Clicking it only focuses the valid panel; approval still needs your real click inside it. Notifications contain no website, task or Cookie data. If system settings suppress notifications, bring the source browser and its existing confirmation window to the front. The badge keeps the pending count. First-site reads, other operation approvals and manual-input panels use the same behavior. The separate access-mode management window also sends a reminder when unfocused.
+Background focus failure no longer prevents creating the confirmation panel. If focus cannot be verified, the extension sends a generic system notification using the `notifications` permission. Clicking it only focuses the valid panel; approval still needs your real click inside it. Notifications contain no website, task or Cookie data. If system settings suppress notifications, bring the source browser and its existing confirmation window to the front. The badge keeps the pending count. Manual-input and existing OAuth-window adoption panels retain this behavior. Ordinary reads, writes and debugging no longer create per-action panels; connection authorization remains in the extension.
 
 The 60-second deadline starts at request time, including confirmation. Failure, expiry or either profile disconnecting destroys remaining memory payloads. Writes already dispatched may have changed the target; there is no automatic rollback or replay. Only the default non-incognito store is supported. Domain grouping uses a small suffix table, not a complete public suffix list; check the site selection. Cookie identities do not prove working login: localStorage, device binding, MFA or server invalidation can require another login. Copying all cookies for a site does not identify which one carries login. Ending a task does not remove imported cookies. See [security](../SECURITY.md#cookie-mirror-150).
 
@@ -113,8 +116,8 @@ Look at `code` and `outcome_unknown` in the result. **If `outcome_unknown` is tr
 |---|---|---|
 | `no_browser`, `instance_unavailable`, `extension_disconnected` | The extension is not connected | Enable the extension and check the Browser work page shows *Connected* |
 | `browser_choice_required` | Several browsers are connected | Pick one with `instance_id` |
-| `awaiting_authorization`, `pending_approval`, `invalid_state` | The task is not authorized yet | Approve in the extension, then `browser_shared_get` until `ready` |
-| `approval_required` | This action needs your confirmation | Confirm, then repeat with the same `request_id` and arguments |
+| `awaiting_authorization`, `pending_approval`, `invalid_state` | Connection authorization or task preparation is not ready | Check connection authorization in the extension, then `browser_shared_get` until `ready`; do not create another task |
+| `approval_required` | An independent special confirmation is pending | Confirm, then repeat with the same `request_id` and arguments |
 | `user_input_required`, `sensitive_target` | Sensitive field | Fill it yourself in the browser |
 | `approval_denied`, `user_input_declined`, `approval_expired` | Not executed | Tell the user; only retry with a new `request_id` after they agree |
 | `origin_denied` | Site not in the task's scope | `browser_shared_open` the new site |

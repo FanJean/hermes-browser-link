@@ -4,12 +4,16 @@ import json
 import os
 from pathlib import Path
 import socket
+import sys
 import tempfile
 import threading
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'native-bridge'))
+from tests.support import temporary_bridge_home
+
 def load(path):
     spec = importlib.util.spec_from_file_location(path.stem, path)
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -31,6 +35,13 @@ class ReferenceTests(unittest.TestCase):
         self.assertIn('network_start', [h['name'] for h in new['helpers']])
 
 class DoctorTests(unittest.TestCase):
+    def test_short_bridge_fixture_honors_tmpdir_permissions_and_cleanup(self):
+        with temporary_bridge_home() as home:
+            self.assertEqual(home.parent, Path(tempfile.gettempdir()).resolve())
+            self.assertEqual(home.stat().st_mode & 0o777, 0o700)
+            self.assertLessEqual(len(os.fsencode(home / 'plugin-data/browser-link-native/bridge.sock')), 103)
+        self.assertFalse(home.exists())
+
     def test_single_probe_timeout_is_unconfirmed_with_next_action(self):
         # 中文注释：守护进程可能忙于其他请求；一次连接超时不构成进程退出证据。
         with tempfile.TemporaryDirectory() as d:
@@ -60,7 +71,7 @@ class DoctorTests(unittest.TestCase):
             self.assertFalse(doctor.diagnose(home, user, lambda _: {'ok': True, 'browsers': [{'connected': True}]})['ok'])
     def test_authenticated_probe_uses_existing_socket_only(self):
         # 中文注释：保留真实 HOME；测试数据和套接字全部位于短临时目录。
-        with tempfile.TemporaryDirectory(dir='/tmp') as d:
+        with temporary_bridge_home() as d:
             data = Path(d) / 'plugin-data/browser-link-native'; data.mkdir(parents=True)
             (data / 'token').write_text('synthetic'); (data / 'token').chmod(0o600)
             server = socket.socket(socket.AF_UNIX); server.bind(str(data / 'bridge.sock')); server.listen()

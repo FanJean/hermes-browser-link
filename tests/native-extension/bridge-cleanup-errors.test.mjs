@@ -27,7 +27,7 @@ test('cleanup retry is an explicit route and passes generation unchanged',async(
 test('read-only document change is typed and not an uncertain write',async()=>{
  const result=await request({execute:async()=>{throw Error('DOM_CHANGED');}},'browser.execute',{action:'semantic_snapshot'});
  assert.equal(result.error.code,'document_changed');
- assert.deepEqual(result.error.data,{outcomeUnknown:false,retryable:true});
+ assert.deepEqual(result.error.data,{outcomeUnknown:false,retryable:true,stage:'document',reasonCode:'document_changed'});
 });
 
 test('stale click keeps uncertain outcome and cannot be automatically replayed',async()=>{

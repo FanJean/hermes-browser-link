@@ -2,8 +2,6 @@ import os
 import json
 from pathlib import Path
 import sys
-import os
-import tempfile
 import time
 import threading
 import unittest
@@ -14,7 +12,7 @@ sys.path.insert(0, str(BRIDGE_DIR))
 
 from client import BridgeClient, BridgeError  # noqa: E402
 from daemon import BridgeDaemon, _safe_error_data  # noqa: E402
-from tests.support import ExtensionPeer, stop_fixture_daemon  # noqa: E402
+from tests.support import ExtensionPeer, stop_fixture_daemon, temporary_bridge_home  # noqa: E402
 
 
 class RedirectScopeTests(unittest.TestCase):
@@ -73,18 +71,7 @@ class RedirectScopeTests(unittest.TestCase):
 
 class TaskTests(unittest.TestCase):
     def setUp(self):
-        # HOME may be isolated with a scratch symlink by the regression runner.
-        # ExtensionPeer connects using this path verbatim, unlike BridgeClient.
-        # A gate HOME nests deeply, so also consider its (short) TMPDIR and use
-        # whichever keeps the Unix socket path within the macOS limit.
-        default = Path(tempfile.gettempdir())
-        default.mkdir(parents=True, exist_ok=True)
-        candidates = [default.resolve()]
-        if os.environ.get("TMPDIR") and Path(os.environ["TMPDIR"]).is_dir():
-            candidates.append(Path(os.environ["TMPDIR"]).resolve())
-        scratch = min(candidates, key=lambda path: len(str(path)))
-        self.temp = tempfile.TemporaryDirectory(prefix="bn-", dir=scratch)
-        self.home = Path(self.temp.name) / "h"
+        self.home = self.enterContext(temporary_bridge_home())
         self.clients = []
         self.peers = []
 
@@ -104,7 +91,6 @@ class TaskTests(unittest.TestCase):
         for client in self.clients:
             client.close()
         stop_fixture_daemon(self.home)
-        self.temp.cleanup()
 
     def test_fixture_socket_path_is_canonical_and_fits_macos_uds(self):
         socket_path = self.home / "plugin-data" / "browser-link-native" / "bridge.sock"

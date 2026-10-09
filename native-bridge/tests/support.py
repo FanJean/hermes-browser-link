@@ -1,9 +1,12 @@
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
+import shutil
 import socket
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -12,6 +15,27 @@ from typing import Any
 from client import _probe, ensure_service
 
 MAX_LINE = 1024 * 1024
+
+
+@contextmanager
+def temporary_bridge_home():
+    # 中文注释：不绕过指定 TMPDIR；短随机目录保留真实 UDS 覆盖，不再写系统 /tmp。
+    root = Path(tempfile.gettempdir()).resolve()
+    for _ in range(100):
+        home = root / uuid.uuid4().hex[:3]
+        if len(os.fsencode(home / 'plugin-data/browser-link-native/bridge.sock')) > 103:
+            raise ValueError('TMPDIR is too long for a fixture bridge socket')
+        try:
+            home.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise RuntimeError('could not allocate a private fixture home')
+    try:
+        yield home
+    finally:
+        shutil.rmtree(home)
 
 
 def encode_line(value):

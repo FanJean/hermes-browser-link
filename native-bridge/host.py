@@ -11,7 +11,7 @@ import socket
 import struct
 import sys
 import threading
-from typing import Any, Dict
+from typing import Any, ContextManager, Dict
 
 from client import ensure_service
 
@@ -101,7 +101,7 @@ def _read_json_line(reader) -> Dict[str, Any]:
     return value
 
 
-def _write_json_line(sock: socket.socket, value: Dict[str, Any], lock: threading.Lock) -> None:
+def _write_json_line(sock: socket.socket, value: Dict[str, Any], lock: ContextManager[Any]) -> None:
     payload = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if len(payload) > _MAX_MESSAGE:
         raise ValueError("bridge frame exceeds limit")
@@ -133,9 +133,8 @@ def main() -> int:
     bridge = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     bridge.connect(str(data_dir / "bridge.sock"))
     bridge_reader = bridge.makefile("rb")
-    socket_write_lock = threading.Lock()
+    socket_write_lock = threading.RLock()
     native_write_lock = threading.Lock()
-    _write_json_line(bridge, {"role": "extension", "token": token, "origin": origin}, socket_write_lock)
 
     stopped = threading.Event()
     input_fd, output_fd = sys.stdin.fileno(), sys.stdout.fileno()
@@ -171,8 +170,14 @@ def main() -> int:
         # 中文注释：半截帧和浏览器不读输出时也不能阻止线程收到退出信号。
         for fd in original_blocking:
             os.set_blocking(fd, False)
-        input_thread.start()
-        output_thread.start()
+        # 中文注释：两泵启动后才宣布连接；锁让浏览器提前发送的帧仍排在认证之后。
+        with socket_write_lock:
+            input_thread.start()
+            output_thread.start()
+            try:
+                _write_json_line(bridge, {"role": "extension", "token": token, "origin": origin}, socket_write_lock)
+            except OSError:
+                stopped.set()
         stopped.wait()
     finally:
         stopped.set()

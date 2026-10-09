@@ -222,8 +222,8 @@ class VaultAdapter:
                 or not _nonnegative_int(task.get("modeGeneration")) or task.get("modeGeneration") != mode_generation
                 or not isinstance(task.get("tabIds"), list) or tab_id not in task["tabIds"]
                 or not isinstance(task.get("workTabs"), list)
-                or not any(isinstance(row, dict) and row.get("tabId") == tab_id
-                           for row in task["workTabs"])
+                or (not any(isinstance(row, dict) and row.get("tabId") == tab_id
+                            for row in task["workTabs"]) and tab_id not in task.get('adoptedPopupTabIds', []))
                 or not isinstance(task.get("allowedOrigins"), list)):
             raise _Refused("binding_denied")
         if task.get('activeMode') not in {'smart', 'full'}:

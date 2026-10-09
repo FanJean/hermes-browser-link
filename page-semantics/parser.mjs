@@ -53,10 +53,12 @@ export function createPageParser(context) {
   const name=node=>safe(node).text;
   const add=(section,value)=>{if(selected.includes(section))entries.push({section,value});};
   const nodeSet=new Set(nodes);
-  const regionNodes=new Set(nodes.filter(n=>matches(n,'main,nav,aside,header,footer,section,article,dialog,[role="dialog"],[role="main"],[role="navigation"],[role="complementary"],[role="region"]')));
+  const surfaceNodes=new Set(nodes.filter(n=>context.surface(n).surfaceKind));
+  const regionNodes=new Set(nodes.filter(n=>surfaceNodes.has(n)||matches(n,'main,nav,aside,header,footer,section,article,dialog,[role="dialog"],[role="main"],[role="navigation"],[role="complementary"],[role="region"]')));
   for(const node of selected.includes('regions')?regionNodes:[]){
    const ancestor=nearest(node,n=>regionNodes.has(n));
-   add('regions',{...evidence(node),kind:node.getAttribute('role')||node.localName,name:describe(node).name,parentRef:ancestor?source(ancestor).sourceRef:null,method:'semantic',excludedFromContent:matches(node,'nav,header,footer,[role="navigation"]')&&node!==scope});
+   const surface=context.surface(node);
+   add('regions',{...evidence(node),kind:node.getAttribute('role')||node.localName,name:describe(node).name,parentRef:ancestor?source(ancestor).sourceRef:null,...surface,method:surface.surfaceKind==='floating'?'inferred':'semantic',excludedFromContent:matches(node,'nav,header,footer,[role="navigation"]')&&node!==scope});
   }
   // 中文注释：块只取最内层正文单元，避免父子容器全文重复。
   const blockSelector='h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,div,span,a[href],img';
@@ -117,8 +119,9 @@ export function createPageParser(context) {
      ...(Number.isSafeInteger(declaredRows)&&declaredRows>0?{declaredRows}:{}),...(Number.isSafeInteger(declaredColumns)&&declaredColumns>0?{declaredColumns}:{})});
    }
   }
-  for(const node of selected.includes('forms')?nodes.filter(n=>matches(n,`input,select,textarea,button,[role="textbox"],[role="searchbox"],[role="combobox"],[role="listbox"],[role="checkbox"],[role="radio"],[role="switch"],${context.editable}`)):[]){
+  for(const node of selected.includes('forms')?nodes.filter(n=>matches(n,`input,select,textarea,button,[role="textbox"],[role="searchbox"],[role="combobox"],[role="listbox"],[role="checkbox"],[role="radio"],[role="switch"],${context.editable}`)||n.hasAttribute('role')&&context.role(n)==='button'):[]){
    const field=describe(node),form=nearest(node,n=>matches(n,'form,[role="form"]'));
+   const surface=surfaceNodes.has(node)?node:nearest(node,n=>surfaceNodes.has(n));
    const errorIds=(node.getAttribute('aria-errormessage')||'').split(/\s+/).slice(0,10);
    const errors=errorIds.map(id=>node.getRootNode().getElementById?.(id)).filter(n=>n&&visible(n,false));
    const group=nearest(node,n=>matches(n,'fieldset,[role="group"]'));
@@ -134,7 +137,9 @@ export function createPageParser(context) {
    const optionNodes=node.localName==='select'?[...node.options].filter(context.optionVisible):nodes.filter(n=>matches(n,'[role="option"]')&&listRoots.some(list=>contains(list,n)));
    if(optionNodes.length>100)warnings.add('option_limit');
    const options=optionNodes.slice(0,100).map(n=>({text:context.option(n).text,selected:n.selected===true||n.getAttribute('aria-selected')==='true'}));
-   add('forms',{...evidence(node),formRef:form?source(form).sourceRef:null,groupRef:group?source(group).sourceRef:null,groupLabel:legend?name(legend):group?context.attribute(group,'aria-label').text:'',label:field.name,role:field.role,validationMessage:errors.map(name).join(' '),
+   add('forms',{...evidence(node),formRef:form?source(form).sourceRef:null,surfaceRef:surface?source(surface).sourceRef:null,
+    ...Object.fromEntries(['inputType','fieldKind','inputRequired','actions'].filter(key=>Object.hasOwn(field,key)).map(key=>[key,field[key]])),
+    groupRef:group?source(group).sourceRef:null,groupLabel:legend?name(legend):group?context.attribute(group,'aria-label').text:'',label:field.name,role:field.role,validationMessage:errors.map(name).join(' '),
     state:{...Object.fromEntries(['disabled','required','readonly','checked','selected','expanded','busy'].filter(k=>Object.hasOwn(field,k)).map(k=>[k,field[k]])),invalid:node.getAttribute('aria-invalid')==='true'},description:related.map(name).join(' '),options});
   }
   // 中文注释：记录边界取明确列表项/文章或带重复子结构的容器，并标记推断来源。

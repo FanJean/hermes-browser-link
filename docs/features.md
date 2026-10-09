@@ -1,19 +1,21 @@
 # Features and limits
 
-This catalog describes **1.8.2 macOS stable release**. Local/offline checks, isolated browser checks, installed runtime checks and GitHub publication are distinct evidence states. Current acceptance commands and limits are in [testing](testing.md).
+This catalog describes the current source feature set. See the [changelog](../CHANGELOG.md) for published versions. Local/offline checks, isolated browser checks, installed runtime checks and GitHub publication are distinct evidence states. Current acceptance commands and limits are in [testing](testing.md).
 
 ## Capabilities
 
 | Area | What is supported | Limits |
 |---|---|---|
 | Connection | Existing Chrome/Edge instances over Native Messaging; several browsers at once | Does not start browsers or copy profiles. Task isolation is not cookie or account isolation. |
+| Connection authorization | Confirm in the extension once, then ordinary task-page actions execute directly; no smart-approval switch or repeated ordinary prompts | Does not authorize existing personal tabs. Takeover/resume/stop, credential protection, Cookie mirror and exact OAuth-window confirmation remain independent. |
+| OAuth login windows | Discover a newly opened existing login window via `popup_catalog`, then explicitly adopt its exact candidate with `popup_adopt` | Full connection authorization does not skip confirmation. Adoption grants operation and target origins, not deletion rights; the original login window is retained when the task ends. |
 | Tasks and tabs | Per-task tab groups, exclusive tab leases, resume with a new generation, cleanup of task-created tabs only | Tabs you move out of the group or whose ownership is unclear are left alone. |
-| Page reading | Semantic snapshots with bounded region/record context and compact text trees, control states, slot labels, virtual table indices, filtering, paging and deltas | Smart mode confirms a task's first read of each site; later reads of that site run directly. Tabs list only that task's leased tabs. Not a full accessibility tree. Explicit scoped AX supplementation is capped at 16 non-value-bearing controls; partial coverage is disclosed. Automatic shielding also applies to read results. |
+| Page reading | Semantic snapshots with bounded region/record context and compact text trees, control states, slot labels, virtual table indices, filtering, paging and deltas | Browser connection authorization permits ordinary reads directly, including the first site read; no per-action confirmation. Tabs list only that task's leased tabs. Not a full accessibility tree. Explicit scoped AX supplementation is capped at 16 non-value-bearing controls; partial coverage is disclosed. Automatic shielding also applies to read results. |
 | Targets | Open/closed Shadow DOM, including closed components inside same-origin iframes; approved cross-origin (OOPIF) frames via `frame_catalog` tokens | Closed roots require confirmed CDP node access and are capped at 200. Unreadable child frames do not block parent DOM reads; rotated or skewed frames are rejected for actions. |
 | Actions | Confirmed reference clicks (trusted when visible, synthetic when hidden), fill, bounded key presses, checkboxes/radios/switches, native single/multi-select and ARIA single-select controls, scrolling (page or a specific container), back | Each action rechecks visibility, occlusion, stability and staleness before dispatch; nothing is retried after dispatch. |
 | Screenshot-bound interactions | Capture, element bounds, coordinate click, pointer drag and HTML5-synthetic drag | Coordinates are raw PNG pixels from the same capture. Hidden coordinate clicks use confirmed DOM events; hidden pointer drags are rejected. Synthetic HTML5 drags report `isTrusted: false`. |
 | Python scripts | `browser_shared_script` with page, file, download and page-execution helpers; request ledger, reconnect and explicit checkpoints | Each run is a new process running as your user — not an OS sandbox. A crashed script's Python state is not restored. |
-| Page execution | Page JavaScript (isolated or main world), raw CDP, CDP event reads, `browser_exec` gateway | Smart mode asks for approval before execution; full mode runs directly. CDP events include other frame origins, while credential headers and Bearer values are removed. Credential fill and scripts cannot share a page. With shielding enabled, unsupported raw CDP/event, console, image-list and network-inspection outputs are refused. |
+| Page execution | Page JavaScript (isolated or main world), raw CDP, CDP event reads, `browser_exec` gateway | After browser connection authorization, execution runs directly without per-action prompts. CDP events include other frame origins, while credential headers and Bearer values are removed. Credential fill and scripts cannot share a page. With shielding enabled, unsupported raw CDP/event, console, image-list and network-inspection outputs are refused. |
 | Uploads | Local paths named in conversation, copied into task-private storage, selected into a visible file input in the main document | Up to 10 files, 100 MiB each. Hidden inputs and inputs inside frames are not supported. The OS file dialog is never driven. |
 | Downloads | Attribution to the task, cancel, claim with size and digest verification | Ambiguous concurrent downloads are never claimed automatically. |
 | Credentials | Optional takeover of Hermes' Vault tools: list, fill, TOTP entry, save login through a private local channel | Off by default. External password-manager CLIs must be installed and unlocked separately. Payment cards and addresses are not handled. |
@@ -29,9 +31,9 @@ This catalog describes **1.8.2 macOS stable release**. Local/offline checks, iso
 - Cross-origin, mutating, or `Authorization`/CSRF-protected API calls through `api_request`.
 - A built-in credential store, a third-party site-adapter catalog or a persistent result center.
 
-## Current development additions
+## Site tools, network evidence and page requests
 
-Verified custom site-tool drafts, bounded network evidence, same-origin page requests, read-only doctor and generated capability-aware API reference are described by module in the [product catalog](product-modules.zh-CN.md). These additions reuse the existing task and script execution chain. Development completion does not mean a personal installation or public release has been updated.
+Verified custom site-tool drafts, bounded network evidence, same-origin page requests, read-only doctor and generated capability-aware API reference are described by module in the [product catalog](product-modules.zh-CN.md). These tools reuse the existing task and script execution chain. Verified source does not mean a personal installation or public release has been updated.
 
 ## Automatic text and screenshot shielding
 
@@ -53,9 +55,9 @@ Cookie copying does not copy localStorage, IndexedDB, device keys or MFA state, 
 
 After installing the maintenance component, use `./install.sh --check-update`, `--update`, or `--auto-update check|install|off`. Scheduled checks run hourly; automatic installation waits until Chrome, Edge and Hermes exit. GitHub asset digest, archive paths, complete package inventory, version and extension identity are checked before the existing backup/rollback transaction. Manual upgrade, update and uninstall share the installation lock.
 
-Only stable releases qualify. GitHub pre-releases are skipped. Version 1.8.2 is stable; upgrade an older installation manually once to install the current update source. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
+Only stable releases qualify. GitHub pre-releases are skipped. Upgrade an older installation manually once if it predates the current stable update source. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
 ## 独立云端连接
 
-扩展弹窗提供云端连接码、配对管理和独立完全访问开关。网页端显示已配对浏览器的实际在线状态；云端只授权任务页，原本地权限保持独立。
+扩展弹窗提供云端连接码、配对管理和独立云端连接授权；确认后云端普通任务直接执行，不再切换审批模式。网页端显示已配对浏览器的实际在线状态；云端只授权任务页，原本地权限保持独立。
 
 云端不提供执行历史，执行日志继续保存在原本地位置。通信输入领取后清除，回执取走即清除，只保留防重复调用摘要。用法见 [云端连接](../cloud-link/README.md)。

@@ -9,6 +9,7 @@ export const CHECKER_INPUTS = Object.freeze([
   'executor-plugin/plugin.yaml',
   'native-bridge/daemon.py', 'native-bridge/artifacts.py', 'native-bridge/install.py', 'native-extension/core.mjs',
   'native-extension/background.mjs', 'native-extension/bridge.mjs',
+  'native-extension/oauth-popups.mjs',
   'native-extension/manifest.json', 'native-extension/build.mjs',
   'browser-interactions/index.mjs', 'page-semantics/index.js',
   'scripts/package-executor.mjs',
@@ -195,6 +196,9 @@ function extensionInfo(root) {
   const generic=/this\.callWorld\s*\([^;]*p\.action/.test(perform)&&/const\s+fn\s*=\s*action\s*===\s*['"]inspect['"]\s*\?\s*inspectPage\s*:\s*pageAction/.test(world);
   const route=action=>{
     if(!bg||!execOk||!bridgeOk)return false;
+    // 中文注释：popup 元数据动作在页面执行前独立分流，必须实际接到审批与候选模块。
+    if(action==='popup_catalog')return /p\.action==='popup_catalog'/.test(execute)&&/this\.popups\.catalog\(/.test(execute)&&/class OAuthPopups/.test(read(root,'native-extension/oauth-popups.mjs'));
+    if(action==='popup_adopt')return /p\.action==='popup_adopt'/.test(execute)&&/this\.adoptPopup\(t,p\)/.test(execute)&&/this\.actionGrants\.get/.test(methodBody(core,'adoptPopup'))&&/this\.popups\.inspect/.test(methodBody(core,'adoptPopup'));
     if(action==='api_request')return credentials;
     if(action==='files.upload')return /p\.action===['"]files\.upload['"]/.test(perform)
       &&/DOM\.setFileInputFiles/.test(perform)&&/p\.artifactOrigin/.test(perform)

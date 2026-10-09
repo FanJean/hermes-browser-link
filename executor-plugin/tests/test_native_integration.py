@@ -5,14 +5,13 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
-import tempfile
 import threading
 import unittest
 from unittest.mock import patch
 
 from test_native_tools import ROOT, load
 sys.path.insert(0, str(ROOT.parent / 'native-bridge'))
-from tests.support import stop_fixture_daemon  # noqa: E402
+from tests.support import stop_fixture_daemon, temporary_bridge_home  # noqa: E402
 
 
 def _is_fixture_daemon(command, home):
@@ -32,13 +31,8 @@ class NativeIntegrationTests(unittest.TestCase):
         client_path = ROOT.parent / 'native-bridge/client.py'
         if not client_path.exists():
             self.skipTest('native bridge backend not yet available')
-        # macOS /private/var TMPDIR paths can exceed AF_UNIX's 104-byte limit.
-        scratch = Path.home() / '.hermes/cache/scratch'
-        scratch.mkdir(parents=True, exist_ok=True)
-        # A gate HOME nests deeply; its TMPDIR keeps the daemon socket path short.
-        if os.environ.get('TMPDIR') and Path(os.environ['TMPDIR']).is_dir():
-            scratch = min((scratch.resolve(), Path(os.environ['TMPDIR']).resolve()), key=lambda path: len(str(path)))
-        with tempfile.TemporaryDirectory(dir=scratch) as tmp:
+        with temporary_bridge_home() as home:
+            tmp = str(home)
             env = {'HERMES_HOME': tmp, 'HOME': tmp}
             with patch.dict(os.environ, env):
                 sys.path.insert(0, str(hermes_root))

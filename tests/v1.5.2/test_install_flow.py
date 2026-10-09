@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -233,6 +234,19 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         self.assertEqual(json.loads((self.root / 'commands.jsonl').read_text()), ['--profile', 'default', 'plugins', 'enable', 'browser-link'])
         self.assertIn('Program installed and enabled', result.stdout)
         self.assertNotIn('Extension connected.', result.stdout)
+        self.assertIn('Confirm browser connection authorization', result.stdout)
+        self.assertNotIn('smart-approval', result.stdout)
+        description = json.loads((self.plugin / 'dashboard/manifest.json').read_text())['description']
+        self.assertIn('连接授权', description)
+        self.assertNotIn('访问模式', description)
+
+    def test_bash_install_filename_from_release_directory(self):
+        # 中文注释：新用户常用 bash install.sh；文件名没有斜线时仍要定位当前安装包。
+        result = subprocess.run(['bash', 'install.sh', '--wait-seconds', '0'],
+                                env=self.env, capture_output=True, text=True,
+                                cwd=self.package, timeout=150)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.plugin / 'plugin.yaml').is_file())
 
     def test_repeat_install_directs_upgrade_without_changing_files(self):
         self.invoke()
@@ -240,6 +254,24 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         result = self.invoke(ok=False)
         self.assertIn('./install.sh --upgrade', result.stderr)
         self.assertEqual(self.inventory(), before)
+
+    def test_skipped_connection_wait_prints_runnable_check_for_shared_root(self):
+        # 中文注释：profile 环境与含空格目录都必须得到可直接执行、指向共享根的检查命令。
+        self.hermes = self.root / 'hermes with spaces'
+        named = self.hermes / 'profiles/work'
+        named.mkdir(parents=True)
+        result = self.invoke('--profile', 'work', env={'HERMES_HOME': str(named)})
+        self.assertIn('Browser connection not yet verified', result.stdout)
+        check = next(line.split('Check: ', 1)[1] for line in result.stdout.splitlines()
+                     if 'Check: ' in line)
+        argv = shlex.split(check)
+        self.assertEqual(argv[0], sys.executable)
+        self.assertEqual(argv[1], str(self.hermes / 'plugins/browser-link/native_bridge/doctor.py'))
+        self.assertEqual(argv[2:], ['--hermes-home', str(self.hermes), '--user-home', str(self.home)])
+        checked = subprocess.run(argv, env={**self.env, 'TEST_CONNECT_AT': '1'},
+                                 capture_output=True, text=True, timeout=15)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertIs(json.loads(checked.stdout)['ok'], True)
 
     def test_upgrade_preserves_private_data_id_allowlist_and_stable_path(self):
         private = self.old_install()
@@ -361,10 +393,11 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         # 中文注释：当前 profile 环境不能让显式 default 启用和安装目标指向不同根目录。
         named = self.hermes / 'profiles/work'
         named.mkdir(parents=True)
-        self.invoke(env={'HERMES_HOME': str(named)})
+        result = self.invoke(env={'HERMES_HOME': str(named)})
         self.assertTrue((self.plugin / 'plugin.yaml').is_file())
         self.assertFalse((named / 'plugins/browser-link').exists())
         self.assertEqual(json.loads((self.root / 'commands.jsonl').read_text())[1], 'default')
+        self.assertIn('profiles: default', result.stdout)
 
     def test_missing_python_message(self):
         (self.bin / 'python3').unlink()
@@ -372,6 +405,16 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         self.assertIn('python3 missing', result.stderr)
         self.assertIn('3.11+', result.stderr)
         self.assertFalse(self.plugin.exists())
+
+    def test_help_explains_first_install_defaults_without_writes(self):
+        before = self.inventory()
+        result = self.invoke('--help')
+        help_text = ' '.join(result.stdout.split())
+        self.assertIn('Release ZIP: no Node.js', help_text)
+        self.assertIn('default', help_text)
+        self.assertIn('repeat for multiple profiles', help_text)
+        self.assertIn('does not uninstall', help_text)
+        self.assertEqual(self.inventory(), before)
 
     def test_old_python_message(self):
         (self.bin / 'python3').unlink()
@@ -458,7 +501,8 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
 
     def test_multiple_profiles_are_installed_enabled_upgraded_and_uninstalled(self):
         (self.hermes / 'profiles/work').mkdir(parents=True)
-        self.invoke('--profile', 'default', '--profile', 'work', '--profile', 'work')
+        result = self.invoke('--profile', 'default', '--profile', 'work', '--profile', 'work')
+        self.assertIn('profiles: default, work', result.stdout)
         named = self.hermes / 'profiles/work/plugins/browser-link'
         self.assertTrue((named / 'plugin.yaml').is_file())
         calls = [json.loads(line) for line in (self.root / 'commands.jsonl').read_text().splitlines()]
@@ -483,6 +527,8 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
     def test_connection_timeout_leaves_install_complete(self):
         result = self.invoke('--wait-seconds', '1')
         self.assertIn('No connection detected', result.stdout)
+        self.assertIn('Browser connection not yet verified', result.stdout)
+        self.assertIn('Check: ', result.stdout)
         self.assertTrue((self.plugin / 'plugin.yaml').is_file())
 
     def test_unknown_live_daemon_is_not_signalled_or_overwritten(self):
@@ -530,8 +576,11 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         remaining, error = process.communicate(timeout=15)
         self.assertEqual(process.returncode, 0, output + remaining + error)
         self.assertIn('Wait skipped', remaining)
-        # 中文注释：跳过等待后仍说明默认智能审批，无需操作开关切换为全部访问。
-        self.assertIn('Keep the default smart-approval mode', remaining)
+        self.assertIn('Browser connection not yet verified', remaining)
+        self.assertIn('Check: ', remaining)
+        # 中文注释：跳过等待不等于连接成功，仍说明连接授权，不再要求切换访问模式。
+        self.assertIn('Confirm browser connection authorization', remaining)
+        self.assertNotIn('smart-approval', remaining)
         self.assertTrue((self.plugin / 'plugin.yaml').is_file())
 
     def test_first_activation_failure_restores_existing_profile_and_private_data(self):

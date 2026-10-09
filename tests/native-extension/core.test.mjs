@@ -154,11 +154,46 @@ test('approval rechecks selected tab origins and serializes competing leases',as
  const changed=new Executor({tabs:{get:async()=>({id:1,url:'https://evil.test/'})}});await assert.rejects(changed.approve(task()),/origin/);assert.equal(changed.leases.size,0);
 });
 
-test('frame origin and sensitive screenshot checks fail closed',async()=>{
- const {Executor}=await load();const commands=[];let tree={frameTree:{frame:{id:'main',url:'https://example.com/'},childFrames:[{frame:{id:'child',url:'https://evil.test/'}}]}};let sensitiveFrame=null;
- const e=new Executor({tabs:{get:async()=>({id:1,url:'https://example.com/'})},debugger:{onEvent:{addListener(){},removeListener(){}},attach:async()=>{},detach:async()=>{},sendCommand:async(_,method,params)=>{commands.push(method);if(method==='Page.getFrameTree')return tree;if(method==='DOM.getDocument')return {root:{nodeName:'HTML',children:[]}};if(method==='Page.createIsolatedWorld')return {executionContextId:params.frameId};if(method==='Runtime.callFunctionOn')return {result:{value:{hasSensitiveValue:params.executionContextId===sensitiveFrame}}};if(method==='Page.captureScreenshot')return {data:'png'};return {};}}});await e.approve(task());
- await assert.rejects(e.execute({taskId:'a',generation:1,tabId:1,action:'screenshot',allowedOrigins:['https://example.com']}),/frame origin/);assert.ok(!commands.includes('Page.captureScreenshot'));
- tree={frameTree:{frame:{id:'main',url:'https://example.com/'},childFrames:[{frame:{id:'child',url:'https://example.com/frame'}}]}};sensitiveFrame='child';commands.length=0;await assert.rejects(e.execute({taskId:'a',generation:1,tabId:1,action:'screenshot',allowedOrigins:['https://example.com']}),/CAPTURE_SENSITIVE_BLOCKED/);assert.ok(!commands.includes('Page.captureScreenshot'));
+test('uninspectable frame and sensitive screenshot checks fail closed with genuine privacy reasons',async()=>{
+ const {Executor}=await load();const commands=[],inspected=[];let childUrl='https://evil.test/',sensitiveFrame=null,restoreConfirmed=true;
+ const api={tabs:{get:async()=>({id:1,url:'https://example.com/',status:'complete'})},debugger:{onEvent:{addListener(){},removeListener(){}},attach:async()=>{},detach:async()=>{},sendCommand:async(_,method,params={})=>{
+  commands.push(method);
+  if(method==='Page.getFrameTree')return {frameTree:{frame:{id:'main',loaderId:'main-document',url:'https://example.com/'},childFrames:[{frame:{id:'child',loaderId:'child-document',url:childUrl}}]}};
+  // 中文注释：DOM 与 frame tree 必须一致；无可信几何的跨源 iframe 不能被截图掩码证明安全。
+  if(method==='DOM.getDocument')return {root:{nodeName:'HTML',children:[{nodeName:'IFRAME',frameId:'child',contentDocument:{nodeName:'HTML',children:[]}}]}};
+  if(method==='Page.createIsolatedWorld')return {executionContextId:params.frameId};
+  if(method==='Runtime.callFunctionOn'){
+   const declaration=params.functionDeclaration||'',op=params.arguments?.[0]?.value;
+   if(declaration.includes('const createAutomationOverlay='))return fixtureResult(true);
+   if(declaration.startsWith('function(op,scope){const state='))return fixtureResult(op==='restore'?restoreConfirmed:true);
+   if(declaration.includes('function inspectPage(')){inspected.push(params.executionContextId);return fixtureResult({hasSensitiveValue:params.executionContextId===sensitiveFrame});}
+   throw Error('unexpected capture fixture function');
+  }
+  if(method==='Page.captureScreenshot')return {data:'png'};
+  return {};
+ }}};
+ const e=new Executor(api);await e.approve(task());
+ const request={taskId:'a',generation:1,tabId:1,action:'screenshot',allowedOrigins:['https://example.com']};
+ const catalog=await e.execute({...request,action:'frame_catalog'});
+ assert.equal(catalog.frames[0].access,'origin_denied');assert.equal(catalog.frames[0].frameToken,undefined);assert.equal(catalog.coverage.complete,false);
+ commands.length=0;
+ await assert.rejects(e.execute(request),{message:'CAPTURE_FRAME_UNINSPECTABLE'});
+ assert.ok(!commands.includes('Page.captureScreenshot'));assert.ok(!inspected.includes('child'),'denied child must never be inspected');
+ childUrl='https://example.com/frame';sensitiveFrame='child';commands.length=0;inspected.length=0;
+ await assert.rejects(e.execute(request),{message:'CAPTURE_SENSITIVE_BLOCKED'});
+ assert.ok(inspected.includes('child'),'sensitive child refusal must follow actual inspection');assert.ok(!commands.includes('Page.captureScreenshot'));
+ // 中文注释：双失败不得吞掉真正隐私拒绝；精确核对 AggregateError 的两个底层错误，而不是接受任意异常。
+ const current=e.tasks.get('a'),entry=current.overlays.get(1);assert.ok(entry);
+ restoreConfirmed=false;commands.length=0;
+ await assert.rejects(e.captureWithoutDecorations(current,1,entry,()=>{},async()=>{
+  await e.assertSafeCapture({tabId:1},current,()=>{});
+  return api.debugger.sendCommand({tabId:1},'Page.captureScreenshot');
+ }),error=>{
+  assert.ok(error instanceof AggregateError);assert.equal(error.message,'capture and overlay restoration failed');
+  assert.deepEqual(error.errors.map(item=>item.message),['CAPTURE_SENSITIVE_BLOCKED','overlay restore failed']);
+  assert.equal(error.errors[1].cause.message,'overlay restore failed');return true;
+ });
+ assert.ok(!commands.includes('Page.captureScreenshot'));
 });
 
 test('redirected main frame is rejected after a fixed page action',async()=>{
@@ -240,7 +275,7 @@ test('new_tab returns a leased not-ready tab when only its pending URL is visibl
  const e=new Executor(f.api);await e.approve(task('a',[]));
  e.setMode({...task('a',[]),modeGeneration:2,activeMode:'full'});
  const result=await e.execute({...newTabCommand(),modeGeneration:2});
- assert.deepEqual(result,{tabId:3,url:'https://example.com/',ready:'loading',groupId:20,windowId:7});
+ assert.deepEqual(result,{tabId:3,url:'https://example.com/',ready:'loading',groupId:20,windowId:7,closedTabs:[]});
  assert.equal(f.creates.length,1);assert.equal(e.leases.get(3),'a');
 });
 
@@ -252,24 +287,63 @@ test('pending URL does not authorize a read while the current URL is unavailable
  const e=new Executor(f.api);await e.approve(task('a',[]));e.setMode({...task('a',[]),modeGeneration:2,activeMode:'full'});
  const result=await e.execute({...newTabCommand(),modeGeneration:2});
  assert.equal(result.ready,'loading');assert.equal(e.leases.get(result.tabId),'a');
- await assert.rejects(e.execute({taskId:'a',generation:1,tabId:result.tabId,action:'snapshot',allowedOrigins:['https://example.com'],modeGeneration:2}),/TAB_OUT_OF_SCOPE/);
+ await assert.rejects(e.execute({taskId:'a',generation:1,tabId:result.tabId,action:'snapshot',allowedOrigins:['https://example.com'],modeGeneration:2}),error=>{
+  assert.equal(error.message,'TAB_OUT_OF_SCOPE');assert.equal(error.preDispatch,true);
+  assert.equal(error instanceof TypeError,false);assert.equal(error.currentOrigin,undefined);return true;
+ });
  assert.equal(debuggerCalls,0);
+});
+
+test('read readiness refuses missing, malformed and redirected committed URLs before reads, including polling',async()=>{
+ const {Executor}=await load();
+ const invalidUrls=[undefined,'','not-a-url','https://evil.test/private?secret=fixture'];
+ for(const status of ['loading','complete'])for(const url of invalidUrls){
+  let calls=0;const e=new Executor({tabs:{get:async()=>({url,status,pendingUrl:'https://example.com/'})},debugger:{attach:async()=>{calls++;},sendCommand:async()=>{calls++;}}});
+  await assert.rejects(e.domReadyTab(task(),{tabId:1},()=>{}),error=>{
+   assert.equal(error.message,'TAB_OUT_OF_SCOPE');assert.equal(error.preDispatch,true);
+   assert.equal(error.currentOrigin,url?.startsWith('https:')?'https://evil.test':undefined);return true;
+  });
+  assert.equal(calls,0,'invalid committed URL cannot attach or read through pendingUrl');
+ }
+ for(const url of invalidUrls){
+  let gets=0,commands=0;const e=new Executor({tabs:{get:async()=>({url:++gets===1?'https://example.com/':url,status:'loading',pendingUrl:'https://example.com/'})},debugger:{attach:async()=>{},sendCommand:async(_,method)=>{
+   commands++;
+   if(method==='Page.getFrameTree')return safeTree(1);
+   if(method==='Page.createIsolatedWorld')return {executionContextId:1};
+   assert.equal(method,'Runtime.callFunctionOn');return fixtureResult('loading');
+  }}});
+  await assert.rejects(e.domReadyTab(task(),{tabId:1},()=>{}),error=>{
+   assert.equal(error.message,'TAB_OUT_OF_SCOPE');assert.equal(error.preDispatch,true);
+   assert.equal(error.currentOrigin,url?.startsWith('https:')?'https://evil.test':undefined);return true;
+  });
+  assert.equal(gets,2);assert.equal(commands,3,'scope loss must stop before another readyState probe');
+ }
 });
 
 test('pending allowed URL cannot override a wrong current origin or claim its lease',async()=>{
  const {Executor}=await load();const f=workspaceFixture(),get=f.api.tabs.get;
  f.api.tabs.get=async id=>id===1?get(id):{...await get(id),url:'https://evil.test/',pendingUrl:'https://example.com/',status:'loading'};
  const e=new Executor(f.api);await e.approve(task('a',[]));e.setMode({...task('a',[]),modeGeneration:2,activeMode:'full'});
- await assert.rejects(e.execute({...newTabCommand(),modeGeneration:2}),/origin denied/);
+ await assert.rejects(e.execute({...newTabCommand(),modeGeneration:2}),{message:'REDIRECTED_OUT_OF_SCOPE',code:'REDIRECTED_OUT_OF_SCOPE',preDispatch:true,finalOrigin:'https://evil.test'});
  assert.equal(f.creates.length,1);assert.equal(e.leases.has(3),false);
+ assert.deepEqual(e.tasks.get('a').allowedOrigins,['https://example.com']);
 });
 
 test('a complete tab with no committed URL cannot claim readiness from pendingUrl',async()=>{
  const {Executor}=await load();const f=workspaceFixture(),get=f.api.tabs.get;
  f.api.tabs.get=async id=>id===1?get(id):{...await get(id),url:'',pendingUrl:'https://example.com/',status:'complete'};
  const e=new Executor(f.api);await e.approve(task('a',[]));e.setMode({...task('a',[]),modeGeneration:2,activeMode:'full'});
- await assert.rejects(e.execute({...newTabCommand(),modeGeneration:2}),/Invalid URL/);
+ await assert.rejects(e.execute({...newTabCommand(),modeGeneration:2}),error=>{
+  assert.equal(error.message,'PAGE_NOT_READY');assert.equal(error.preDispatch,false);
+  assert.equal(error instanceof TypeError,false);return true;
+ });
  assert.equal(f.creates.length,1);
+ assert.deepEqual(e.tasks.get('a').allowedOrigins,['https://example.com']);
+ // 中文注释：建页日志已完成但就绪未知；重复请求命中原页租约，不能再创建一次。
+ await assert.rejects(e.execute({...newTabCommand(),modeGeneration:2}),{message:'TASK_BUSY',code:'TASK_BUSY',preDispatch:false});
+ assert.equal(f.creates.length,1);
+ assert.equal(e.leases.get(3),'a');
+ await assert.rejects(e.execute({taskId:'a',generation:1,tabId:3,action:'snapshot',allowedOrigins:['https://example.com'],modeGeneration:2}),{message:'TAB_OUT_OF_SCOPE',preDispatch:true});
 });
 
 test('structured release reports preserved, moved, and uncertain children without leasing denied origins',async()=>{
@@ -299,9 +373,20 @@ test('structured release reports preserved, moved, and uncertain children withou
 test('cleanup inspection is read-only, scoped, and never upgrades unknown ownership',async()=>{
  const {Executor}=await load(),f=workspaceFixture(),e=new Executor(f.api);
  await e.approve(task());
- assert.equal((await e.cleanupStatus({taskId:'a',generation:1})).cleanupState,'unknown');
- assert.equal((await e.cleanupStatus({taskId:'absent',generation:1})).cleanupState,'unknown');
- assert.deepEqual(f.removed,[]);
+ const empty=await e.cleanupStatus({taskId:'a',generation:1});
+ assert.equal(empty.cleanupState,'succeeded');assert.equal(empty.cleanupReason,'verified_complete');
+ assert.deepEqual(empty.remainingTabIds,[]);assert.deepEqual(empty.preservedTabIds,[]);assert.deepEqual(empty.unknownTabIds,[]);
+ for(const request of [{taskId:'absent',generation:1},{taskId:'a',generation:2}]){
+  const unknown=await e.cleanupStatus(request);assert.equal(unknown.cleanupState,'unknown');assert.equal(unknown.cleanupReason,'no_journal');
+ }
+ // 中文注释：成功仅来自可信空日志；歧义创建仍须未知，检查不能授予删除权或改写日志。
+ const work=await executeUserApproved(e,newTabCommand());
+ await e.workspaces.spawned(e.tasks.get('a').workspaceCapability,{id:14,openerTabId:1,windowId:7});
+ const before=structuredClone(f.data),groups=structuredClone(f.groups);
+ const unknown=await e.cleanupStatus({taskId:'a',generation:1});
+ assert.equal(unknown.cleanupState,'unknown');assert.equal(unknown.cleanupReason,'ownership_unknown');
+ assert.deepEqual(unknown.unknownTabIds,[14]);assert.deepEqual(unknown.remainingTabIds,[work.tabId]);
+ assert.deepEqual(f.data,before);assert.deepEqual(f.groups,groups);assert.deepEqual(f.removed,[]);assert.equal(e.leases.has(14),false);
 });
 
 test('cleanup retry rejects changed inventory instead of ignoring daemon proof tabIds',async()=>{
@@ -318,8 +403,8 @@ test('new-tab lease conflict never closes a tab already owned by another task',a
  const {Executor}=await load();const {api,tabs,removed,groups}=workspaceFixture();const e=new Executor(api);
  await e.approve(task('a',[]));await e.approve(task('b',[1]));
  let creates=0;api.tabs.create=async()=>{creates++;return {...tabs.get(1)};};
- // The adapter exposes uncertain create outcomes as typed non-replayable errors.
- await assert.rejects(executeUserApproved(e,newTabCommand()),{code:'workspace_unknown'});
+ // 中文注释：明确租约冲突为 TASK_BUSY；重放同一未知创建请求仍被日志阻止，不能再建或误删别人的页。
+ await assert.rejects(executeUserApproved(e,newTabCommand()),{message:'TASK_BUSY',code:'TASK_BUSY',preDispatch:false});
  await assert.rejects(executeUserApproved(e,newTabCommand()),{code:'workspace_unknown'});
  assert.equal(creates,1);assert.equal(groups.length,0);assert.deepEqual(removed,[]);
  assert.equal(tabs.get(1).groupId,-1);assert.equal(e.leases.get(1),'b');

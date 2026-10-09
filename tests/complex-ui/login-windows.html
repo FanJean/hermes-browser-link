@@ -1,0 +1,31 @@
+<!-- 中文注释：本地登录形态验收，不请求真实 Google，不含真实账号或凭据。由 real-login-windows.mjs 的双来源服务器提供。 -->
+<!doctype html><html lang="zh"><meta charset="utf-8"><title>登录窗口验收</title>
+<style>
+body{font:16px system-ui;margin:24px}button,input{display:block;margin:12px 0;padding:12px;max-width:260px}dialog,[popover],.floating{border:1px solid #666;padding:24px;background:white;min-width:280px}dialog::backdrop{background:#0006}.floating{position:fixed;top:30px;right:30px;z-index:2147483000}
+</style>
+<main id="launcher">
+<h1>登录窗口验收</h1><button id="modal-button">打开模态登录</button><button id="popover-button">打开顶层登录</button><button id="floating-button">打开浮层登录</button><button id="popup-button">打开独立登录小窗</button><button id="delayed-button">延迟打开登录小窗</button><button id="frame-button">打开跨源登录框架</button>
+</main><dialog id="modal" aria-label="模态登录"></dialog><div id="popover" popover aria-label="顶层登录"></div><div id="floating" class="floating" aria-label="浮层登录" hidden></div><div id="frame-host"></div>
+<script>
+// 中文注释：统一的本地两步登录页，让不同窗口形态执行相同控件路径；不模拟外站返回或风控绕过。
+const accountMarkup='<label>账号<input type="email" autocomplete="username" aria-label="账号" required></label><button type="button">下一步</button>';
+const passwordMarkup='<label>密码<input type="password" autocomplete="current-password" aria-label="密码"></label><label>验证码<input autocomplete="one-time-code" aria-label="验证码"></label><button type="button">返回账号</button>';
+function login(root){
+ root.replaceChildren();const form=document.createElement('form');form.innerHTML=accountMarkup;root.append(form);
+ form.addEventListener('click',event=>{
+  if(event.target.localName!=='button')return;
+  if(event.target.textContent==='下一步'&&!form.reportValidity())return;
+  form.innerHTML=event.target.textContent==='下一步'?passwordMarkup:accountMarkup;
+ });
+ form.addEventListener('submit',event=>event.preventDefault());
+}
+const loginOrigin=location.origin.replace('127.0.0.1','login.localhost');
+const openLogin=event=>{const active=navigator.userActivation.isActive;const popup=window.open(loginOrigin+'/login?state=SYNTHETIC_OAUTH_STATE','login-window-'+crypto.randomUUID(),'width=430,height=560');window.popupTest={opened:Boolean(popup),trusted:event?.isTrusted===true,active};};
+document.querySelector('#modal-button').onclick=()=>{login(document.querySelector('#modal'));document.querySelector('#modal').showModal();};
+document.querySelector('#popover-button').onclick=()=>{login(document.querySelector('#popover'));document.querySelector('#popover').showPopover();};
+document.querySelector('#floating-button').onclick=()=>{login(document.querySelector('#floating'));document.querySelector('#floating').hidden=false;};
+document.querySelector('#popup-button').onclick=openLogin;
+document.querySelector('#delayed-button').onclick=event=>setTimeout(()=>openLogin(event),250);
+document.querySelector('#frame-button').onclick=()=>{const frame=document.createElement('iframe');frame.title='跨源登录';frame.src=loginOrigin+'/login';frame.style='width:440px;height:540px';document.querySelector('#frame-host').append(frame);};
+if(location.pathname==='/login'){document.querySelector('#launcher').remove();const main=document.createElement('main');document.body.append(main);login(main);}
+</script></html>

@@ -5,24 +5,26 @@ import vm from 'node:vm';
 import {Executor} from '../../native-extension/core.mjs';
 
 test('semantic CDP command and byte budget',async t=>{
- const context=vm.createContext({});let calls=0,bytes=0;
+ const context=vm.createContext({});let calls=0,bytes=0,installs=0;
  const executor=new Executor({tabs:{},debugger:{sendCommand:async(_target,method,params)=>{
   calls++;bytes+=Buffer.byteLength(JSON.stringify({method,params}));
   if(method==='Runtime.callFunctionOn'){
    // 中文注释：替换页面实现只为计数安装与调用协议，页面动作由语义测试覆盖。
-   const declaration=params.functionDeclaration.includes('const createPageSemantics=')?'function(){globalThis.__hermesSemanticLibrary={version:1,call:()=>true};return true;}':params.functionDeclaration;
+   const installing=params.functionDeclaration.includes('const createPageSemantics=');if(installing)installs++;
+   const declaration=installing?'function(){globalThis.__hermesSemanticLibrary={version:1,call:()=>true};return true;}':params.functionDeclaration;
    return {result:{value:await vm.runInContext(`(${declaration})`,context)(...(params.arguments||[]).map(a=>a.value))}};
   }
   throw Error(method);
  }}});
  for(let i=0;i<8;i++)await executor.callSemanticWorld({tabId:7},'main','rect_ref',{},()=>{},17);
- t.diagnostic(JSON.stringify({calls,bytes}));
- // 中文注释：增加标准控件角色与共享动作资格后，冷安装增长约 2.5KB；八次热调用仍限定 6KB。
- assert.equal(calls,9);assert.ok(bytes<77000);
+ t.diagnostic(JSON.stringify({calls,bytes,installs}));
+ // 中文注释：账号字段、登录浮层及宿主 classifier 随冷安装传输；相对 HEAD 76910B 增长 2461B 至 79371B。
+ // 中文注释：仅留 629B 冷预算余量，仍限定一次安装；八次热调用 2600B 与 HEAD 相同，6KB 上限不变。
+ assert.equal(calls,9);assert.equal(installs,1);assert.ok(bytes<=80000,`cold bytes: ${bytes}`);
  const cold={calls,bytes};
  for(let i=0;i<8;i++)await executor.callSemanticWorld({tabId:7},'main','rect_ref',{},()=>{},17);
  t.diagnostic(JSON.stringify({warmCalls:calls-cold.calls,warmBytes:bytes-cold.bytes}));
- assert.equal(calls-cold.calls,8);assert.ok(bytes-cold.bytes<6000);
+ assert.equal(calls-cold.calls,8);assert.equal(installs,1);assert.ok(bytes-cold.bytes<6000);
 });
 
 test('phase diagnostics reject page content and retain numeric durations',async()=>{

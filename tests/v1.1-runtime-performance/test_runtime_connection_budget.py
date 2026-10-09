@@ -17,6 +17,9 @@ import types
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'native-bridge'))
+from tests.support import temporary_bridge_home
+
 SCRATCH = Path(os.environ.get("TMPDIR", tempfile.gettempdir())).resolve()
 CLIENT_PATH = ROOT / "native-bridge" / "client.py"
 RUNTIME_PATH = ROOT / "executor-plugin" / "native_runtime.py"
@@ -270,9 +273,7 @@ class ScratchExtensionPeer:
 class NativeRuntimeConnectionBudgetTests(unittest.TestCase):
     def setUp(self):
         SCRATCH.mkdir(parents=True, exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(prefix="rp-", dir=SCRATCH)
-        self.root = Path(self.temp.name)
-        self.home = self.root / "h"
+        self.home = self.enterContext(temporary_bridge_home())
         socket_path = self.home / "plugin-data" / "browser-link-native" / "bridge.sock"
         self.assertLessEqual(len(os.fsencode(socket_path)), 103, str(socket_path))
 
@@ -298,7 +299,6 @@ class NativeRuntimeConnectionBudgetTests(unittest.TestCase):
         self.monitor.restore()
         self._stop_scratch_daemon()
         self.client_module._spawn_detached = self.original_spawn
-        self.temp.cleanup()
 
     def _stop_scratch_daemon(self):
         pid_path = self.home / "plugin-data" / "browser-link-native" / "daemon.pid"

@@ -18,13 +18,13 @@ spec.loader.exec_module(migration)
 class MigrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory(prefix='link-migrate-', dir='/tmp')
+        cls.temp = tempfile.TemporaryDirectory(prefix='link-migrate-')
         cls.addClassCleanup(cls.temp.cleanup)
         cls.package = Path(cls.temp.name).resolve() / 'package'
         subprocess.run(['node', 'scripts/package-executor.mjs', '--output', str(cls.package)], cwd=ROOT, check=True, capture_output=True)
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='link-test-', dir='/tmp')
+        self.temp = tempfile.TemporaryDirectory(prefix='link-test-')
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name).resolve() / 'hermes'
         self.browsers = Path(self.temp.name).resolve() / 'browsers'
@@ -147,10 +147,15 @@ class MigrationTests(unittest.TestCase):
         # 中文注释：只在沙箱允许绑定 Unix socket 时验证真实套接字跳过。
         sock = socket.socket(socket.AF_UNIX)
         self.addCleanup(sock.close)
+        cwd = Path.cwd()
         try:
-            sock.bind(str(self.old / 'test.sock'))
+            # 中文注释：相对绑定保留原迁移目录中的真实 socket，不受 profile scratch 的绝对路径长度影响。
+            os.chdir(self.old)
+            sock.bind('test.sock')
         except PermissionError:
             self.skipTest('sandbox cannot bind Unix socket')
+        finally:
+            os.chdir(cwd)
         result = self.run_migration(True)
         self.assertFalse((self.home / 'plugin-data/browser-link-native/test.sock').exists())
         self.assertFalse(any(p.name == 'test.sock' for p in Path(result['backup']).rglob('*')))

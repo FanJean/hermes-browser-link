@@ -33,7 +33,7 @@ Terminal group removal uses the extension's private workspace request journal an
 | `page-semantics/` | Bounded semantic snapshots, references, paging and deltas (runs inside the page). |
 | `browser-interactions/` | Screenshot-bound coordinate clicks and drags with identity and occlusion checks. |
 | `browser-workspaces/` | Task tab groups: creation, ownership journal, recovery and cleanup. |
-| `approval-policy/` | Pure decision function for smart approval vs. full access. |
+| `approval-policy/` | Internal fail-closed policy state before connection authorization, plus full-access grants; legacy smart states remain for compatibility, not as a user-selectable mode. |
 | `browser-diagnostics/` | Allowlisted diagnostic events (JS buffer and Python JSONL sink). |
 
 The shared JavaScript modules are imported directly in source tests. `native-extension/build.mjs` copies them byte-for-byte into the extension's `vendor/` directory, rewrites the imports and records their SHA-256 in `BUILD-DEPS.json`, so there is a single canonical source for each module.
@@ -41,7 +41,7 @@ The shared JavaScript modules are imported directly in source tests. `native-ext
 ## Trust boundaries
 
 - **Identity comes from the host.** The model never supplies an owner, approval state or generation. The `pre_tool_call` hook binds each call to the trusted Hermes session and tool-call ID; the plugin injects an opaque one-use lease.
-- **Authorization lives in the extension.** Only the extension's own UI can approve tasks or turn on browser-level full access. Web pages cannot message the approval path. Access is never restored automatically after a disconnect or daemon restart — tasks become `needs_sync`.
+- **Authorization lives in the extension.** Only the extension's own UI can confirm browser connection authorization (full access). Ordinary task actions then run directly; there is no user-selectable smart approval. Web pages cannot message the approval path. Access is never restored automatically after a disconnect or daemon restart — tasks become `needs_sync`.
 - **Every action is re-checked.** The daemon checks owner, task state and lease; the extension checks task, generation, exact origin, tab lease and document before and after the work.
 - **Unknown outcomes are final.** If a response is lost after dispatch the result is `outcome_unknown`. Request IDs are bound to their payload and remembered (hashed) so a retry cannot run twice.
 - **Sensitive fields are for humans.** Password, payment and OTP fields are detected before writes and handed to the user (or to the private Vault channel when enabled).
@@ -61,7 +61,7 @@ The daemon listens on `$HERMES_HOME/plugin-data/browser-link-native/bridge.sock`
 
 ## User interfaces
 
-- **扩展弹窗** — 当前 manifest 版本、连接状态、浏览器访问、当前页任务状态、接管/继续与停止按钮及自动屏蔽开关；**独立确认面板** — 敏感字段人工输入与未开启完全访问时的确认。完全访问不逐项审批；Cookie 镜像仍每次确认。
+- **扩展弹窗** — 当前 manifest 版本、连接状态、浏览器访问、当前页任务状态、接管/继续与停止按钮及自动屏蔽开关；**独立确认面板** — 敏感字段人工输入、Cookie 镜像与接管已有 OAuth 登录窗口的特殊确认。连接授权后普通任务直接执行，不再提供智能审批或模式切换。
 - **Page overlay** — status, take over, stop.
 - **Hermes 桌面面板**（`executor-plugin/desktop/`）— 本地桥接状态、在线/离线浏览器及浏览器访问入口。任务日志、文件和结果不在此展示；诊断工具仍可读取受限诊断接口。
 
@@ -83,11 +83,11 @@ Release fences execution before cleanup and remains bounded. If an in-flight tab
 
 ## 原始 CDP 的框架范围
 
-原始 CDP 的上下文、节点和对象句柄可能指向同一调试目标内的第三方子框架。智能审批在调试命令说明中列出额外来源，批准后执行；全部访问直接执行。事件不按来源过滤，凭据类请求和响应头及 Bearer 值始终剥离。顶层任务页离站时停止派发；派发期间顶层离站按结果未知处理，不重发。
+原始 CDP 的上下文、节点和对象句柄可能指向同一调试目标内的第三方子框架。浏览器连接授权后调试命令直接执行，不逐项确认；任务来源、租约和凭据排斥检查仍生效。事件不按来源过滤，凭据类请求和响应头及 Bearer 值始终剥离。顶层任务页离站时停止派发；派发期间顶层离站按结果未知处理，不重发。
 
-智能审批的低风险页面读取另有任务级顶层来源批准。daemon 在首次读取前请扩展仅回报当前租约标签的 origin；批准后仅该任务、该模式代次可直接重复读取该来源。导航或新建标签的动作审批可同时批准目标来源。扩展在实际读页前后比较 origin，换站时不回传结果。标签列表只遍历本任务的租约标签，不读取全浏览器标签。
+浏览器连接授权后，普通读取、导航、写入及 Python 工作流直接执行，不再为首次网站读取或每个动作弹出确认。内部低层 policy 的旧 smart 状态仍用于兼容和授权前默认拒绝，不能当成可选用户模式；任务身份、来源、租约、代次、接管、停止和特殊确认保持独立。扩展在实际读页前后比较 origin，换站时不回传结果。标签列表只遍历本任务的租约标签，不读取全浏览器标签。
 
-原始 `Page.addScriptToEvaluateOnNewDocument` 已禁用：真实 Chrome 中，注册后的脚本会在用户导航到未授权来源时先执行。扩展自己的预遮罩脚本仍按固定来源列表注册；单次页面 JS 执行不受此项禁用影响。
+原始 `Page.addScriptToEvaluateOnNewDocument` 在连接授权后直接执行；注册的脚本可能在之后的页面持续执行，包括用户导航到未授权来源时，不能把它当成只读沙箱。扩展登记返回的脚本标识，在任务结束或撤权时移除；扩展自己的预遮罩脚本仍按固定来源列表注册。顶层离站仍停止新的任务派发，但不能保证已注册脚本在导航时尚未运行。
 
 接管先冻结宿主新派发，并等待扩展已有动作收尾，再同步放开该任务全部工作页。此前排队请求因控制代次变化被拒绝，不因继续操作复活。暂停返回 `task_paused` 且不可自动重试；其他任务保持可用。
 

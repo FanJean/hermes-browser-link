@@ -18,6 +18,22 @@
 - 实现：`page-semantics/`、`browser-interactions/`、`native-extension/core.mjs`。
 - 优化边界：页面解析不保证包含未加载或虚拟化记录；动作派发成功不等于业务处理成功。
 
+### 登录控件与浮层
+
+`semantic_snapshot` 的输入控件返回 `inputType`；可确定用途时另有 `fieldKind`（account/password/otp/payment）。密码、验证码和支付字段的普通 `actions` 为空，`inputRequired: vault_or_user` 表示走凭据工具或用户填写，不返回字段值。未知用途不猜成账号字段；宿主仍执行统一敏感判定。
+
+`page.parse` 的 `forms` 保留上述用途和动作清单，并用 `surfaceRef` 指向所在 `regions`。区域和语义上下文中的 `surfaceKind` 区分原生/ARIA 模态层、非模态 dialog、打开的 popover，以及带表单或 iframe 的固定/高层绝对定位浮层。布局推断只用于区分区域，不授予操作权。自定义 `[role="button"]` 登录按钮、开放 Shadow DOM 和已授权框架复用普通解析。
+
+窄化登录范围用 `options.root`；实际操作必须重新获取 `semantic_snapshot` 的 `binding`、`snapshotId` 和控件 `ref`，不能拿 `sourceRef` 或 `surfaceRef` 当动作引用。独立浏览器小窗不是页面浮层，必须先确认该小窗的归属和来源；Google 域名、置顶状态和窗口焦点都不是授权证据。验证码、验证器确认、验证码风控及站点禁止自动化不在此能力的绕过范围内。
+
+### 独立登录小窗
+
+从已授权源页调用 `popup_catalog(tab=source)`，再点击登录入口；后续目录只返回 30 秒观察期内新建、有对应 opener 的独立 popup 元数据，不读取其页面，也不返回 OAuth URL 的查询参数。Edge 的新建事件缺少 opener 时只补读这张刚创建的标签，不扫描已有窗口。
+
+选择候选后用 `popup_adopt(candidate_ref, tab=source)` 请求接管。即使全部访问也必须在扩展确认具体源页、目标来源和窗口；批准后保持原窗口与 opener，不另开登录网址。脚本须保留同一源页会话本次 `popup_catalog` 返回的 candidate；捕获 `ApprovalRequired` 后调用 `wait_pending(tab=source)`，只查询动作账本和当前任务 scope，返回 `state=confirmed` 等 `operation_status` 字段，不返回或合成 `adopted` / `tabId` 成功回执。然后显式 `use_tab(candidate["tabId"])` 并重新 `read_page`，由新读取校验当前页面权限；账本和元数据不能代替它。单步工具批准后用 `browser_shared_get` 核对当前代次及 `adoptedPopupTabIds`，再选择已知候选页读取。禁止重发接管取得缓存或复核；popup 成功回执只交付一次，后续独立目录读取使用新请求编号。源页文档、来源、窗口、租约或候选身份变更时拒绝接管；拒绝、过期、撤权、代次变化不会返回旧成功，未知结果不重放。普通敏感输入的同请求结果查询合同不变。
+
+接管授予操作权及目标来源，不授予自动删除权：任务结束会撤权，保留原登录小窗。最小化的小窗可以继续解析和普通字段操作；打开新小窗仍受浏览器用户激活及 popup 拦截规则限制，不伪造激活、不绕过拦截。页面浮层的层级、原生窗口置顶与焦点不会扩大权限。
+
 ## 3. Python 执行与网站工具
 
 ### 3.1 一次性脚本
@@ -78,15 +94,15 @@
 - 实现：`native-extension/network-evidence.mjs`、`page-runtime.mjs`；协议动作 `network.inspect`；Python helper 位于 `script_lane/child.py`。
 - 当前不包含：静态脚本接口扫描、任意 HAR 导出、响应全文持久化。
 
-页面运行资源随任务释放。JavaScript 的 world 参数仅选择执行上下文。智能审批逐项批准 JS/CDP 调试动作；全部访问直接执行。原始 CDP 可以读取任务页中的其他来源子框架，事件不按来源过滤；Cookie、Set-Cookie、Authorization、Proxy-Authorization 请求和响应头及 Bearer 值始终剥离。顶层任务页离站时停止派发，返回任务来源后需重新建立网关。
+页面运行资源随任务释放。JavaScript 的 world 参数仅选择执行上下文。浏览器连接授权后 JS/CDP 调试动作直接执行，不逐项确认。原始 CDP 可以读取任务页中的其他来源子框架，事件不按来源过滤；Cookie、Set-Cookie、Authorization、Proxy-Authorization 请求和响应头及 Bearer 值始终剥离。顶层任务页离站时停止派发，返回任务来源后需重新建立网关。
 
-智能审批下，任务首次读取某个顶层网站来源时确认一次，审批面板说明任务、网站和可读取页面内容；同站后续读取直接执行。导航或新建工作页的批准可同时批准目标网站的读取，写入和调试命令仍逐项询问。切回智能审批、任务结束或新代次会清空旧网站读取批准。`tabs` 仅返回本任务租约标签，不暴露浏览器其他标签。
+连接授权（全部访问）后，首次网站读取、后续读取、导航、写入和 Python 工作流直接执行。内部低层 policy 仍保留授权前默认拒绝及兼容状态；任务身份、来源、租约、代次、接管、停止、凭据保护和特殊确认不是被删除的审批模式。`tabs` 仅返回本任务租约标签，不暴露浏览器其他标签。
 
 ## 5. 页面请求
 
 `page_request(url, fields=[...])` 在已授权页面的隔离世界内发送同源 GET/HEAD，使用该页面的登录态。只返回指定 JSON 点路径对应字段，保留缺失字段、HTTP 状态和大小信息。
 
-- 使用浏览器两档模式，沿用 `js.evaluate`；智能审批需用户批准本次页面请求。
+- 沿用浏览器连接授权及 `js.evaluate`，页面请求直接执行；同源与凭据排斥检查仍生效。
 - 仅支持与当前页面完全同源的 HTTP(S) URL；拒绝含账号密码的 URL 和所有重定向。
 - 不接受自定义请求头、POST、请求体或凭据参数。
 - 默认响应上限 64 KiB，最大 128 KiB；流式读取超限即取消并返回 `response_too_large`。
@@ -114,7 +130,7 @@
 
 ## 7. 自动屏蔽、任务可视化与桌面入口
 
-- 扩展弹窗：从当前 manifest 显示版本，提供权限模式、当前任务控制和自动屏蔽；保留独立云端连接与云端授权；模拟鼠标和 Cookie 镜像设置仍由已有入口管理。
+- 扩展弹窗：从当前 manifest 显示版本，提供连接授权、当前任务控制和自动屏蔽，不提供审批模式切换；保留独立云端连接与云端授权；模拟鼠标和 Cookie 镜像设置仍由已有入口管理。
 - 自动屏蔽：`content-filter.mjs` 提供中英文规则，`content-shield.mjs` 按 CSS 文本块归并、定位和脱敏，`core.mjs` 与 `bridge.mjs` 在执行及回放出口核对设置、文档和图像遮罩。具体支持及拒绝边界见 [内容屏蔽](content-shield.md)。
 - 任务鼠标：`automation-overlay.mjs` 在执行和等待下一步时持续显示，沿目标位置平滑移动，接管、断连和终止后隐藏；截图期间隐藏浮层并恢复。可视动画不额外派发网页输入。
 - Cookie 镜像：Hermes 桌面插件页提供站点、目标、选项及状态。居中、不透明的原生 dialog 保留焦点隔离、Esc 和返回焦点；每次复制仍须源扩展批准。
@@ -137,6 +153,6 @@
 
 ## 9. 独立云端调用
 
-扩展弹窗提供连接码、配对管理和独立云端完全访问；Sites 私有插件提供设备、任务、动作与回执接口。本机使用 `cloud-link/runtime/` 调度六个页面执行线程及两个查询/取消线程，复用原 daemon、授权和结果投影。同页顺序、任务控制屏障和独立会话身份防止任务串用；浏览器账号状态仍共享。
+扩展弹窗提供连接码、配对管理和独立云端连接授权，授权后普通任务直接执行；Sites 私有插件提供设备、任务、动作与回执接口。本机使用 `cloud-link/runtime/` 调度六个页面执行线程及两个查询/取消线程，复用原 daemon、授权和结果投影。同页顺序、任务控制屏障和独立会话身份防止任务串用；浏览器账号状态仍共享。
 
 执行记录保留本机，云端只中转通信并保留路由/去重摘要。配置、权限、并发与回收说明见 [云端连接](cloud-connection.md)。
