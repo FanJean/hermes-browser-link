@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 from pathlib import Path
 import re
@@ -20,8 +21,27 @@ framing = native_tools._runtime.load_module(NATIVE_BRIDGE / 'host.py', 'browser_
 sys.path.remove(str(NATIVE_BRIDGE))
 
 
+CLOUD_FENCE_VERSION = 1
+
+
 def main():
-    home = Path(os.environ.get('HERMES_HOME', Path.home() / '.hermes'))
+    home = Path(os.environ.get('HERMES_HOME', Path.home() / '.hermes')).resolve()
+    # 中文注释：稳定根目录不是可 purge 的云目录；hello 前持共享锁，close 后才释放。
+    try:
+        descriptor = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return 3
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 4
+        return serve(home)
+    finally:
+        os.close(descriptor)
+
+
+def serve(home):
     if len(sys.argv) < 2 or sys.argv[1] not in framing._load_allowed_origins(home / 'plugin-data/browser-link-native'):
         return 3
     write_lock = threading.Lock()

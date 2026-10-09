@@ -643,6 +643,8 @@ def build_run_environment(work_path: Path, tree: Path, home: Path, scratch: Path
         'HERMES_PYTHON': py,
         'BROWSER_USE_CLI': browser_use_cli,
         'BROWSER_USE_CLI_SOURCE': str(browser_use_cli_source),
+        # 中文注释：只读固定提交的旧更新器，源码快照不复制或链接整个 Git 历史。
+        'BROWSER_LINK_RELEASE_HISTORY': str(ROOT),
     }
 
 

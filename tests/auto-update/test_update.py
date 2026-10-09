@@ -182,6 +182,18 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(json.loads(path.read_text()), {'status': 'failed'})
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    def test_cloud_gate_refusal_is_deferred_without_status_or_directory_writes(self):
+        data = self.home / 'plugin-data/browser-link-native'
+        before = {str(path.relative_to(self.root)): path.read_bytes() if path.is_file() else None
+                  for path in self.root.rglob('*')}
+        with mock.patch.object(updater, 'installer_modules', return_value=self.cli), \
+                mock.patch.object(updater, 'update', side_effect=self.cli.CloudGateError('blocked', 'maintenance')):
+            self.assertEqual(updater.run(self.args), 0)
+        after = {str(path.relative_to(self.root)): path.read_bytes() if path.is_file() else None
+                 for path in self.root.rglob('*')}
+        self.assertEqual(before, after)
+        self.assertFalse(data.exists())
+
     def test_concurrent_update_is_rejected_before_network_or_status_changes(self):
         # 中文注释：占用真实内核锁，验证更新和手动安装使用同一目录锁。
         data = self.home / 'plugin-data/browser-link-native'

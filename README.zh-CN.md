@@ -23,7 +23,7 @@
 | 持续任务鼠标 | 固定启用，任务执行与等待下一步时持续显示，目标间平滑移动，支持接管和系统减少动态效果。 |
 | 桌面 Cookie 镜像 | 在 Hermes 插件页选择站点和目标浏览器，每次复制都需在源扩展确认。 |
 | 云端调用 | 本机弹窗生成连接码，与自己的 Sites 插件配对；独立权限、多个对话任务、多页面并发及清理确认。见 [云端连接](docs/cloud-connection.md)。 |
-| 安装与更新 | 完整性校验、升级备份与失败回滚、手动升级、每小时检查正式版及空闲安装。 |
+| 安装与更新 | 一份共享程序、各 profile 引用，配置和数据独立；完整性校验、升级备份与失败回滚、每小时检查正式版及空闲安装。 |
 
 内容屏蔽只处理 Browser Link 发给 Agent 的输出，用户看到的网页保持原样；真实验证和错误信号保留。未支持的原始通道或不可检查页面结构会拒绝输出。详见 [屏蔽边界](docs/content-shield.md)、[完整功能](docs/features.md) 和 [模块索引](docs/product-modules.zh-CN.md)。
 
@@ -47,11 +47,11 @@
 2. 终端等待时，在浏览器打开 `chrome://extensions` 或 `edge://extensions` → 开发者模式 → 加载已解压的扩展程序 → 粘贴脚本打印的“扩展目录”绝对路径，不是 ZIP 解压目录。可用时脚本会复制路径到剪贴板；最多等待 3 分钟，显示“扩展已连接”才代表连接确认。Ctrl+C 只跳过等待；超时不会撤销安装，也不需要重装，加载扩展后运行打印的“检查 / Check”命令即可。
 3. 打开扩展弹窗，未连接时点“连接 Hermes”，在浏览器中确认连接授权（全部访问）；不再提供智能审批或模式切换。用已安装的 profile 重启 Hermes 桌面端，或新开 CLI 会话。弹窗显示“已连接”，桌面用户再确认“浏览器连接”页显示在线浏览器。
 
-首次安装不加 `--profile <名>` 就只启用 **default**，即使当前在命名 profile 的环境中也一样。已有多个 profile 可运行 `./install.sh --profile default --profile work`；仅安装到 `work` 用 `./install.sh --profile work`。扩展和原生连接共用，但每个 profile 都要单独启用。见 [多 profile](docs/installation.md#profiles--多-profile)。
+首次安装不加 `--profile <名>` 就只启用 **default**，即使当前在命名 profile 的环境中也一样。已有多个 profile 可运行 `./install.sh --profile default --profile work`；仅启用 `work` 用 `./install.sh --profile work`。共享根只有一份使用中的主程序，各命名 profile 直接引用，启停、权限和私有数据仍独立。升级迁移旧全副本，但不重新启用停用的 profile；保留升级备份及 Hermes Desktop 的应用级界面缓存。见 [多 profile](docs/installation.md#profiles--多-profile)。
 
 升级：在新包目录运行 `./install.sh --upgrade`（自动备份，失败回滚），再重载扩展和重启桌面端。卸载：`./install.sh --uninstall`（默认保留任务私有数据；加 `--purge` 才删除）。
 
-1.9.0 为正式稳定版，可进入自动更新通道。旧安装先手动升级一次，安装当前仓库的更新源。安装本次更新组件后运行 `./install.sh --auto-update install`，每小时检查正式 Release，在浏览器和 Hermes 退出后安装。更新后重载扩展再启动 Hermes。仅检查用 `--auto-update check`，关闭用 `--auto-update off`；立即更新用 `--update`。详见 [自动更新](docs/installation.md#automatic-updates--自动更新)。
+1.9.0 为正式稳定版，可进入自动更新通道。旧安装先手动升级一次；旧云入口按提示使用 `--upgrade --maintenance`，退出 Chrome、Edge 和 Hermes 后执行。安装本次更新组件后运行 `./install.sh --auto-update install`，每小时检查正式 Release，在浏览器和 Hermes 退出后安装。更新后重载扩展再启动 Hermes。仅检查用 `--auto-update check`，关闭用 `--auto-update off`；立即更新用 `--update`。详见 [自动更新](docs/installation.md#automatic-updates--自动更新)。
 
 [源码、手动安装、多 profile 与故障排查](docs/installation.md) · [代理安装提示词](docs/agent-install-prompt.md)。
 

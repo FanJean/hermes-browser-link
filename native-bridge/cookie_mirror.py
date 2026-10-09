@@ -154,10 +154,9 @@ class CookieMirrorService:
                   'options': dict(params.get('options', {})), 'status': 'preparing', 'deadline': time.monotonic() + TTL,
                   'expiresAt': time.time() + TTL, 'count': 0, 'rows': []}
             self.operations[transfer_id] = op
-            timer = threading.Timer(TTL, self.expire, args=(transfer_id,))
-            timer.daemon = True
-            timer.start()
-        threading.Thread(target=self.prepare, args=(op,), daemon=True).start()
+        # 中文注释：延时清理也先登记活动票据；不在 mirror 锁内取得 daemon 锁。
+        self.daemon._start_lifecycle_worker(self.expire, transfer_id, delay=TTL)
+        self.daemon._start_lifecycle_worker(self.prepare, op)
         return self.view(op)
 
     def live(self, op, status=None):
@@ -216,9 +215,9 @@ class CookieMirrorService:
                 raise MirrorDenied()
             op['status'] = 'executing' if params['approve'] else 'denied'
         if params['approve']:
-            threading.Thread(target=self.execute, args=(op,), daemon=True).start()
+            self.daemon._start_lifecycle_worker(self.execute, op)
         else:
-            threading.Thread(target=self.destroy, args=(op,), daemon=True).start()
+            self.daemon._start_lifecycle_worker(self.destroy, op)
         return self.view(op)
 
     def execute(self, op):
@@ -295,12 +294,13 @@ class CookieMirrorService:
         self.destroy(op)
 
     def expire(self, transfer_id):
-        self.relay.expire()
-        with self.lock:
-            # 中文注释：截止时先删除元信息，清理通知的等待不能延长可查询或可批准时间。
-            op = self.operations.pop(transfer_id, None)
-        if op:
-            self.fail(op, 'expired')
+        # 中文注释：先准入再删除元信息，直到旧连接上的清理请求完成才释放活动票据。
+        with self.daemon._lifecycle_activity():
+            self.relay.expire()
+            with self.lock:
+                op = self.operations.pop(transfer_id, None)
+            if op:
+                self.fail(op, 'expired')
 
     def disconnected(self, instance_id):
         with self.lock:
@@ -310,7 +310,7 @@ class CookieMirrorService:
                     op.update(status='failed', reason='disconnected')
                 self.relay.destroy(op['transferId'])
         for op in ops:
-            threading.Thread(target=self.destroy, args=(op,), daemon=True).start()
+            self.daemon._start_lifecycle_worker(self.destroy, op)
 
     def dispatch(self, params, owner):
         action = params.get('action')

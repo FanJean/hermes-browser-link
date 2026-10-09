@@ -100,6 +100,8 @@ def verify_package_layout(package, files):
 
 
 RELEASE_LINE=re.compile(r'^RELEASE V(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*): formal release built from commit [0-9a-f]{40}\. ')
+# 中文注释：独立前缀使旧自动更新器在调用旧 CLI 前拒绝共享包；对外仍返回既有正式状态。
+SHARED_RELEASE_LINE=re.compile(r'SHARED RELEASE V((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)): formal release built from commit [0-9a-f]{40}\. See docs/CHANGELOG\.md for the verified scope and stated limits\.\n')
 
 
 def release_status(package):
@@ -107,6 +109,9 @@ def release_status(package):
     status=(package/'RELEASE-STATUS.txt').read_text(encoding='utf8')
     if 'NOT FROZEN' in status and 'not a formal release' in status:
         return 'NOT FROZEN candidate only'
+    shared=SHARED_RELEASE_LINE.fullmatch(status)
+    if shared:
+        return 'RELEASE V'+shared.group(1)
     if RELEASE_LINE.match(status):
         return status.split(':',1)[0]
     raise ValueError('拒绝缺少候选或正式发布状态声明的安装包')

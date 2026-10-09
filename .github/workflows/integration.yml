@@ -12,6 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          # 中文注释：旧更新器回归读取固定已发布提交，不能只取当前 HEAD。
+          fetch-depth: 0
           persist-credentials: false
       # 中文注释：Hermes 是独立的固定测试依赖，不依赖维护者个人安装。
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

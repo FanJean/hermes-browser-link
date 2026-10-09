@@ -4,6 +4,7 @@
 
 > Check macOS, Chrome/Edge, `hermes --version` and Python 3.11+ (`python3 --version`). Download and extract the Release asset named `hermes-browser-link-<version>.zip` from https://github.com/fanjing188/hermes-browser-link/releases, not Source code (zip). The Release needs no Node.js, npm or Git. Only use source installation if requested; it needs Node.js 22.12+.
 > Inspect `hermes profile list` and select my intended profiles explicitly with repeated `--profile <name>` flags. Without flags the first install enables only default, even in a named profile environment. Do not create profiles without asking.
+> Use one program in the shared root with named-profile direct references; keep profile enablement, permissions and private data separate. Upgrade existing copies without re-enabling disabled profiles; do not add `--profile` flags merely to enumerate migration targets. Retain upgrade backups and Hermes Desktop's application-level UI cache.
 > Enter the extracted directory and run `./install.sh --wait-seconds 0` (or `bash install.sh --wait-seconds 0` if not executable); do not use sudo. Use `--upgrade` for an existing installation. Do not edit config.yaml by hand or stop running apps for me.
 > Report the enabled profiles and separate local program installation from browser connection. Stop and give me the printed Extension directory and Check command; wait while I load that directory at chrome://extensions or edge://extensions, confirm browser connection authorization (full access) myself in the extension, and restart Hermes Desktop with the intended profile (or start a new CLI session).
 > Do not click browser security or connection authorization confirmations for me. Ordinary task actions run directly after I authorize the connection; independent protections remain.
@@ -14,6 +15,7 @@
 
 > 检查 macOS、Chrome/Edge、`hermes --version` 和 Python 3.11+（`python3 --version`）。从 https://github.com/fanjing188/hermes-browser-link/releases 下载并解压名为 `hermes-browser-link-<版本>.zip` 的附件，不选 Source code (zip)。Release 无需 Node.js、npm 或 Git；只有我要求时才用源码安装，源码需要 Node.js 22.12+。
 > 用 `hermes profile list` 查看已有 profile，明确选择我要用的对象，重复加 `--profile <名>`。首次安装不加参数只启用 default，即使当前在命名 profile 环境里也一样。不要擅自创建 profile。
+> 使用共享根的一份程序和命名 profile 的直接引用，保留各自启停、权限和私有数据。升级迁移已有全副本时不重新启用停用项，不为枚举迁移对象而加 `--profile`。保留升级备份和 Hermes Desktop 的应用级界面缓存。
 > 进入解压目录，运行 `./install.sh --wait-seconds 0`，无执行权限时用 `bash install.sh --wait-seconds 0`，不要用 sudo。已有安装用 `--upgrade`。不手工编辑 config.yaml，也不替我退出正在运行的应用。
 > 报告启用的 profiles，分开说明程序安装和浏览器连接。停下来给我打印的“扩展目录”和“检查 / Check”命令，等我在 chrome://extensions 或 edge://extensions 加载该目录、亲自在扩展中确认浏览器连接授权（全部访问），用目标 profile 重启 Hermes 桌面端或新开 CLI 会话。
 > 不替我点击浏览器的安全或权限确认。

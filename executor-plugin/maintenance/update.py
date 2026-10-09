@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import json
@@ -242,24 +243,33 @@ def run(args):
                                       home / 'plugins/browser-link'])
     if not (home / 'plugins/browser-link/plugin.yaml').is_file():
         raise ValueError('尚未安装 Browser Link')
-    data.mkdir(parents=True, exist_ok=True, mode=0o700)
     # 中文注释：内核锁在异常退出后自动释放，手动更新与后台任务不会并发安装。
-    with cli.install_lock(data):
+    with cli.install_lock(data) if data.is_dir() else nullcontext():
         if args.schedule:
             configure_schedule(args.schedule, home, args.user_home, cli)
             print({'off': '自动更新已关闭。', 'check': '已开启每小时检查更新。',
                    'install': '已开启每小时检查，浏览器和 Hermes 退出后安装更新。'}[args.schedule])
             return 0
         try:
+            if not args.check:
+                with cli.root_fence(home), cli.cloud_gate(home, user_home=args.user_home, installed=(
+                        (home / 'plugins/browser-link/cloud_link/native_host.py').exists()
+                        or (home / 'plugin-data/browser-link-cloud').exists())):
+                    pass
             status = update(args, cli)
+        except cli.CloudGateError:
+            # 中文注释：安全门禁不是失败；不写 failed/status，也不为拒绝新建私有目录。
+            status = {'status': 'deferred'}
         except Exception:
+            data.mkdir(parents=True, exist_ok=True, mode=0o700)
             save_status(status_path, {'status': 'failed'})
             raise
-        save_status(status_path, status)
+        if status['status'] != 'deferred':
+            data.mkdir(parents=True, exist_ok=True, mode=0o700)
+            save_status(status_path, status)
         labels = {'no_stable_release': '暂无正式发布版本。', 'up_to_date': '当前已是最新版本。',
             'available': '发现新版本；运行 ./install.sh --update 安装。',
-            'deferred': ('发现新版本；请退出 Chrome、Edge 和 Hermes，下一次自动检查会重试。'
-                         if args.automatic else '发现新版本；请退出 Chrome、Edge 和 Hermes 后重新运行 --update。'),
+            'deferred': '更新已延后；退出 Chrome、Edge 和 Hermes 后重试。旧云入口须显式 --upgrade --maintenance。',
             'updated': '更新完成；下次打开浏览器后重载扩展并启动 Hermes。'}
         print(labels[status['status']])
         print(json.dumps(status, ensure_ascii=False))

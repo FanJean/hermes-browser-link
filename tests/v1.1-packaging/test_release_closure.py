@@ -9,10 +9,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import argparse
+import io
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRATCH = Path.home() / '.hermes/cache/scratch'
 ORIGIN = 'chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/'
+OLD_RELEASE = '8b91fe844aa22c92cef0955b80414466c9e2ac71'  # 已发布 v1.8.5 的固定 Git 源码，不是个人安装副本。
 # 中文注释：版本闭包校验包含锁文件和云端版本元数据，fixture 不能遗漏这些输入。
 INPUTS = ('package.json', 'package-lock.json', 'executor-plugin', 'native-bridge', 'native-extension',
           # 中文注释：云端 Native 入口与运行时也属于正式包的已提交输入。
@@ -83,6 +88,26 @@ class ReleaseClosure(unittest.TestCase):
         self.assertIn(commit, (self.output / 'RELEASE-STATUS.txt').read_text())
         self.assertEqual(load_installer().release_status(self.output), 'RELEASE V' + self.version)
 
+    def test_shared_release_parser_keeps_public_status_and_strict_metadata(self):
+        self.output.mkdir()
+        marker = self.output / 'RELEASE-STATUS.txt'
+        commit = self._commit_fixture()
+        status = (f'SHARED RELEASE V{self.version}: formal release built from commit {commit}. '
+                  'See docs/CHANGELOG.md for the verified scope and stated limits.\n')
+        installer = load_installer()
+        marker.write_text(status)
+        self.assertEqual(installer.release_status(self.output), 'RELEASE V' + self.version)
+        for invalid in (status.replace(commit, commit[:-1]), status.replace(commit, commit + 'a'),
+                        status.replace('V' + self.version, 'V01.9.0'),
+                        'prefix ' + status, status + 'extra', status.replace('SHARED RELEASE', 'SHARED')):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                marker.write_text(invalid)
+                installer.release_status(self.output)
+        marker.write_text(status.removeprefix('SHARED '))
+        self.assertEqual(installer.release_status(self.output), 'RELEASE V' + self.version)
+        marker.write_text('NOT FROZEN: development candidate, not a formal release.\n')
+        self.assertEqual(installer.release_status(self.output), 'NOT FROZEN candidate only')
+
     def test_formal_package_refuses_ignored_untracked_runtime_input(self):
         (self.source / '.gitignore').write_text('native-extension/unreviewed.mjs\n')
         self._commit_fixture()
@@ -91,6 +116,92 @@ class ReleaseClosure(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('input is not tracked', result.stderr)
         self.assertFalse(self.output.exists())
+
+    def test_fixed_old_updater_rejects_shared_formal_package_before_old_cli(self):
+        commit = self._commit_fixture()
+        result = subprocess.run(['node', str(ROOT / 'scripts/package-executor.mjs'),
+                                 '--source', str(self.source), '--output', str(self.output),
+                                 '--release', self.version], capture_output=True, text=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['releaseStatus'], 'RELEASE V' + self.version)
+        sums = load_installer().verify_package(self.output)
+        self.assertEqual(set(sums) | {'SHA256SUMS.json'},
+                         {p.relative_to(self.output).as_posix() for p in self.output.rglob('*') if p.is_file()})
+        for name, digest in sums.items():
+            self.assertEqual(hashlib.sha256((self.output / name).read_bytes()).hexdigest(), digest)
+        old_directory = self.root / 'old/maintenance'
+        old_directory.mkdir(parents=True)
+        old_hashes = {}
+        for relative in ('executor-plugin/maintenance/update.py', 'scripts/install-cli.py',
+                         'scripts/install-executor.py'):
+            content = subprocess.check_output(['git', '-C', os.environ.get('BROWSER_LINK_RELEASE_HISTORY', str(ROOT)), 'show', f'{OLD_RELEASE}:{relative}'])
+            (old_directory / Path(relative).name).write_bytes(content)
+            old_hashes[relative] = hashlib.sha256(content).hexdigest()
+        spec = importlib.util.spec_from_file_location('fixed_old_update', old_directory / 'update.py')
+        if spec is None or spec.loader is None:
+            raise RuntimeError('could not load fixed old updater')
+        updater = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(updater)
+        cli = updater.installer_modules()
+        self.assertFalse(cli.EXECUTOR.RELEASE_LINE.match((self.output / 'RELEASE-STATUS.txt').read_text()))
+        home, user_home = self.root / 'hermes', self.root / 'home'
+        plugin = home / 'plugins/browser-link'
+        plugin.mkdir(parents=True)
+        (plugin / 'plugin.yaml').write_bytes(subprocess.check_output(
+            ['git', '-C', os.environ.get('BROWSER_LINK_RELEASE_HISTORY', str(ROOT)), 'show', f'{OLD_RELEASE}:executor-plugin/plugin.yaml']))
+        before = (plugin / 'plugin.yaml').read_bytes()
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as zipped:
+            for file in sorted(self.output.rglob('*')):
+                if file.is_file():
+                    zipped.write(file, f'hermes-browser-link-{self.version}/' + file.relative_to(self.output).as_posix())
+        payload = archive.getvalue()
+        url = f'https://github.com/{updater.REPOSITORY}/releases/download/v{self.version}/hermes-browser-link-{self.version}.zip'
+        # 中文注释：只替换网络传输与外部空闲状态；API 解析、ZIP/包摘要、旧解析器及旧 CLI 保持真实逻辑。
+        api = json.dumps({'draft': False, 'prerelease': False, 'tag_name': 'v' + self.version,
+                          'assets': [{'name': f'hermes-browser-link-{self.version}.zip',
+                                      'browser_download_url': url, 'state': 'uploaded', 'size': len(payload),
+                                      'digest': 'sha256:' + hashlib.sha256(payload).hexdigest()}]}).encode()
+        def fetch(address, limit):
+            self.assertIn(address, (updater.API, url))
+            data = api if address == updater.API else payload
+            self.assertLessEqual(len(data), limit)
+            return data
+        calls = []
+        codes = {cli.EXECUTOR.verify_package.__code__: 'verify_package',
+                 cli.EXECUTOR.release_status.__code__: 'release_status', cli.run.__code__: 'old_cli.run'}
+        def guard(frame, event, arg):
+            if event == 'call' and frame.f_code in codes:
+                name = codes[frame.f_code]
+                calls.append(name)
+                if name == 'old_cli.run':
+                    raise AssertionError('旧更新器越过包校验进入旧 CLI；禁止执行安装')
+        previous = sys.getprofile()
+        try:
+            sys.setprofile(guard)
+            with mock.patch.object(updater, 'fetch', side_effect=fetch), \
+                    mock.patch.object(updater, 'applications_running', return_value=False), \
+                    self.assertRaisesRegex(ValueError, '拒绝缺少候选或正式发布状态声明'):
+                updater.update(argparse.Namespace(hermes_home=home, user_home=user_home, check=False), cli)
+        finally:
+            sys.setprofile(previous)
+        self.assertEqual(calls, ['verify_package', 'release_status'])
+        self.assertEqual((plugin / 'plugin.yaml').read_bytes(), before)
+        self.assertFalse(user_home.exists())
+        self.assertEqual({p.relative_to(home).as_posix() for p in home.rglob('*') if p.is_file()},
+                         {'plugins/browser-link/plugin.yaml'})
+        marker = self.output / 'RELEASE-STATUS.txt'
+        original = marker.read_bytes()
+        marker.write_bytes(original + b'changed metadata\n')
+        try:
+            for verifier in (load_installer(), cli.EXECUTOR):
+                with self.assertRaisesRegex(ValueError, '哈希不匹配: RELEASE-STATUS.txt'):
+                    verifier.verify_package(self.output)
+        finally:
+            marker.write_bytes(original)
+        print(json.dumps({'fixtureCommit': commit, 'oldReleaseCommit': OLD_RELEASE,
+                          'oldSourceSHA256': old_hashes, 'manifestFiles': len(sums),
+                          'archiveSHA256': hashlib.sha256(payload).hexdigest(), 'oldCalls': calls}))
 
     def test_package_includes_script_lane_and_no_hermes_patch_materials(self):
         # 当前发布包只保留共享浏览器桥接与脚本通道。
@@ -123,6 +234,18 @@ class ReleaseClosure(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('host_bridge.py', result.stderr)
         self.assertFalse(self.output.exists())
+
+    def test_package_describes_one_shared_program_with_isolated_profiles(self):
+        self.built()
+        instructions = (self.output / 'INSTALL.txt').read_text()
+        self.assertIn('One shared program at <shared-root>/plugins/browser-link', instructions)
+        self.assertIn('direct links', instructions)
+        self.assertIn('profile settings and private data remain separate', instructions)
+        readme = (self.output / 'README.md').read_text()
+        self.assertIn('one regular program directory', readme)
+        self.assertIn('Disabled profiles stay disabled', readme)
+        self.assertEqual((self.output / 'install-cli.py').read_bytes(),
+                         (self.output / 'browser-link/maintenance/install-cli.py').read_bytes())
 
     def test_missing_canonical_runtime_dependency_rejected_before_output(self):
         dependency = self.source / 'browser-interactions/index.mjs'

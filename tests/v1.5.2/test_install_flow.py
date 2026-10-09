@@ -1,6 +1,7 @@
 """中文注释：只操作临时 HOME 和打包快照，命令替身不访问真实 Hermes 或浏览器。"""
 import hashlib
 import argparse
+import fcntl
 import io
 import importlib.util
 import json
@@ -9,6 +10,10 @@ from pathlib import Path
 import shutil
 import signal
 import shlex
+import socket
+import sqlite3
+import select
+import struct
 import subprocess
 import sys
 import tempfile
@@ -31,13 +36,22 @@ def rehash(package):
 
 
 class InstallFlowTests(unittest.TestCase):
-    def auto_update(self, *, busy=None, corrupt=False, fail=False):
+    def auto_update(self, *, busy=None, corrupt=False, fail=False, profiles=('default',)):
         # 中文注释：以真实打包产物走完整下载校验及事务升级，网络和进程查询用替身。
-        self.invoke()
+        for name in profiles:
+            if name != 'default':
+                (self.hermes / 'profiles' / name).mkdir(parents=True)
+        self.invoke(*[arg for name in profiles for arg in ('--profile', name)])
+        self.auto_configs = {}
+        for name in profiles:
+            profile = self.hermes if name == 'default' else self.hermes / 'profiles' / name
+            config = profile / 'config.yaml'
+            config.write_bytes(b'plugins:\n  browser-link: false\ncapabilities: [tools.override]\n')
+            self.auto_configs[config] = config.read_bytes()
         # 中文注释：写入标记，后台再调用 open/pbcopy 会覆盖它们，测试可以直接发现。
         (self.root / 'opened.json').write_text('browser-handoff-preserved')
         (self.root / 'clipboard').write_text('clipboard-preserved')
-        module_spec = importlib.util.spec_from_file_location('flow_updater', ROOT / 'executor-plugin/maintenance/update.py')
+        module_spec = importlib.util.spec_from_file_location('flow_updater', self.plugin / 'maintenance/update.py')
         updater = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(updater)
         version = '9.0.0'
@@ -61,7 +75,17 @@ class InstallFlowTests(unittest.TestCase):
         release = {'version': version, 'url': 'fixed-test-url', 'size': len(payload),
                    'digest': hashlib.sha256(payload).hexdigest()}
         args = argparse.Namespace(hermes_home=self.hermes, user_home=self.home, check=False, automatic=True, schedule=None)
-        with mock.patch.dict(os.environ, {**self.env, 'TEST_ACTIVATE_FAIL': '1' if fail else '0'}), \
+        original_copy = shutil.copytree
+        failed = False
+        def copy_with_failure(source, destination, *args, **kwargs):
+            nonlocal failed
+            result = original_copy(source, destination, *args, **kwargs)
+            if fail and not failed and Path(destination) == self.plugin:
+                failed = True
+                raise OSError('injected root installation failure')
+            return result
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(shutil, 'copytree', side_effect=copy_with_failure), \
                 mock.patch.object(updater, 'latest_release', return_value=release), \
                 mock.patch.object(updater, 'fetch', return_value=payload), \
                 mock.patch.object(updater, 'applications_running', side_effect=busy or [False, False]):
@@ -78,10 +102,22 @@ class InstallFlowTests(unittest.TestCase):
         self.assertEqual((self.root / 'clipboard').read_text(), 'clipboard-preserved')
         self.assertTrue(list((self.hermes / 'plugin-backups').iterdir()))
 
+    def test_auto_update_installed_cli_keeps_shared_links_and_disabled_configs(self):
+        names = ('default', 'work', 'disabled', 'unregistered')
+        self.auto_update(profiles=names)
+        for config, contents in self.auto_configs.items():
+            self.assertEqual(config.read_bytes(), contents)
+        for name in names[1:]:
+            reference = self.hermes / 'profiles' / name / 'plugins/browser-link'
+            self.assertTrue(reference.is_symlink())
+            self.assertEqual(reference.resolve(), self.plugin)
+            self.assertIn('version: 9.0.0', (reference / 'plugin.yaml').read_text())
+        self.assertEqual(len((self.root / 'commands.jsonl').read_text().splitlines()), len(names))
+
     def test_auto_update_defers_if_browser_reopens_during_download(self):
         self.auto_update(busy=[False, True])
         self.assertNotIn('version: 9.0.0', (self.plugin / 'plugin.yaml').read_text())
-        self.assertEqual(json.loads((self.data / 'update-status.json').read_text())['status'], 'deferred')
+        self.assertFalse((self.data / 'update-status.json').exists())
         self.assertFalse((self.hermes / 'plugin-backups').exists())
 
     def test_auto_update_rejects_corrupt_inner_manifest_before_installing(self):
@@ -90,7 +126,7 @@ class InstallFlowTests(unittest.TestCase):
         self.assertNotIn('version: 9.0.0', (self.plugin / 'plugin.yaml').read_text())
         self.assertFalse((self.hermes / 'plugin-backups').exists())
 
-    def test_auto_update_activation_failure_restores_previous_installation(self):
+    def test_auto_update_installation_failure_restores_previous_installation(self):
         with self.assertRaises(Exception):
             self.auto_update(fail=True)
         self.assertNotIn('version: 9.0.0', (self.plugin / 'plugin.yaml').read_text())
@@ -156,6 +192,11 @@ with open(os.environ['TEST_LOG'], 'a') as log:
     log.write(json.dumps(args) + '\\n')
 if os.environ.get('TEST_CORRUPT') == '1':
     (profile / 'plugins/browser-link/runtime.py').write_text('# injected corruption\\n')
+if os.environ.get('TEST_REPLACE_REFERENCE') == '1':
+    import shutil
+    reference = profile / 'plugins/browser-link'
+    reference.unlink()
+    shutil.copytree(root / 'plugins/browser-link', reference)
 if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
     sys.exit(7)
 ''')
@@ -196,9 +237,21 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         self.data.mkdir(parents=True, exist_ok=True)
         for name in ('tasks.json', 'private.txt', 'token'):
             path = self.data / name
-            path.write_text('synthetic task-private value')
+            path.write_text(json.dumps({'version': 1, 'tasks': [{'id': 'kept', 'owner': 'synthetic',
+                            'state': 'closed', 'cleanupState': 'succeeded', 'workspaceState': 'closed', 'requestHistory': []}]})
+                            if name == 'tasks.json' else 'synthetic task-private value')
             path.chmod(0o600)
         return {path.name: path.read_bytes() for path in self.data.iterdir() if path.name in ('tasks.json', 'private.txt', 'token')}
+
+    def invoke_fault(self, patch_code, *args):
+        # 中文注释：在子进程中注入文件系统故障，仍运行真实打包 CLI 的 main。
+        script = ('import sys, runpy, pathlib, shutil, os\nfrom unittest import mock\n' + patch_code +
+                  '\nsys.argv = sys.argv[1:]\nrunpy.run_path(sys.argv[0], run_name="__main__")\n')
+        result = subprocess.run([sys.executable, '-c', script, str(self.package / 'install-cli.py'),
+                                 '--wait-seconds', '0', *args], env=self.env, capture_output=True,
+                                text=True, cwd=self.root, timeout=150)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
 
     def old_install(self):
         # 中文注释：模拟旧安装的版本面，扩展公钥与来源不变。
@@ -213,6 +266,178 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         shutil.copytree(self.release, self.package)
         return private
 
+    def cloud_journal(self, *, legacy=False, pending=False):
+        base = self.hermes / 'plugin-data/browser-link-cloud'
+        directory = base if legacy else base / 'instances/11111111-1111-4111-8111-111111111111'
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = directory / 'requests.sqlite'
+        with sqlite3.connect(path) as database:
+            database.execute('CREATE TABLE commands (id TEXT PRIMARY KEY, digest TEXT NOT NULL, result TEXT, delivered INTEGER NOT NULL DEFAULT 0)')
+            database.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY, task_id TEXT, last_used REAL NOT NULL, closed INTEGER NOT NULL DEFAULT 0, synced INTEGER NOT NULL DEFAULT 0)')
+            database.execute('INSERT INTO sessions VALUES(?,?,?,?,?)', ('offline', 'task', 1., 1, 0 if pending else 1))
+        path.chmod(0o600)
+        return path
+
+    def test_cloud_pending_legacy_and_other_instance_refuse_before_named_probe(self):
+        self.old_install()
+        self.named_shared_reference()
+        for legacy in (False, True):
+            path = self.cloud_journal(legacy=legacy, pending=True)
+            for args in (('--upgrade',), ('--uninstall', '--yes')):
+                self.assert_named_refusal_has_no_writes('Cloud state is active or unknown', *args)
+            path.unlink()
+
+    def test_cloud_native_lock_refuses_before_named_probe(self):
+        self.old_install()
+        self.named_shared_reference()
+        path = self.cloud_journal()
+        lock = path.parent / 'native.lock'
+        lock.touch(mode=0o600)
+        with lock.open('r') as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assert_named_refusal_has_no_writes('Cloud state is active or unknown', '--upgrade')
+
+    def test_cloud_unknown_schema_and_sidecar_refuse_without_writes(self):
+        self.old_install(); self.named_shared_reference()
+        path = self.cloud_journal()
+        sidecar = Path(str(path) + '-wal')
+        sidecar.touch(mode=0o600)
+        self.assert_named_refusal_has_no_writes('Cloud state is active or unknown', '--upgrade')
+        sidecar.unlink()
+        with sqlite3.connect(path) as database:
+            database.execute('ALTER TABLE sessions ADD COLUMN future INTEGER')
+        self.assert_named_refusal_has_no_writes('Cloud state is active or unknown', '--upgrade')
+
+    def test_unsupported_cloud_install_refuses_normal_upgrade_without_writes(self):
+        self.old_install()
+        self.named_shared_reference()
+        state = self.data / 'install-state.json'
+        value = json.loads(state.read_text())
+        value.pop('cloudFence', None)
+        state.write_text(json.dumps(value))
+        self.assert_named_refusal_has_no_writes('--maintenance', '--upgrade')
+
+    def real_head_cloud_install(self):
+        # 中文注释：固定 HEAD 旧源码，不把 old_install 的版本字符串夹具冒充旧宿主。
+        private = self.old_install()
+        target = self.plugin / 'cloud_link'
+        for path in target.rglob('*.py'):
+            relative = path.relative_to(target).as_posix()
+            content = subprocess.check_output(['git', 'show',
+                'f2b0371b289552d1431332ee9dbe502cc8671c0a:cloud-link/' + relative],
+                cwd=os.environ.get('BROWSER_LINK_RELEASE_HISTORY', ROOT))
+            path.write_bytes(content)
+        state = self.data / 'install-state.json'
+        value = json.loads(state.read_text()); value.pop('cloudFence', None)
+        state.write_text(json.dumps(value))
+        return private
+
+    def maintenance_invoke(self, *, fail=False, paused_probe=False, running_app=False, ok=True):
+        # 中文注释：进程表仅保留本隔离夹具的真实宿主；不把用户正在使用的应用当测试对象。
+        script = '''import os,sys,subprocess,runpy,pathlib
+from unittest import mock
+original=subprocess.run
+def run(argv,*args,**kwargs):
+    result=original(argv,*args,**kwargs)
+    if argv==['/bin/ps','-axo','command=']:
+        root=os.environ['HERMES_HOME']
+        result.stdout='\\n'.join(line for line in result.stdout.splitlines() if
+            root+'/plugins/browser-link/cloud_link/native_host.py' in line or
+            root+'/plugin-data/browser-link-cloud/com.hermes.browser_link.cloud' in line)
+        if os.environ.get('TEST_MAINTENANCE_APP')=='1':
+            result.stdout+='\\n/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    return result
+mock.patch.object(subprocess,'run',side_effect=run).start()
+'''
+        if paused_probe:
+            script += '''original_open=os.open
+def open_node(path,*args,**kwargs):
+    if str(path).endswith('/native.lock'):
+        launcher=pathlib.Path(os.environ['HERMES_HOME'])/'plugin-data/browser-link-cloud/com.hermes.browser_link.cloud'
+        result=original([str(launcher),'chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/'],input=b'',capture_output=True,timeout=5)
+        assert result.returncode==4,result
+        pathlib.Path(os.environ['TEST_OPEN']).with_name('paused-launch-proof').write_text('paused-launch-blocked')
+    return original_open(path,*args,**kwargs)
+mock.patch.object(os,'open',side_effect=open_node).start()
+'''
+        script += "sys.argv=sys.argv[1:]\nrunpy.run_path(sys.argv[0],run_name='__main__')\n"
+        result = subprocess.run([sys.executable, '-c', script, str(self.package / 'install-cli.py'),
+            '--upgrade', '--maintenance', '--wait-seconds', '0', *(['--profile', 'default'] if fail else [])],
+            env={**self.env, 'TEST_MAINTENANCE_APP': '1' if running_app else '0',
+                 **({'TEST_ACTIVATE_FAIL': '1'} if fail else {})},
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0 if ok else 1, result.stdout + result.stderr)
+        return result
+
+    def start_real_old_host(self, *, hello=False):
+        host = self.plugin / 'cloud_link/native_host.py'
+        child = subprocess.Popen([sys.executable, str(host), ORIGIN], env=self.env,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert child.stdin is not None and child.stdout is not None and child.stderr is not None
+        payload = json.dumps({'id': 'loaded', 'method': 'hello' if hello else 'status',
+            'params': {'instance_id': '11111111-1111-4111-8111-111111111111', 'browser': 'Chrome'} if hello else {}}).encode()
+        child.stdin.write(struct.pack('<I', len(payload)) + payload); child.stdin.flush()
+        self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+        size = struct.unpack('<I', child.stdout.read(4))[0]
+        reply = json.loads(child.stdout.read(size))
+        self.assertIn('result' if hello else 'error', reply)
+        return child
+
+    def stop_fixture_host(self, child):
+        child.stdin.close(); child.wait(timeout=10)
+        self.assertEqual(child.returncode, 0, child.stderr.read().decode())
+        child.stdout.close(); child.stderr.close()
+
+    def test_real_head_prehello_host_maintenance_refuses_and_restores_launcher(self):
+        self.real_head_cloud_install()
+        launcher = self.hermes / 'plugin-data/browser-link-cloud' / (HOST + '.cloud')
+        before = (launcher.read_bytes(), launcher.stat().st_mode, launcher.stat().st_ino)
+        child = self.start_real_old_host()
+        try:
+            result = self.maintenance_invoke(ok=False)
+            self.assertIn('Cloud state is active or unknown', result.stderr)
+            self.assertEqual((launcher.read_bytes(), launcher.stat().st_mode, launcher.stat().st_ino), before)
+            self.assertIsNone(child.poll())
+            self.assertFalse((self.hermes / 'plugin-backups').exists())
+        finally:
+            self.stop_fixture_host(child)
+
+    def test_maintenance_requires_apps_closed_before_launcher_pause(self):
+        self.real_head_cloud_install()
+        before = self.inventory()
+        self.maintenance_invoke(running_app=True, ok=False)
+        self.assertEqual(self.inventory(), before)
+
+    def test_real_head_offline_idle_first_maintenance_migration_blocks_launch(self):
+        private = self.real_head_cloud_install()
+        child = self.start_real_old_host(hello=True); self.stop_fixture_host(child)
+        base = self.hermes / 'plugin-data/browser-link-cloud'
+        pairing = base / 'instances/11111111-1111-4111-8111-111111111111/pairing.json'
+        pairing.write_bytes(b'opaque synthetic private bytes'); pairing.chmod(0o600)
+        original = pairing.read_bytes()
+        launcher = base / (HOST + '.cloud'); original_launcher = launcher.read_bytes()
+        self.maintenance_invoke(paused_probe=True)
+        self.assertEqual((self.root / 'paused-launch-proof').read_text(), 'paused-launch-blocked')
+        self.assertEqual(pairing.read_bytes(), original); self.assert_private_kept(private)
+        self.assertIn('cloudFence', json.loads((self.data / 'install-state.json').read_text()))
+        backup = next((self.hermes / 'plugin-backups').iterdir())
+        index = json.loads((backup / 'paths.json').read_text())
+        saved = next(Path(row['backup']) for row in index if row['path'] == str(launcher))
+        self.assertEqual(saved.read_bytes(), original_launcher)
+        self.assertNotIn(b'exit(4)', launcher.read_bytes())
+        self.invoke('--upgrade'); self.invoke('--uninstall', '--yes')
+
+    def test_real_head_maintenance_transaction_failure_restores_original_launcher_and_private(self):
+        private = self.real_head_cloud_install()
+        child = self.start_real_old_host(hello=True); self.stop_fixture_host(child)
+        launcher = self.hermes / 'plugin-data/browser-link-cloud' / (HOST + '.cloud')
+        before = launcher.read_bytes(), launcher.stat().st_mode
+        original = (self.plugin / 'cloud_link/native_host.py').read_bytes()
+        self.maintenance_invoke(fail=True, ok=False)
+        self.assertEqual((launcher.read_bytes(), launcher.stat().st_mode), before)
+        self.assertEqual((self.plugin / 'cloud_link/native_host.py').read_bytes(), original)
+        self.assert_private_kept(private)
+
     def assert_private_kept(self, private):
         for name, contents in private.items():
             self.assertEqual((self.data / name).read_bytes(), contents)
@@ -220,7 +445,8 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
 
     def inventory(self):
         # 中文注释：记录内容与权限，dry-run 不得生成临时输出、日志、剪贴板文件或缓存。
-        return {str(path.relative_to(self.root)): (path.stat().st_mode, path.read_bytes() if path.is_file() else None)
+        return {str(path.relative_to(self.root)): (path.lstat().st_mode, os.readlink(path) if path.is_symlink()
+                                                  else path.read_bytes() if path.is_file() else None)
                 for path in self.root.rglob('*')}
 
     def test_first_install_release_needs_no_node_and_copies_absolute_extension_path(self):
@@ -299,7 +525,8 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         old_config = (self.data / 'host-config.json').read_bytes()
         profile_config = self.hermes / 'config.yaml'
         profile_config.write_text('original profile settings\n')
-        result = self.invoke('--upgrade', ok=False, env={'TEST_CORRUPT': '1'})
+        (self.hermes / 'profiles/new').mkdir(parents=True)
+        result = self.invoke('--upgrade', '--profile', 'new', ok=False, env={'TEST_CORRUPT': '1'})
         self.assertIn('rolled back', result.stderr)
         self.assertEqual((self.plugin / 'runtime.py').read_bytes(), old_plugin)
         self.assertEqual((self.extension / 'manifest.json').read_bytes(), old_extension)
@@ -309,7 +536,8 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
 
     def test_upgrade_activation_failure_rolls_back(self):
         self.old_install()
-        result = self.invoke('--upgrade', ok=False, env={'TEST_ACTIVATE_FAIL': '1'})
+        (self.hermes / 'profiles/new').mkdir(parents=True)
+        result = self.invoke('--upgrade', '--profile', 'new', ok=False, env={'TEST_ACTIVATE_FAIL': '1'})
         self.assertIn('rolled back', result.stderr)
         self.assertIn('version: 1.5.1', (self.plugin / 'plugin.yaml').read_text())
 
@@ -499,6 +727,70 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         self.assertTrue((self.plugin / 'plugin.yaml').is_file())
         self.assertEqual((self.plugin / 'plugin.yaml').read_bytes(), (ROOT / 'executor-plugin/plugin.yaml').read_bytes())
 
+    def test_fresh_four_profiles_share_one_regular_program_directory(self):
+        names = ['default', 'work', 'disabled', 'unregistered']
+        for name in names[1:]:
+            (self.hermes / 'profiles' / name).mkdir(parents=True)
+        self.invoke(*[arg for name in names for arg in ('--profile', name)])
+        self.assertFalse(self.plugin.is_symlink())
+        for name in names[1:]:
+            reference = self.hermes / 'profiles' / name / 'plugins/browser-link'
+            self.assertTrue(reference.is_symlink())
+            self.assertEqual(os.readlink(reference), str(self.plugin))
+            self.assertEqual(reference.resolve(), self.plugin)
+        self.assertEqual((self.package / 'install-cli.py').read_bytes(),
+                         (self.plugin / 'maintenance/install-cli.py').read_bytes())
+
+    def test_mixed_unregistered_disabled_profiles_migrate_without_enabling_them(self):
+        self.old_install()
+        original = {}
+        for name in ('default', 'copied', 'linked', 'disabled'):
+            profile = self.hermes if name == 'default' else self.hermes / 'profiles' / name
+            profile.mkdir(parents=True, exist_ok=True)
+            config = profile / 'config.yaml'
+            config.write_bytes(b'plugins:\n  browser-link: false\ncapabilities: [tools.override]\n')
+            private = profile / 'plugin-data/profile-private'
+            private.mkdir(parents=True)
+            (private / 'keep').write_bytes(name.encode())
+            original[config] = config.read_bytes()
+            original[private / 'keep'] = (private / 'keep').read_bytes()
+            if name == 'default':
+                continue
+            reference = profile / 'plugins/browser-link'
+            reference.parent.mkdir()
+            if name == 'linked':
+                reference.symlink_to('../../../plugins/browser-link')
+            else:
+                shutil.copytree(self.plugin, reference)
+        linked = self.hermes / 'profiles/linked/plugins/browser-link'
+        readlink = os.readlink(linked)
+        inode = linked.lstat().st_ino
+        (self.hermes / 'profiles/new').mkdir()
+        result = self.invoke('--upgrade', '--profile', 'new')
+        self.assertIn('Program upgraded', result.stdout)
+        self.assertIn('enabled: new', result.stdout)
+        for path, contents in original.items():
+            self.assertEqual(path.read_bytes(), contents)
+        for name in ('copied', 'linked', 'disabled', 'new'):
+            reference = self.hermes / 'profiles' / name / 'plugins/browser-link'
+            self.assertTrue(reference.is_symlink())
+            self.assertEqual(reference.resolve(), self.plugin)
+        self.assertEqual(os.readlink(linked), readlink)
+        self.assertEqual(linked.lstat().st_ino, inode)
+        calls = [json.loads(line) for line in (self.root / 'commands.jsonl').read_text().splitlines()]
+        self.assertEqual([args[1] for args in calls], ['default', 'new'])
+        references = {name: (self.hermes / 'profiles' / name / 'plugins/browser-link').lstat().st_ino
+                      for name in ('copied', 'linked', 'disabled', 'new')}
+        self.invoke('--upgrade')
+        for name, previous_inode in references.items():
+            self.assertEqual((self.hermes / 'profiles' / name / 'plugins/browser-link').lstat().st_ino, previous_inode)
+        self.assertEqual(len((self.root / 'commands.jsonl').read_text().splitlines()), 2)
+        state = json.loads((self.data / 'install-state.json').read_text())
+        self.assertEqual(set(state['profiles']), {'default', 'copied', 'linked', 'disabled', 'new'})
+        self.invoke('--uninstall', '--yes')
+        for name in references:
+            self.assertFalse((self.hermes / 'profiles' / name / 'plugins/browser-link').is_symlink())
+
     def test_multiple_profiles_are_installed_enabled_upgraded_and_uninstalled(self):
         (self.hermes / 'profiles/work').mkdir(parents=True)
         result = self.invoke('--profile', 'default', '--profile', 'work', '--profile', 'work')
@@ -512,10 +804,96 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         self.invoke('--uninstall', '--yes')
         self.assertFalse(named.exists())
 
+    def migration_fixture(self):
+        private = self.old_install()
+        copied = self.hermes / 'profiles/copied/plugins/browser-link'
+        copied.parent.mkdir(parents=True)
+        shutil.copytree(self.plugin, copied)
+        linked = self.hermes / 'profiles/linked/plugins/browser-link'
+        linked.parent.mkdir(parents=True)
+        linked.symlink_to('../../../plugins/browser-link')
+        (self.hermes / 'profiles/new').mkdir()
+        configs = []
+        for name in ('default', 'copied', 'linked', 'new'):
+            profile = self.hermes if name == 'default' else self.hermes / 'profiles' / name
+            config = profile / 'config.yaml'
+            config.write_bytes(b'original capability and disabled settings\n')
+            configs.append(config)
+        return private, copied, linked, configs
+
+    def assert_migration_restored(self, fixture):
+        private, copied, linked, configs = fixture
+        self.assertTrue(linked.is_symlink())
+        self.assertEqual(os.readlink(linked), '../../../plugins/browser-link')
+        self.assertTrue(copied.is_dir())
+        self.assertFalse(copied.is_symlink())
+        self.assertIn('version: 1.5.1', (copied / 'plugin.yaml').read_text())
+        self.assertFalse((self.hermes / 'profiles/new/plugins/browser-link').exists())
+        for config in configs:
+            self.assertEqual(config.read_bytes(), b'original capability and disabled settings\n')
+        self.assert_private_kept(private)
+        backup = sorted((self.hermes / 'plugin-backups').iterdir())[-1]
+        index = json.loads((backup / 'paths.json').read_text())
+        row = next(row for row in index if row['path'] == str(linked))
+        self.assertEqual(row.get('kind'), 'symlink')
+        self.assertEqual(row.get('readlink'), '../../../plugins/browser-link')
+        saved = Path(row['backup'])
+        self.assertTrue(saved.is_symlink())
+        self.assertEqual(os.readlink(saved), '../../../plugins/browser-link')
+
+    def test_migration_activation_rollback_keeps_link_text_and_node_kind(self):
+        fixture = self.migration_fixture()
+        self.invoke('--upgrade', '--profile', 'new', ok=False, env={'TEST_ACTIVATE_FAIL': '1'})
+        self.assert_migration_restored(fixture)
+
+    def test_activation_cannot_replace_shared_reference_with_program_copy(self):
+        fixture = self.migration_fixture()
+        self.invoke('--upgrade', '--profile', 'new', ok=False, env={'TEST_REPLACE_REFERENCE': '1'})
+        self.assert_migration_restored(fixture)
+
+    def test_migration_filesystem_failure_points_restore_original_nodes(self):
+        fixture = self.migration_fixture()
+        stages = [('root install', 'shutil', 'copytree', str(self.plugin)),
+                  ('extension install', 'shutil', 'copytree', str(self.extension)),
+                  ('link creation', 'pathlib.Path', 'symlink_to', str(self.hermes / 'profiles/new/plugins/browser-link')),
+                  ('state write', 'pathlib.Path', 'write_text', str(self.data / 'install-state.json'))]
+        for stage, owner, method, destination in stages:
+            with self.subTest(stage=stage):
+                patch_code = f'''original = {owner}.{method}
+failed = False
+def fail_once(*args, **kwargs):
+    global failed
+    result = original(*args, **kwargs)
+    target = args[1] if {method!r} == 'copytree' else args[0]
+    if not failed and str(target) == {destination!r}:
+        failed = True
+        raise OSError('injected filesystem failure')
+    return result
+mock.patch.object({owner}, {method!r}, new=fail_once).start()'''
+                result = self.invoke_fault(patch_code, '--upgrade', '--profile', 'new')
+                self.assertIn('rolled back', result.stderr)
+                self.assert_migration_restored(fixture)
+        self.invoke('--upgrade', '--profile', 'new', ok=False, env={'TEST_CORRUPT': '1'})
+        self.assert_migration_restored(fixture)
+
     def test_missing_profile_is_rejected_before_writes(self):
         before = self.inventory()
         result = self.invoke('--profile', 'work', ok=False)
         self.assertIn('Missing profile', result.stderr)
+        self.assertEqual(self.inventory(), before)
+
+    def test_symlink_capability_failure_has_no_target_changes_or_copy_fallback(self):
+        (self.hermes / 'profiles/work').mkdir(parents=True)
+        before = self.inventory()
+        result = self.invoke_fault('mock.patch.object(pathlib.Path, "symlink_to", side_effect=OSError("unavailable")).start()',
+                                   '--profile', 'work')
+        self.assertIn('Symlink unavailable', result.stderr)
+        self.assertEqual(self.inventory(), before)
+        self.invoke('--profile', 'default', '--profile', 'work')
+        before = self.inventory()
+        result = self.invoke_fault('mock.patch.object(pathlib.Path, "symlink_to", side_effect=OSError("unavailable")).start()',
+                                   '--upgrade')
+        self.assertIn('Symlink unavailable', result.stderr)
         self.assertEqual(self.inventory(), before)
 
     def test_connection_wait_detects_doctor_and_desktop_is_reported(self):
@@ -531,6 +909,234 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         self.assertIn('Check: ', result.stdout)
         self.assertTrue((self.plugin / 'plugin.yaml').is_file())
 
+    def test_active_or_unknown_persisted_state_refuses_upgrade_and_uninstall_without_changes(self):
+        self.old_install()
+        cases = [json.dumps({'version': 1, 'tasks': [{'id': 'task', 'owner': 'synthetic', 'state': state}]})
+                 for state in ('ready', 'paused', 'pending_approval', 'needs_sync', 'unrecognized')]
+        cases += ['invalid json', json.dumps({'version': 2, 'tasks': []}),
+                  json.dumps({'version': 1, 'tasks': [{'state': 'closed'}]}),
+                  json.dumps({'version': 1, 'tasks': [{'id': 'task', 'owner': 'synthetic', 'state': 'closed',
+                                                      'currentOperation': {'state': 'running'}}]})]
+        cases += [json.dumps({'version': 1, 'tasks': [{'id': 'task', 'owner': 'synthetic', 'state': 'closed',
+                                                      'cleanupState': state}]}) for state in ('pending', 'unknown', 'failed')]
+        cases += [json.dumps({'version': 1, 'tasks': [{'id': 'task', 'owner': 'synthetic', 'state': 'closed',
+                                                      'cleanupState': 'succeeded', 'currentOperation': {'state': state}}]})
+                  for state in ('pending', 'unrecognized')]
+        for payload in cases:
+            (self.data / 'tasks.json').write_text(payload)
+            for args in (('--upgrade',), ('--uninstall', '--yes')):
+                with self.subTest(payload=payload, args=args):
+                    before = self.inventory()
+                    result = self.invoke(*args, ok=False)
+                    self.assertIn('Task state is active or unknown', result.stderr)
+                    self.assertEqual(self.inventory(), before)
+
+    def test_orphan_bridge_socket_refuses_upgrade_without_changes(self):
+        self.old_install()
+        socket = self.data / 'bridge.sock'
+        socket.write_bytes(b'unknown socket marker')
+        socket.chmod(0o600)
+        before = self.inventory()
+        result = self.invoke('--upgrade', ok=False)
+        self.assertIn('Cannot verify bridge process', result.stderr)
+        self.assertEqual(self.inventory(), before)
+
+    def test_daemon_lifecycle_lock_refuses_upgrade_before_any_changes(self):
+        self.old_install()
+        lock = self.data / 'daemon.lock'
+        lock.touch(mode=0o600)
+        with lock.open('r+') as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            before = self.inventory()
+            result = self.invoke('--upgrade', ok=False)
+            self.assertIn('Bridge activity cannot be verified', result.stderr)
+            self.assertEqual(self.inventory(), before)
+
+    def test_stale_pid_with_live_unknown_socket_refuses_changes_without_signalling(self):
+        self.old_install()
+        pid = self.data / 'daemon.pid'
+        pid.write_text('12345')
+        pid.chmod(0o600)
+        endpoint = str((self.data / 'bridge.sock').relative_to(self.root))
+        previous_cwd = Path.cwd()
+        try:
+            # 中文注释：使用相对地址避开 macOS AF_UNIX 路径长度限制，仅在私有夹具中监听。
+            os.chdir(self.root)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.settimeout(0.2)
+                listener.bind(endpoint)
+                listener.listen(1)
+                (self.data / 'bridge.sock').chmod(0o600)
+                for args in (('--upgrade',), ('--uninstall', '--yes')):
+                    with self.subTest(args=args):
+                        before = self.inventory()
+                        result = self.invoke(*args, ok=False, env={'TEST_VERSION_WRITES': '1'})
+                        self.assertIn('Cannot verify bridge process', result.stderr)
+                        self.assertEqual(self.inventory(), before)
+                        self.assertFalse((self.data / 'daemon.lock').exists())
+                        guarded = self.invoke_fault(
+                            'import socket\n'
+                            'mock.patch.object(os, "kill", side_effect=AssertionError("must not signal")).start()\n'
+                            'mock.patch.object(os, "killpg", side_effect=AssertionError("must not signal")).start()\n'
+                            'mock.patch.object(socket.socket, "connect", side_effect=AssertionError("must not connect")).start()',
+                            *args)
+                        self.assertIn('Cannot verify bridge process', guarded.stderr)
+                        self.assertNotIn('must not signal', guarded.stderr)
+                        self.assertNotIn('must not connect', guarded.stderr)
+                        self.assertEqual(self.inventory(), before)
+                        with self.assertRaises(socket.timeout):
+                            listener.accept()
+                        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                            client.settimeout(1)
+                            client.connect(endpoint)
+                            connection, _ = listener.accept()
+                            with connection:
+                                connection.settimeout(1)
+                                client.sendall(b'alive')
+                                self.assertEqual(connection.recv(5), b'alive')
+        finally:
+            os.chdir(previous_cwd)
+
+    def assert_named_refusal_has_no_writes(self, expected, *args):
+        # 中文注释：审计真实写调用，不能用最终目录清单掩盖瞬时建链探测。
+        before = self.inventory()
+        parent = self.hermes / 'profiles/work/plugins'
+        mtime = parent.stat().st_mtime_ns
+        self.env['TEST_VERSION_WRITES'] = '1'
+        result = self.invoke_fault('''import atexit, json, socket
+changes = []
+roots = (os.environ['HERMES_HOME'], os.environ['HOME'])
+def target(value):
+    return isinstance(value, (str, bytes)) and any(
+        os.fsdecode(value) == root or os.fsdecode(value).startswith(root + '/') for root in roots)
+def audit(event, args):
+    if event in {'os.mkdir', 'os.symlink', 'os.remove', 'os.rmdir', 'os.rename', 'os.chmod'}:
+        if any(target(value) for value in args):
+            changes.append([event, [str(value) for value in args]])
+    if event == 'open' and target(args[0]):
+        if args[2] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            changes.append([event, [str(value) for value in args]])
+sys.addaudithook(audit)
+atexit.register(lambda: print('AUDIT=' + json.dumps(changes), file=sys.stderr))
+mock.patch.object(os, 'kill', side_effect=AssertionError('must not signal')).start()
+mock.patch.object(os, 'killpg', side_effect=AssertionError('must not signal')).start()
+mock.patch.object(socket.socket, 'connect', side_effect=AssertionError('must not connect')).start()
+mock.patch.object(socket.socket, 'connect_ex', side_effect=AssertionError('must not connect')).start()
+''', *args)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(expected, result.stderr)
+        self.assertNotIn('must not signal', result.stderr)
+        self.assertNotIn('must not connect', result.stderr)
+        self.assertEqual(self.inventory(), before)
+        self.assertFalse((self.hermes / 'version-cache').exists())
+        self.assertFalse((self.hermes / 'plugin-backups').exists())
+        events = json.loads(next(line[6:] for line in result.stderr.splitlines() if line.startswith('AUDIT=')))
+        self.assertEqual(events, [], result.stderr)
+        self.assertEqual(parent.stat().st_mtime_ns, mtime)
+
+    def named_shared_reference(self):
+        reference = self.hermes / 'profiles/work/plugins/browser-link'
+        reference.parent.mkdir(parents=True)
+        reference.symlink_to('../../../plugins/browser-link')
+
+    def test_named_stale_pid_live_socket_refuses_before_probe_writes(self):
+        self.old_install()
+        self.named_shared_reference()
+        pid = self.data / 'daemon.pid'
+        pid.write_text('12345')
+        pid.chmod(0o600)
+        endpoint = str((self.data / 'bridge.sock').relative_to(self.root))
+        previous_cwd = Path.cwd()
+        try:
+            # 中文注释：仅私有夹具监听，短相对路径保留 macOS 的安全长度边界。
+            os.chdir(self.root)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(endpoint)
+                listener.listen(1)
+                listener.settimeout(0.1)
+                (self.data / 'bridge.sock').chmod(0o600)
+                inode = (self.data / 'bridge.sock').lstat().st_ino
+                for args in (('--upgrade',), ('--uninstall', '--yes')):
+                    with self.subTest(args=args):
+                        self.assert_named_refusal_has_no_writes('Cannot verify bridge process', *args)
+                        self.assertFalse((self.data / 'daemon.lock').exists())
+                        self.assertEqual((self.data / 'bridge.sock').lstat().st_ino, inode)
+                        with self.assertRaises(socket.timeout):
+                            listener.accept()
+                        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                            client.settimeout(1)
+                            client.connect(endpoint)
+                            connection, _ = listener.accept()
+                            with connection:
+                                client.sendall(b'alive')
+                                connection.settimeout(1)
+                                self.assertEqual(connection.recv(5), b'alive')
+        finally:
+            os.chdir(previous_cwd)
+
+    def test_named_native_activity_refuses_before_probe_writes(self):
+        self.old_install()
+        self.named_shared_reference()
+        tasks = self.data / 'tasks.json'
+        original = tasks.read_bytes()
+        cases = ['invalid json', json.dumps({'version': 2, 'tasks': []}),
+                 json.dumps({'version': 1, 'tasks': [{'id': 'task', 'owner': 'synthetic', 'state': 'ready'}]})]
+        for payload in cases:
+            tasks.write_text(payload)
+            for args in (('--upgrade',), ('--uninstall', '--yes')):
+                with self.subTest(payload=payload, args=args):
+                    self.assert_named_refusal_has_no_writes('Task state is active or unknown', *args)
+                    self.assertFalse((self.data / 'daemon.lock').exists())
+        tasks.write_bytes(original)
+        pid = self.data / 'daemon.pid'
+        pid.write_text('12345')
+        pid.chmod(0o600)
+        for process, expected in [('unrelated-process', 'Cannot verify bridge process'),
+                                  (f'{sys.executable} {self.plugin}/native_bridge/daemon.py --home {self.hermes}',
+                                   'Bridge is running')]:
+            self.stub('ps', '#!/bin/sh\nprintf "%s\\n" ' + shlex.quote(process) + '\n')
+            for args in (('--upgrade',), ('--uninstall', '--yes')):
+                with self.subTest(process=process, args=args):
+                    self.assert_named_refusal_has_no_writes(expected, *args)
+                    self.assertFalse((self.data / 'daemon.lock').exists())
+        pid.unlink()
+        self.stub('ps', '#!/bin/sh\nexit 1\n')
+        lock = self.data / 'daemon.lock'
+        lock.touch(mode=0o600)
+        with lock.open('r+') as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for args in (('--upgrade',), ('--uninstall', '--yes')):
+                with self.subTest(args=args, held_lock=True):
+                    self.assert_named_refusal_has_no_writes('Bridge activity cannot be verified', *args)
+
+    def test_stale_pid_without_socket_allows_upgrade(self):
+        private = self.old_install()
+        pid = self.data / 'daemon.pid'
+        pid.write_text('12345')
+        pid.chmod(0o600)
+        self.assertFalse((self.data / 'bridge.sock').exists())
+        self.invoke('--upgrade')
+        self.assertIn(f'version: {VERSION}', (self.plugin / 'plugin.yaml').read_text())
+        self.assertEqual(pid.read_text(), '12345')
+        self.assertEqual(pid.stat().st_mode & 0o777, 0o600)
+        self.assert_private_kept(private)
+
+    def test_verified_live_daemon_refused_without_signalling_or_task_stop(self):
+        self.old_install()
+        pid = self.data / 'daemon.pid'
+        pid.write_text('12345')
+        pid.chmod(0o600)
+        doctor = self.plugin / 'native_bridge/doctor.py'
+        doctor.write_text('def probe(home): return {"ok": True}\n')
+        self.stub('ps', '#!/bin/sh\nprintf "%s\\n" ' + shlex.quote(
+                  f'{sys.executable} {self.plugin}/native_bridge/daemon.py --home {self.hermes}') + '\n')
+        before = self.inventory()
+        result = self.invoke_fault('mock.patch.object(os, "kill", side_effect=AssertionError("must not signal")).start()',
+                                   '--upgrade')
+        self.assertIn('Bridge is running', result.stderr)
+        self.assertNotIn('must not signal', result.stderr)
+        self.assertEqual(self.inventory(), before)
+
     def test_unknown_live_daemon_is_not_signalled_or_overwritten(self):
         self.old_install()
         pid = self.data / 'daemon.pid'
@@ -540,6 +1146,118 @@ if os.environ.get('TEST_ACTIVATE_FAIL') == '1':
         before = self.inventory()
         result = self.invoke('--upgrade', ok=False)
         self.assertIn('Cannot verify bridge process', result.stderr)
+        self.assertEqual(self.inventory(), before)
+
+    def test_unknown_reference_links_are_rejected_before_upgrade_or_uninstall(self):
+        self.old_install()
+        reference = self.hermes / 'profiles/unregistered/plugins/browser-link'
+        reference.parent.mkdir(parents=True)
+        outside = self.root / 'outside'
+        outside.mkdir()
+        (outside / 'keep').write_bytes(b'untouched')
+        alias = self.root / 'chain'
+        alias.symlink_to(self.plugin)
+        for destination in (outside, self.root / 'missing', alias, self.root / 'other-hermes/plugins/browser-link',
+                            self.hermes / 'missing/../plugins/browser-link'):
+            reference.symlink_to(destination)
+            for args in (('--upgrade',), ('--uninstall', '--yes')):
+                with self.subTest(destination=destination, args=args):
+                    before = self.inventory()
+                    self.invoke(*args, ok=False)
+                    self.assertEqual(self.inventory(), before)
+            reference.unlink()
+
+    def test_unregistered_desktop_only_copy_is_archived_without_enabling_profile(self):
+        self.old_install()
+        profile = self.hermes / 'profiles/desktop-only'
+        desktop = profile / 'desktop-plugins/browser-link'
+        desktop.mkdir(parents=True)
+        (desktop / '.hermes-package.json').write_text(json.dumps({'package': 'browser-link'}))
+        (desktop / 'plugin.js').write_bytes(b'old interface copy')
+        config = profile / 'config.yaml'
+        config.write_bytes(b'disabled profile capability settings')
+        self.invoke('--upgrade')
+        self.assertFalse(desktop.exists())
+        self.assertEqual(config.read_bytes(), b'disabled profile capability settings')
+        reference = profile / 'plugins/browser-link'
+        self.assertTrue(reference.is_symlink())
+        self.assertEqual(reference.resolve(), self.plugin)
+        backup = next((self.hermes / 'plugin-backups').iterdir())
+        index = json.loads((backup / 'paths.json').read_text())
+        saved = next(Path(row['backup']) for row in index if row['path'] == str(desktop))
+        self.assertEqual((saved / 'plugin.js').read_bytes(), b'old interface copy')
+        self.assertEqual(len((self.root / 'commands.jsonl').read_text().splitlines()), 1)
+
+    def test_root_and_profile_ancestor_links_are_rejected_before_changes(self):
+        self.old_install()
+        replacements = [(self.plugin, self.root / 'saved-root'),
+                        (self.data, self.root / 'saved-data')]
+        for path, saved in replacements:
+            path.rename(saved)
+            path.symlink_to(saved)
+            for args in (('--upgrade',), ('--uninstall', '--yes')):
+                with self.subTest(path=path, args=args):
+                    before = self.inventory()
+                    self.invoke(*args, ok=False)
+                    self.assertEqual(self.inventory(), before)
+            path.unlink()
+            saved.rename(path)
+        named = self.hermes / 'profiles/unregistered'
+        named.mkdir(parents=True)
+        (named / 'plugins').symlink_to(self.plugin.parent)
+        for args in (('--upgrade',), ('--uninstall', '--yes')):
+            before = self.inventory()
+            self.invoke(*args, ok=False)
+            self.assertEqual(self.inventory(), before)
+
+    def test_unmerged_request_journal_refuses_upgrade_without_rewriting_private_data(self):
+        self.old_install()
+        journal = self.data / 'requests.jsonl'
+        journal.write_bytes(b'{"incomplete": true}\n')
+        journal.chmod(0o600)
+        before = self.inventory()
+        result = self.invoke('--upgrade', ok=False)
+        self.assertIn('Task state is active or unknown', result.stderr)
+        self.assertEqual(self.inventory(), before)
+
+    def test_fresh_install_detects_unselected_unregistered_program_copy(self):
+        copied = self.hermes / 'profiles/unregistered/plugins/browser-link'
+        copied.parent.mkdir(parents=True)
+        shutil.copytree(self.package / 'browser-link', copied)
+        before = self.inventory()
+        result = self.invoke(ok=False)
+        self.assertIn('Already installed', result.stderr)
+        self.assertEqual(self.inventory(), before)
+
+    def test_backup_ancestor_link_refused_before_version_or_runtime_writes(self):
+        self.old_install()
+        outside = self.root / 'foreign-backups'
+        outside.mkdir()
+        (self.hermes / 'plugin-backups').symlink_to(outside)
+        before = self.inventory()
+        self.invoke('--upgrade', ok=False, env={'TEST_VERSION_WRITES': '1'})
+        self.assertEqual(self.inventory(), before)
+
+    def test_profile_config_link_is_rejected_before_uninstall_activation(self):
+        self.invoke()
+        config = self.hermes / 'config.yaml'
+        config.unlink()
+        outside = self.root / 'foreign-config'
+        outside.write_bytes(b'foreign capabilities')
+        config.symlink_to(outside)
+        before = self.inventory()
+        self.invoke('--uninstall', '--yes', ok=False)
+        self.assertEqual(self.inventory(), before)
+
+    def test_profile_private_data_link_is_rejected_before_upgrade(self):
+        self.old_install()
+        profile = self.hermes / 'profiles/work'
+        profile.mkdir(parents=True)
+        outside = self.root / 'foreign-data'
+        outside.mkdir()
+        (profile / 'plugin-data').symlink_to(outside)
+        before = self.inventory()
+        self.invoke('--upgrade', '--profile', 'work', ok=False)
         self.assertEqual(self.inventory(), before)
 
     def test_symlink_target_is_rejected_before_deletion(self):

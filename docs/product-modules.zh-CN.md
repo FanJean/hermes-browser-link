@@ -1,10 +1,10 @@
 # 产品功能与模块索引
 
-本文描述当前开发版本的功能、入口、模块归属和优化边界。源码版本号为 1.8.1，macOS 正式稳定版。历史版本的真实浏览器验证不代替本次验收，结果见 [测试说明](testing.md)。
+本文描述 1.9.0 的功能、入口、模块归属和优化边界，支持 macOS。历史版本的真实浏览器验证不代替本次验收，结果见 [测试说明](testing.md)。
 
 ## 1. 浏览器连接与授权
 
-连接用户正在使用的 Chrome / Edge，复用登录状态。任务绑定可信 Hermes 会话、浏览器实例、允许来源、标签租约和代次；扩展批准动作。断线、取消、撤销或代次变化不自动恢复旧授权。
+连接用户正在使用的 Chrome / Edge，复用登录状态。任务绑定可信 Hermes 会话、浏览器实例、允许来源、标签租约和代次；扩展确认连接后普通任务直接执行，敏感操作独立确认。断线、取消、撤销或代次变化不自动恢复旧授权。
 
 - 入口：`browser_shared_open`、`browser_shared_browsers`、任务管理工具。
 - 实现：`executor-plugin/native_runtime.py`、`native-bridge/daemon.py`、`native-extension/core.mjs`。
@@ -136,6 +136,8 @@
 - Cookie 镜像：Hermes 桌面插件页提供站点、目标、选项及状态。居中、不透明的原生 dialog 保留焦点隔离、Esc 和返回焦点；每次复制仍须源扩展批准。
 
 ## 8. 正式版自动更新
+
+`plugins/browser-link` 是共享根中的唯一使用中主程序，命名 profile 只用受控直接链接引用；各自启停、可选权限、记忆、工作区、站点工具、任务身份和凭据数据不合并。旧全副本、未登记及停用入口参与迁移，不参与自动启用。升级备份在扫描目录之外，失败按原目录或原链接恢复；保留 Hermes Desktop 生成的应用级界面缓存。
 
 `executor-plugin/maintenance/update.py` 提供正式版检查、手动更新和每小时检查/空闲安装。GitHub digest、ZIP 路径、完整包清单、版本及扩展身份校验后，复用 `install-cli.py` 和 `install-executor.py` 的事务、备份及回滚；安装、更新、卸载共用目录锁。应用运行时延后，不自动退出程序；开发预览版不进入自动更新通道。见 [安装与更新](installation.md#automatic-updates--自动更新)。
 

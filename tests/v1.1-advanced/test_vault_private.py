@@ -20,12 +20,11 @@ from vault_adapter.integration import NativeVaultPrivatePort  # noqa: E402
 from tests.support import temporary_bridge_home  # noqa: E402
 
 
-class FakeDaemon:
+class FakeDaemon(BridgeDaemon):
     def __init__(self, home):
-        self.data_dir = home / "plugin-data" / "browser-link-native"
+        # 中文注释：复用真实准入和退出票据，夹具只替换浏览器端和持久化。
+        super().__init__(home)
         self.data_dir.mkdir(parents=True)
-        self.stop_event = threading.Event()
-        self.state_lock = threading.RLock()
         self.task_locks = {"task": threading.RLock()}
         self.tasks = {"task": {
             "id": "task", "owner": "owner", "instanceId": "browser", "generation": 3,

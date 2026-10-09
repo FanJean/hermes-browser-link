@@ -37,6 +37,8 @@ class InstallPrerequisitesTests(unittest.TestCase):
             'browser-link/__init__.py': '# 插件入口\n',
             'browser-link/runtime.py': '# 租约与结果投影\n',
             'browser-link/native_tools.py': '# 原生工具\n',
+            # 中文注释：安装事务执行真实注册描述；它只依赖 pathlib，不启动云端服务。
+            'browser-link/cloud_link/registration.py': (ROOT / 'cloud-link/registration.py').read_text(encoding='utf8'),
             # 中文注释：夹具保留新增维护组件的完整运行闭包。
             'browser-link/maintenance/update.py': '# 更新入口\n',
             'browser-link/maintenance/install-cli.py': '# 安装入口\n',

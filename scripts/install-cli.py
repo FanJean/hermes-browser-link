@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 from contextlib import contextmanager
 import fcntl
@@ -15,7 +16,7 @@ from pathlib import Path
 import re
 import shutil
 import shlex
-import signal
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -27,6 +28,7 @@ EXTENSION_ID = 'dhioigkigkkhceflkkkmoljhdaefjohb'
 ORIGIN = f'chrome-extension://{EXTENSION_ID}/'
 TESTED_HERMES = (0, 21, 4)
 MIN_NODE = (22, 12, 0)
+CLOUD_FENCE_HOST_SHA256 = '884b6ba448cc7bd09c333533696ffc24dd642b68b630de71edd37709e15ff985'
 ROOT = Path(__file__).resolve().parent
 if ROOT.name == 'scripts':
     ROOT = ROOT.parent
@@ -37,6 +39,238 @@ class InstallError(Exception):
     def __init__(self, reason, fix):
         super().__init__(reason)
         self.fix = fix
+
+
+class CloudGateError(InstallError):
+    pass
+
+
+def cloud_refusal():
+    return CloudGateError('云端仍活动或状态无法确认 / Cloud state is active or unknown.',
+                          '退出 Chrome、Edge 和 Hermes 后重试；旧入口须显式 --upgrade --maintenance，不会结束任务。')
+
+
+def assert_cloud_journal_idle(path):
+    # 中文注释：immutable 不能看到 WAL；任何 sidecar 先拒绝，绝不实例化会恢复写入的 Journal。
+    if any(os.path.lexists(str(path) + suffix) for suffix in ('-wal', '-shm', '-journal')):
+        raise cloud_refusal()
+    expected = {
+        'commands': [('id', 'TEXT', 0, None, 1), ('digest', 'TEXT', 1, None, 0),
+                     ('result', 'TEXT', 0, None, 0), ('delivered', 'INTEGER', 1, '0', 0)],
+        'sessions': [('id', 'TEXT', 0, None, 1), ('task_id', 'TEXT', 0, None, 0),
+                     ('last_used', 'REAL', 1, None, 0), ('closed', 'INTEGER', 1, '0', 0),
+                     ('synced', 'INTEGER', 1, '0', 0)]}
+    try:
+        database = sqlite3.connect(path.as_uri() + '?mode=ro&immutable=1', uri=True)
+        try:
+            if (database.execute('PRAGMA user_version').fetchone() != (0,)
+                    or database.execute('PRAGMA quick_check').fetchall() != [('ok',)]
+                    or sorted(database.execute("SELECT type,name,tbl_name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall())
+                    != [('table', 'commands', 'commands'), ('table', 'sessions', 'sessions')]):
+                raise cloud_refusal()
+            for table, columns in expected.items():
+                if [tuple(row[1:]) for row in database.execute('PRAGMA table_info(' + table + ')')] != columns:
+                    raise cloud_refusal()
+            command_bad = database.execute("SELECT count(*) FROM commands WHERE typeof(id)!='text' OR length(id)=0 OR typeof(digest)!='text' OR length(digest)=0 OR typeof(result)!='text' OR typeof(delivered)!='integer' OR delivered!=1").fetchone()[0]
+            session_bad = database.execute("SELECT count(*) FROM sessions WHERE typeof(id)!='text' OR length(id)=0 OR (task_id IS NOT NULL AND typeof(task_id)!='text') OR typeof(last_used) NOT IN ('real','integer') OR typeof(closed)!='integer' OR closed!=1 OR typeof(synced)!='integer' OR synced!=1").fetchone()[0]
+            if command_bad or session_bad:
+                raise cloud_refusal()
+        finally:
+            database.close()
+    except sqlite3.Error as error:
+        raise cloud_refusal() from error
+
+
+@contextmanager
+def idle_cloud(home):
+    descriptors = []
+    try:
+        try:
+            inspect_cloud(home, descriptors)
+        except (OSError, ValueError, TypeError) as error:
+            raise cloud_refusal() from error
+        yield
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+
+
+def inspect_cloud(home, descriptors):
+    base = home / 'plugin-data/browser-link-cloud'
+    EXECUTOR.reject_target_symlinks([base])
+    if not os.path.lexists(base):
+        return
+    if not stat.S_ISDIR(base.lstat().st_mode):
+        raise cloud_refusal()
+    # 中文注释：仅 lstat 私有配对/服务节点；不读取其内容，也不创建缺失的实例锁。
+    for path in [base, *base.rglob('*')]:
+        info = path.lstat()
+        if (info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077
+                or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))):
+            raise cloud_refusal()
+        if path.name.endswith(('-wal', '-shm', '-journal')):
+            raise cloud_refusal()
+        if path.name == 'native.lock':
+            if not stat.S_ISREG(info.st_mode):
+                raise cloud_refusal()
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            descriptors.append(descriptor)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise cloud_refusal() from error
+    instances = base / 'instances'
+    if instances.exists():
+        if not instances.is_dir():
+            raise cloud_refusal()
+        for instance in instances.iterdir():
+            if (not instance.is_dir() or not re.fullmatch(r'[a-f0-9-]{36}', instance.name)
+                    or not (instance / 'requests.sqlite').is_file()):
+                raise cloud_refusal()
+            assert_cloud_journal_idle(instance / 'requests.sqlite')
+    if (base / 'requests.sqlite').exists():
+        assert_cloud_journal_idle(base / 'requests.sqlite')
+
+
+def cloud_fence_metadata(home):
+    host = home / 'plugins/browser-link/cloud_link/native_host.py'
+    installer = home / 'plugins/browser-link/maintenance/install-cli.py'
+    if not host.is_file() or not installer.is_file():
+        return None
+    source, installer_source = host.read_bytes(), installer.read_bytes()
+    # 中文注释：支持声明来自实际已安装且经包校验的安装器，不按版本号或任意 native 标记猜测。
+    declarations = [node.value.value for node in ast.parse(installer_source).body
+                    if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                    and any(isinstance(target, ast.Name) and target.id == 'CLOUD_FENCE_HOST_SHA256'
+                            for target in node.targets)]
+    digest = hashlib.sha256(source).hexdigest()
+    if declarations != [digest]:
+        return None
+    return {'version': 1, 'hostSha256': digest, 'installerSha256': hashlib.sha256(installer_source).hexdigest()}
+
+
+def assert_cloud_fenced(home):
+    state = home / 'plugin-data/browser-link-native/install-state.json'
+    try:
+        EXECUTOR.reject_target_symlinks([state, home / 'plugins/browser-link/cloud_link/native_host.py',
+                                        home / 'plugins/browser-link/maintenance/install-cli.py'])
+        info = state.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise cloud_refusal()
+        metadata = cloud_fence_metadata(home)
+        if metadata is None or json.loads(state.read_text()).get('cloudFence') != metadata:
+            raise cloud_refusal()
+    except (OSError, ValueError, TypeError, SyntaxError) as error:
+        raise cloud_refusal() from error
+
+
+def maintenance_processes_stopped(env, *, include_hosts):
+    result = command(['/bin/ps', '-axo', 'command='], env)
+    if result.returncode:
+        raise cloud_refusal()
+    apps = re.compile(r'(?:Google Chrome|Microsoft Edge|[Hh]ermes[^/]*)\.app/Contents/|'
+                      r'(?:^|/|\s)hermes(?:\s|$)|hermes_cli/|hermes-agent/(?:cli|hermes)\.py')
+    for line in result.stdout.splitlines():
+        if apps.search(line) or (include_hosts and ('native_host.py' in line or HOST + '.cloud' in line)):
+            raise cloud_refusal()
+
+
+def validated_cloud_launcher(home, user_home):
+    try:
+        return check_cloud_launcher(home, user_home)
+    except (OSError, ValueError, TypeError) as error:
+        raise cloud_refusal() from error
+
+
+def check_cloud_launcher(home, user_home):
+    launcher = home / 'plugin-data/browser-link-cloud' / (HOST + '.cloud')
+    manifests = registrations(user_home, HOST + '.cloud')
+    EXECUTOR.reject_target_symlinks([launcher, *manifests])
+    directory_info = launcher.parent.lstat()
+    if (not stat.S_ISDIR(directory_info.st_mode) or directory_info.st_uid != os.getuid()
+            or stat.S_IMODE(directory_info.st_mode) & 0o077):
+        raise cloud_refusal()
+    info = launcher.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) & 0o077 or not info.st_mode & 0o100):
+        raise cloud_refusal()
+    source = launcher.read_text()
+    python = source.partition('\n')[0].removeprefix('#!')
+    if not Path(python).is_absolute() or not os.access(python, os.X_OK):
+        raise cloud_refusal()
+    root = home / 'plugins/browser-link/cloud_link'
+    expected = (f'#!{python}\n# 中文注释：独立云端 Native 入口，不启动本地 daemon。\n'
+                'import os,runpy,sys\n'
+                f"os.environ['HERMES_HOME']={str(home)!r}\n"
+                f'sys.path.insert(0,{str(root)!r})\n'
+                f"runpy.run_path({str(root / 'native_host.py')!r},run_name='__main__')\n")
+    if source != expected or not (root / 'native_host.py').is_file():
+        raise cloud_refusal()
+    found = False
+    for manifest in manifests:
+        if not manifest.exists():
+            continue
+        info = manifest.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o022:
+            raise cloud_refusal()
+        value = json.loads(manifest.read_text())
+        if (value.get('name') != HOST + '.cloud' or value.get('path') != str(launcher)
+                or value.get('type') != 'stdio' or value.get('allowed_origins') != [ORIGIN]):
+            raise cloud_refusal()
+        found = True
+    if not found:
+        raise cloud_refusal()
+    return launcher
+
+
+@contextmanager
+def paused_cloud_launcher(home, user_home, env):
+    launcher = validated_cloud_launcher(home, user_home)
+    maintenance_processes_stopped(env, include_hosts=False)
+    # 中文注释：显式维护唯一的前置写入；原节点 rename 保存，暂停后才检查已加载的旧宿主。
+    descriptor, name = tempfile.mkstemp(prefix='.maintenance-original-', dir=launcher.parent)
+    os.close(descriptor)
+    original = Path(name)
+    paused = False
+    success = False
+    try:
+        os.replace(launcher, original)
+        paused = True
+        descriptor, name = tempfile.mkstemp(prefix='.maintenance-paused-', dir=launcher.parent)
+        stub = Path(name)
+        try:
+            with os.fdopen(descriptor, 'w') as output:
+                output.write('#!/bin/sh\nexit 4\n')
+            stub.chmod(0o700)
+            os.replace(stub, launcher)
+        finally:
+            stub.unlink(missing_ok=True)
+        maintenance_processes_stopped(env, include_hosts=True)
+        yield original
+        success = True
+    finally:
+        if paused and not success:
+            try:
+                os.replace(original, launcher)
+            except OSError as error:
+                raise InstallError('启动器恢复失败 / Launcher restoration failed: ' + str(launcher),
+                                   '原入口备份仍在 / Original launcher backup: ' + str(original)) from error
+        else:
+            original.unlink(missing_ok=True)
+
+
+@contextmanager
+def cloud_gate(home, *, installed, user_home=None, env=None, maintenance=False):
+    if maintenance:
+        with paused_cloud_launcher(home, user_home, env) as original, idle_cloud(home):
+            yield original
+        return
+    if installed:
+        assert_cloud_fenced(home)
+        if user_home is not None:
+            validated_cloud_launcher(home, user_home)
+    with idle_cloud(home):
+        yield None
 
 
 def load_module(name, path):
@@ -115,6 +349,64 @@ def remove(path):
         path.unlink(missing_ok=True)
 
 
+def installed_profiles(home):
+    # 中文注释：安装记录不是启用授权；扫描未登记及停用的程序入口。
+    root = home / 'profiles'
+    EXECUTOR.reject_target_symlinks([root])
+    names = []
+    if (home / 'plugins/browser-link').exists():
+        names.append('default')
+    if root.is_dir():
+        for profile in sorted(root.iterdir()):
+            EXECUTOR.reject_target_symlinks([profile, profile / 'plugins'])
+            target = profile / 'plugins/browser-link'
+            desktop = profile / 'desktop-plugins/browser-link'
+            if target.exists() or target.is_symlink() or desktop.exists() or desktop.is_symlink():
+                names.append(profile.name)
+    return names
+
+
+def check_program_path(path, home):
+    EXECUTOR.reject_target_symlinks([path.parent])
+    if path.is_symlink():
+        root = home / 'plugins/browser-link'
+        raw_destination = path.parent / os.readlink(path)
+        EXECUTOR.reject_target_symlinks([raw_destination])
+        destination = Path(os.path.abspath(raw_destination))
+        if (path == root or destination != root or root.is_symlink() or not root.is_dir() or not path.is_dir()):
+            raise InstallError('插件引用不是直接共享根链接 / Unsafe plugin reference.',
+                               '核对引用；只允许直接指向根 plugins/browser-link。')
+        return
+    EXECUTOR.reject_target_symlinks([path])
+    assert_regular_tree(path)
+    if path.exists():
+        if not path.is_dir() or not re.search(r'^name:\s*browser-link\s*$',
+                                            (path / 'plugin.yaml').read_text(), re.M):
+            raise InstallError('旧插件身份无效 / Invalid installed plugin.', '核对 plugin.yaml 后重试。')
+        installed_version(path)
+
+
+def probe_references(home, profiles):
+    # 中文注释：在目标文件系统的已有目录探测；失败不提权、不回退复制。
+    for name in profiles:
+        if name == 'default':
+            continue
+        target = profile_home(home, name) / 'plugins/browser-link'
+        parent = target.parent
+        while not parent.exists():
+            parent = parent.parent
+        try:
+            with tempfile.TemporaryDirectory(prefix='.browser-link-probe-', dir=parent) as scratch:
+                link = Path(scratch) / 'reference'
+                link.symlink_to(home / 'plugins/browser-link', target_is_directory=True)
+                if os.readlink(link) != str(home / 'plugins/browser-link'):
+                    raise OSError('unexpected reference')
+                link.unlink()
+        except OSError as error:
+            raise InstallError('无法创建共享程序引用 / Symlink unavailable.',
+                               '检查目录链接能力和权限；不会提权或改为复制。') from error
+
+
 def assert_regular_tree(path):
     if path.is_dir():
         for directory, dirs, files in os.walk(path, followlinks=False):
@@ -183,11 +475,56 @@ def activate(hermes, home, profiles, action, env):
                                f'运行 hermes --profile {name} plugins {action} browser-link 检查原因。')
 
 
-def stop_daemon(home, env):
-    # 中文注释：复用开发同步的身份核对原则；只停止已认证、路径与 home 完全匹配的进程。
+def assert_tasks_idle(home):
+    data = home / 'plugin-data/browser-link-native'
+    tasks, journal = data / 'tasks.json', data / 'requests.jsonl'
+    EXECUTOR.reject_target_symlinks([tasks, journal])
+    try:
+        for path in (tasks, journal):
+            if path.exists():
+                info = path.lstat()
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+                    raise ValueError('unsafe persistence')
+        # 中文注释：未合并派发日志无法证明空闲；不加载 daemon 以免恢复/改写任务。
+        if journal.exists() and journal.stat().st_size:
+            raise ValueError('unmerged request journal')
+        value = json.loads(tasks.read_bytes()) if tasks.exists() else {'version': 1, 'tasks': []}
+        if not isinstance(value, dict) or value.get('version') != 1 or not isinstance(value.get('tasks'), list):
+            raise ValueError('unknown persistence')
+        for task in value['tasks']:
+            if (not isinstance(task, dict) or not isinstance(task.get('id'), str)
+                    or not isinstance(task.get('owner'), str) or task.get('state') not in {'closed', 'cancelled', 'failed'}
+                    or task.get('cleanupState') != 'succeeded' or task.get('idlePendingHuman')
+                    or task.get('idleRecoveryState') in {'paused', 'pending_approval'}
+                    or 'vaultPermit' in task or 'gatewayPermit' in task
+                    or not isinstance(task.get('currentOperation', {'state': 'succeeded'}), dict)
+                    or task.get('currentOperation', {'state': 'succeeded'}).get('state') not in {'succeeded', 'failed'}):
+                raise ValueError('active or unknown task')
+            for field, settled in (('requestHistory', {'confirmed', 'rejected'}),
+                                   ('operationTimeline', {'succeeded', 'failed'})):
+                rows = task.get(field, [] if field == 'operationTimeline' else None)
+                if not isinstance(rows, list) or any(not isinstance(row, dict) or row.get('state') not in settled for row in rows):
+                    raise ValueError('unsettled operation')
+    except (OSError, ValueError, TypeError) as error:
+        raise CloudGateError('活动任务或状态无法核实 / Task state is active or unknown.',
+                           '先结束任务并退出浏览器和 Hermes，再重试；安装不会停止任务。') from error
+
+
+def assert_daemon_stopped(home, env):
+    try:
+        return check_daemon_stopped(home, env)
+    except InstallError as error:
+        raise CloudGateError(str(error), error.fix) from error
+
+
+def check_daemon_stopped(home, env):
+    # 中文注释：现有协议不能原子确认活 daemon 空闲；任何存活桥接都拒绝，不发信号。
     data = home / 'plugin-data/browser-link-native'
     pid_path = data / 'daemon.pid'
     if not pid_path.exists():
+        if (data / 'bridge.sock').exists():
+            raise InstallError('无法确认桥接进程身份 / Cannot verify bridge process.',
+                               '核对无 PID 的桥接套接字后重试；不会停止未知进程。')
         return
     info = pid_path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
@@ -197,40 +534,87 @@ def stop_daemon(home, env):
         raise InstallError('桥接 PID 无效 / Invalid bridge PID.', '退出浏览器和 Hermes，核对后重试。')
     process = command(['ps', '-p', raw, '-o', 'command='], env)
     if process.returncode == 1 and not process.stdout.strip():
+        if (data / 'bridge.sock').exists():
+            raise InstallError('无法确认桥接进程身份 / Cannot verify bridge process.',
+                               '核对过期 PID 的桥接套接字后重试；不会停止未知进程。')
         # 中文注释：已退出进程的旧记录不发送信号，保留到下一次桥接启动处理。
         return
     candidates = [home / 'plugins/browser-link/native_bridge/daemon.py', data / 'host-bin/daemon.py']
     if process.returncode or not any(process.stdout.strip().endswith(f' {path} --home {home}') for path in candidates):
         raise InstallError('无法确认桥接进程身份 / Cannot verify bridge process.',
                            '退出浏览器和 Hermes，手动核对桥接进程后重试；未发送信号。')
-    doctor = load_module('install_stop_doctor', home / 'plugins/browser-link/native_bridge/doctor.py')
-    if doctor.probe(home).get('ok') is not True or pid_path.read_text().strip() != raw:
-        raise InstallError('无法确认桥接进程身份 / Cannot verify bridge process.',
-                           '退出浏览器和 Hermes，手动核对桥接进程后重试；未发送信号。')
-    os.kill(int(raw), signal.SIGTERM)
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        if not pid_path.exists() or pid_path.read_text().strip() != raw:
-            return
-        time.sleep(.1)
-    raise InstallError('桥接尚未退出 / Bridge did not stop.', '退出浏览器和 Hermes 后重试。')
+    raise InstallError('桥接仍在运行 / Bridge is running.',
+                       '退出浏览器和 Hermes，并确认桥接退出后重试；不会自动停止任务。')
+
+
+def acquire_bridge_lock(descriptor):
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        raise CloudGateError('无法确认桥接空闲 / Bridge activity cannot be verified.',
+                           '退出浏览器和 Hermes，确认桥接已退出后重试。') from error
+
+
+@contextmanager
+def idle_bridge(home, env, *, profiles=()):
+    # 中文注释：复用 daemon 自身的启动锁，持锁期间不能新启动；活服务从不自动结束。
+    data = home / 'plugin-data/browser-link-native'
+    lock = data / 'daemon.lock'
+    EXECUTOR.reject_target_symlinks([lock, data / 'daemon.pid', data / 'bridge.sock'])
+    assert_daemon_stopped(home, env)
+    assert_tasks_idle(home)
+    if not data.is_dir():
+        probe_references(home, profiles)
+        yield None
+        return
+    descriptor = None
+    if lock.exists():
+        info = lock.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise InstallError('桥接启动锁不安全 / Unsafe bridge lock.', '核对私有桥接目录后重试。')
+        # 中文注释：既有生命周期锁只读打开；被持有时拒绝，不能先探测建链或写打开锁。
+        descriptor = os.open(lock, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        if descriptor is not None:
+            acquire_bridge_lock(descriptor)
+            assert_daemon_stopped(home, env)
+            assert_tasks_idle(home)
+        # 中文注释：空闲门禁在探测前；缺失锁延后创建，建链失败不会遗留 daemon.lock。
+        probe_references(home, profiles)
+        if descriptor is None:
+            descriptor = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            acquire_bridge_lock(descriptor)
+        assert_daemon_stopped(home, env)
+        assert_tasks_idle(home)
+        yield descriptor
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def snapshot(paths, backup):
     backup.mkdir(parents=True, mode=0o700)
     saved = []
+    records = []
     for index, path in enumerate(paths):
         dest = backup / str(index)
-        exists = path.exists()
+        exists = path.exists() or path.is_symlink()
+        kind, readlink = 'missing', None
         if exists:
-            if path.is_dir():
+            if path.is_symlink():
+                kind, readlink = 'symlink', os.readlink(path)
+                dest.symlink_to(readlink, target_is_directory=True)
+            elif path.is_dir():
+                kind = 'directory'
                 shutil.copytree(path, dest)
             else:
+                kind = 'file'
                 shutil.copy2(path, dest)
         saved.append((path, dest if exists else None))
+        records.append({'path': str(path), 'backup': str(dest) if exists else None,
+                        'kind': kind, 'readlink': readlink})
     # 中文注释：备份索引仅在用户私有目录保存，用于人工恢复。
-    (backup / 'paths.json').write_text(json.dumps([{'path': str(path), 'backup': str(dest) if dest else None}
-                                                 for path, dest in saved], indent=2))
+    (backup / 'paths.json').write_text(json.dumps(records, indent=2))
     return saved
 
 
@@ -240,7 +624,9 @@ def rollback(saved):
         remove(path)
         if dest is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
-            if dest.is_dir():
+            if dest.is_symlink():
+                path.symlink_to(os.readlink(dest), target_is_directory=True)
+            elif dest.is_dir():
                 shutil.copytree(dest, path)
             else:
                 shutil.copy2(dest, path)
@@ -301,22 +687,53 @@ def next_steps(home, user_home, browsers, env, seconds, upgrade, verbose):
         print('检测到 Hermes 桌面端运行中，请退出后重新打开 / Hermes Desktop is running; quit and reopen it.')
 
 
-def apply_package(package, home, user_home, profiles, programs, files, manifest, env, hermes, upgrade, verbose):
+def install_references(home, profiles, retained):
+    for name in profiles:
+        if name == 'default':
+            continue
+        target = profile_home(home, name) / 'plugins/browser-link'
+        if target in retained:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(home / 'plugins/browser-link', target_is_directory=True)
+
+
+def verify_shared_install(home, profiles, manifest):
+    root = home / 'plugins/browser-link'
+    check_program_path(root, home)
+    EXECUTOR.verify_installed(root, manifest)
+    for name in profiles:
+        if name == 'default':
+            continue
+        target = profile_home(home, name) / 'plugins/browser-link'
+        if not target.is_symlink():
+            raise InstallError('共享引用被替换 / Shared reference was replaced.',
+                               '核对 Hermes 插件启用操作后重试。')
+        check_program_path(target, home)
+
+
+def apply_package(package, home, user_home, profiles, enable_profiles, programs, files, manifest, env, hermes, upgrade, verbose, original_launcher=None):
     data = home / 'plugin-data/browser-link-native'
     extension = home / 'browser-link-releases/native-extension'
     configs = [profile_home(home, name) / 'config.yaml' for name in profiles]
     EXECUTOR.reject_target_symlinks(configs)
     old_config = (data / 'host-config.json').read_bytes() if upgrade and (data / 'host-config.json').exists() else None
-    if upgrade:
-        stop_daemon(home, env)
     # 中文注释：首次安装事务备份放临时目录；升级备份永久放 plugins 之外。
     with tempfile.TemporaryDirectory(prefix='browser-link-transaction-') as scratch:
         backup = (home / 'plugin-backups' / f'browser-link-{installed_version(home / "plugins/browser-link")}-{datetime.now():%Y%m%d-%H%M%S-%f}'
                   if upgrade else Path(scratch).resolve() / 'backup')
         EXECUTOR.reject_target_symlinks([backup])
         saved = snapshot([*programs, *files, *configs], backup)
+        if original_launcher is not None:
+            launcher = home / 'plugin-data/browser-link-cloud' / (HOST + '.cloud')
+            destination = next(dest for path, dest in saved if path == launcher)
+            # 中文注释：长期备份/事务回滚必须是原入口，不能把暂停 stub 当作旧安装。
+            shutil.copy2(original_launcher, destination)
         try:
+            retained = [path for path in programs if path.is_symlink()]
             for path in [*programs, *files]:
+                if path in retained:
+                    continue
                 remove(path)
             EXECUTOR.install(package, user_home, home, [ORIGIN], apply=True)
             extension.parent.mkdir(parents=True, exist_ok=True)
@@ -324,18 +741,13 @@ def apply_package(package, home, user_home, profiles, programs, files, manifest,
             verify_extension_tree(extension, manifest)
             if old_config is not None:
                 (data / 'host-config.json').write_bytes(old_config)
-            for name in profiles:
-                if name != 'default':
-                    target = profile_home(home, name) / 'plugins/browser-link'
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(package / 'browser-link', target)
-                    EXECUTOR.verify_installed(target, manifest)
-            activate(hermes, home, profiles, 'enable', env)
-            (data / 'install-state.json').write_text(json.dumps({'profiles': profiles, 'version': installed_version(home / 'plugins/browser-link')}))
+            install_references(home, profiles, retained)
+            activate(hermes, home, enable_profiles, 'enable', env)
+            (data / 'install-state.json').write_text(json.dumps({'profiles': profiles, 'version': installed_version(home / 'plugins/browser-link'),
+                                                               'cloudFence': cloud_fence_metadata(home)}))
             (data / 'install-state.json').chmod(0o600)
-            # 中文注释：CLI 激活也可能更新程序，事务结束前再次验证所有安装副本。
-            for name in dict.fromkeys(['default', *profiles]):
-                EXECUTOR.verify_installed(profile_home(home, name) / 'plugins/browser-link', manifest)
+            # 中文注释：CLI 激活也可能更新程序；校验节点类型，不能悄悄生成全副本。
+            verify_shared_install(home, profiles, manifest)
             verify_extension_tree(extension, manifest)
         except BaseException:
             rollback(saved)
@@ -344,6 +756,19 @@ def apply_package(package, home, user_home, profiles, programs, files, manifest,
             raise
         if upgrade and verbose:
             print('备份 / Backup: ' + str(backup))
+
+
+def uninstall_package(home, user_home, profiles, deletions, hermes, env, installed):
+    with cloud_gate(home, installed=installed, user_home=user_home), idle_bridge(home, env):
+        if installed:
+            activate(hermes, home, profiles, 'disable', env)
+        # 中文注释：停用失败不删除既有自动更新设置。
+        updater_path = home / 'plugins/browser-link/maintenance/update.py'
+        if updater_path.is_file():
+            updater = load_module('browser_link_uninstall_updater', updater_path)
+            updater.configure_schedule('off', home, user_home, argparse.Namespace(EXECUTOR=EXECUTOR))
+        for path in deletions:
+            remove(path)
 
 
 def print_plan(home, profiles, upgrade, verbose):
@@ -356,8 +781,10 @@ def print_plan(home, profiles, upgrade, verbose):
 
 
 def run(args):
+    if getattr(args, 'maintenance', False) and (not args.upgrade or getattr(args, 'background_update', False)):
+        raise InstallError('维护迁移只允许显式 --upgrade --maintenance。', '后台更新不会自动迁移旧入口。')
     # 中文注释：手动升级/卸载与自动更新使用同一锁；后台调用已持锁，预览不写锁文件。
-    if args.dry_run or getattr(args, 'background_update', False) or not (args.upgrade or args.uninstall):
+    if args.dry_run or not (args.upgrade or args.uninstall):
         return _run(args)
     home = args.hermes_home.expanduser()
     if home.is_symlink():
@@ -367,10 +794,35 @@ def run(args):
         home = home.parent.parent
     data = home / 'plugin-data/browser-link-native'
     EXECUTOR.reject_target_symlinks([data])
-    if not data.is_dir():
-        return _run(args)
-    with install_lock(data):
-        return _run(args)
+    # 中文注释：root fence 持至检查、事务及回滚结束；云目录被 purge 也不会丢失锁锚。
+    with root_fence(home):
+        if not data.is_dir() or getattr(args, 'background_update', False):
+            return _run(args)
+        with install_lock(data):
+            return _run(args)
+
+
+@contextmanager
+def root_fence(home):
+    manager = install_lock(home)
+    try:
+        descriptor = manager.__enter__()
+    except InstallError as error:
+        raise cloud_refusal() from error
+    try:
+        yield descriptor
+    finally:
+        manager.__exit__(None, None, None)
+
+
+@contextmanager
+def development_sync_guard(home, env):
+    # 中文注释：开发同步复用正式升级的全部门禁，锁覆盖打包、首写、校验及回滚。
+    data = home / 'plugin-data/browser-link-native'
+    EXECUTOR.reject_target_symlinks([data])
+    with root_fence(home) as root_lock, install_lock(data) as data_lock, \
+            cloud_gate(home, installed=True, user_home=Path(env['HOME'])), idle_bridge(home, env) as bridge_lock:
+        yield (root_lock, data_lock, bridge_lock)
 
 
 @contextmanager
@@ -382,7 +834,7 @@ def install_lock(data):
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise InstallError('已有安装或更新操作运行中。', '等待该操作结束后重试。') from error
-        yield
+        yield descriptor
     finally:
         os.close(descriptor)
 
@@ -400,28 +852,36 @@ def _run(args):
     hermes = shutil.which('hermes', path=env.get('PATH'))
     if not hermes:
         raise InstallError('缺少 hermes 命令 / hermes missing.', '安装 Hermes，确保 hermes 在 PATH 中。')
-    # 中文注释：Hermes --version 会写更新缓存；dry-run 只核对命令路径，正式执行才检查版本。
-    if not args.dry_run:
-        version = version_of(hermes, env)
-        if version is not None and version < TESTED_HERMES:
-            print('提示 / Note: 已测试 Hermes 0.21.4；当前版本较早，继续安装 / Tested with Hermes 0.21.4; continuing on an older version.')
+
     browsers = browsers_at(user_home)
     if not args.uninstall and not browsers:
         raise InstallError('未找到 Chrome / Edge / Browser missing.', '安装 Google Chrome 或 Microsoft Edge 后重试。')
     data = home / 'plugin-data/browser-link-native'
     EXECUTOR.reject_target_symlinks([data / 'install-state.json'])
+    if args.upgrade:
+        EXECUTOR.reject_target_symlinks([home / 'plugin-backups'])
     profiles = profile_names(args, data)
+    enable_profiles = profiles if not args.upgrade or args.profile is not None else []
     # 中文注释：升级/卸载包含之前启用的 profile，避免遗留旧程序；新增 profile 也能一起更新。
     if (args.upgrade or args.uninstall) and (data / 'install-state.json').is_file():
         previous = profile_names(argparse.Namespace(profile=None, upgrade=True, uninstall=False), data)
         profiles = list(dict.fromkeys([*previous, *profiles]))
+    profiles = list(dict.fromkeys([*profiles, *installed_profiles(home)]))
+    profiles = profile_names(argparse.Namespace(profile=profiles), data)
     for name in profiles:
         if name != 'default' and not profile_home(home, name).is_dir():
             raise InstallError(f'profile 不存在 / Missing profile: {name}.', '先用 hermes profile create 创建该 profile。')
+    EXECUTOR.reject_target_symlinks([profile_home(home, name) / relative for name in profiles
+                                    for relative in ('config.yaml', 'plugin-data/browser-link',
+                                                     'plugin-data/browser-link-native')])
     programs, files = managed_paths(home, user_home, profiles)
-    EXECUTOR.reject_target_symlinks([*programs, *files, data])
+    references = {profile_home(home, name) / 'plugins/browser-link' for name in profiles if name != 'default'}
+    EXECUTOR.reject_target_symlinks([*[path for path in programs if path not in references], *files, data])
     for path in programs:
-        assert_regular_tree(path)
+        if path in references or path == home / 'plugins/browser-link':
+            check_program_path(path, home)
+        else:
+            assert_regular_tree(path)
     for path in files:
         if path.exists() and not path.is_file():
             raise InstallError('配置或注册不是普通文件 / Invalid configuration file.', '核对安装路径后重试。')
@@ -449,16 +909,7 @@ def _run(args):
             if answer.strip().lower() != 'y':
                 print('已取消 / Cancelled.')
                 return
-        if installed:
-            activate(hermes, home, profiles, 'disable', env)
-            stop_daemon(home, env)
-        # 中文注释：插件和桥接停用成功后清理调度；停用失败不删除既有自动更新设置。
-        updater_path = home / 'plugins/browser-link/maintenance/update.py'
-        if updater_path.is_file():
-            updater = load_module('browser_link_uninstall_updater', updater_path)
-            updater.configure_schedule('off', home, user_home, argparse.Namespace(EXECUTOR=EXECUTOR))
-        for path in deletions:
-            remove(path)
+        uninstall_package(home, user_home, profiles, deletions, hermes, env, installed)
         print('✅ 已卸载 / Uninstalled. 请在浏览器扩展管理页移除扩展，重启 Hermes。')
         return
     is_source = (ROOT / 'scripts/package-executor.mjs').is_file()
@@ -503,8 +954,18 @@ def _run(args):
             EXECUTOR.install(staged, user_home, home, [ORIGIN], apply=False)
         if args.verbose:
             print_plan(home, profiles, args.upgrade, True)
-        apply_package(staged, home, user_home, profiles, programs, files, manifest, env, hermes, args.upgrade, args.verbose)
-    print('✅ 程序安装并启用完成 / Program installed and enabled. profiles: ' + ', '.join(profiles))
+        with cloud_gate(home, installed=installed, user_home=user_home, env=env,
+                        maintenance=getattr(args, 'maintenance', False)) as original_launcher, idle_bridge(home, env, profiles=profiles):
+            # 中文注释：Hermes --version 可能写缓存，必须晚于路径、建链与空闲拒绝。
+            version = version_of(hermes, env)
+            if version is not None and version < TESTED_HERMES:
+                print('提示 / Note: 已测试 Hermes 0.21.4；当前版本较早，继续安装 / Tested with Hermes 0.21.4; continuing on an older version.')
+            apply_package(staged, home, user_home, profiles, enable_profiles, programs, files, manifest, env, hermes, args.upgrade, args.verbose, original_launcher)
+    if args.upgrade:
+        activation = '; enabled: ' + ', '.join(enable_profiles) if enable_profiles else '; profile settings preserved'
+        print('✅ 程序升级完成 / Program upgraded. profiles: ' + ', '.join(profiles) + activation)
+    else:
+        print('✅ 程序安装并启用完成 / Program installed and enabled. profiles: ' + ', '.join(profiles))
     # 中文注释：后台更新不打开浏览器、不写剪贴板，也不等待扩展；用户下次启动后重载。
     if not getattr(args, 'background_update', False):
         next_steps(home, user_home, browsers, env, args.wait_seconds, args.upgrade, args.verbose)
@@ -521,6 +982,7 @@ def main():
     action.add_argument('--check-update', action='store_true', help='检查正式 Release 新版本')
     action.add_argument('--auto-update', choices=('off', 'check', 'install'), help='关闭、每小时检查或空闲安装')
     parser.add_argument('--purge', action='store_true')
+    parser.add_argument('--maintenance', action='store_true', help='显式一次性旧云入口迁移；仅 --upgrade，先退出 Chrome/Edge/Hermes')
     parser.add_argument('--yes', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--verbose', action='store_true', help='显示安装目录 / show installation directories')
@@ -531,6 +993,8 @@ def main():
     parser.add_argument('--wait-seconds', type=int, default=180,
                         help='默认等 180 秒；0 跳过，不卸载 / waits 180s; 0 skips, does not uninstall')
     args = parser.parse_args()
+    if args.maintenance and not args.upgrade:
+        parser.error('--maintenance requires --upgrade')
     if args.update or args.check_update or args.auto_update:
         # 中文注释：更新入口复用维护模块，源码与发行包不另建下载实现。
         if args.dry_run or args.profile or args.purge or args.yes:

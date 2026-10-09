@@ -51,6 +51,7 @@ class BrowserAccessChainTests(unittest.TestCase):
             "features": [],
             "connected": True,
             "consentStatus": "enabled",
+            "primary": False,
             "accessRequestSupported": True,
         }])
 

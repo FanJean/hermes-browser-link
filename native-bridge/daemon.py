@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import select
 import signal
 import socket
 import stat
@@ -165,6 +166,9 @@ def _safe_error_data(data: Any) -> dict:
     return safe
 
 
+_DAEMON_IDLE_GRACE_SECONDS = 30.0
+
+
 class BridgeDaemon:
     def __init__(self, home: Path, request_history_limit: int = _DEFAULT_REQUEST_HISTORY_LIMIT):
         if not isinstance(request_history_limit, int) or isinstance(request_history_limit, bool) or request_history_limit < 1:
@@ -180,6 +184,9 @@ class BridgeDaemon:
         self.server: socket.socket | None = None
         self.lock_file = None
         self.state_lock = threading.RLock()
+        self.idle_exit_since = None
+        self.lifecycle_connections = set()
+        self.lifecycle_operations = 0
         self.extensions: Dict[str, Dict[str, Any]] = {}
         self.tasks: Dict[str, Dict[str, Any]] = {}
         self.tab_leases: Dict[tuple[str, int], str] = {}
@@ -335,11 +342,109 @@ class BridgeDaemon:
                 task['cleanupReason'] = 'verified_complete'
                 self._persist_tasks()
 
+    def _accept_connection(self, server):
+        # 中文注释：接收（含未认证连接）与退出提交共用锁，退出后不接入新请求。
+        with self.state_lock:
+            if self.stop_event.is_set():
+                return None
+            try:
+                conn, _ = server.accept()
+            except BlockingIOError:
+                return None
+            conn.setblocking(True)
+            self.lifecycle_connections.add(conn)
+            self.idle_exit_since = None
+            return conn
+
+    def _connection_closed(self, conn):
+        with self.state_lock:
+            self.lifecycle_connections.discard(conn)
+            self.idle_exit_since = None
+
+    @contextmanager
+    def _lifecycle_activity(self):
+        with self.state_lock:
+            if self.stop_event.is_set():
+                raise ProtocolError('service_stopping', 'bridge service is stopping')
+            self.lifecycle_operations += 1
+            self.idle_exit_since = None
+        try:
+            yield
+        finally:
+            with self.state_lock:
+                self.lifecycle_operations -= 1
+                self.idle_exit_since = None
+
+    def _start_lifecycle_worker(self, target, *args, delay=None):
+        # 中文注释：排队前占用活动票据，线程尚未运行时也不能误判为空闲。
+        activity = self._lifecycle_activity()
+        activity.__enter__()
+        def work():
+            try:
+                target(*args)
+            finally:
+                activity.__exit__(None, None, None)
+        worker = threading.Thread(target=work, daemon=True) if delay is None else threading.Timer(delay, work)
+        worker.daemon = True
+        try:
+            worker.start()
+        except Exception:
+            activity.__exit__(None, None, None)
+            raise
+        return worker
+
+    @staticmethod
+    def _task_safe_for_idle_exit(task):
+        if (not isinstance(task, dict) or task.get('state') not in {'closed', 'cancelled', 'failed'}
+                or task.get('cleanupState') != 'succeeded' or task.get('idlePendingHuman')
+                or task.get('idleRecoveryState') in {'paused', 'pending_approval'}
+                or 'vaultPermit' in task or 'gatewayPermit' in task):
+            return False
+        operation = task.get('currentOperation', {'state': 'succeeded'})
+        if not isinstance(operation, dict) or operation.get('state') not in {'succeeded', 'failed'}:
+            return False
+        for field, settled in (('requestHistory', {'confirmed', 'rejected'}),
+                               ('operationTimeline', {'succeeded', 'failed'})):
+            rows = task.get(field, [] if field == 'operationTimeline' else None)
+            if not isinstance(rows, list) or any(not isinstance(row, dict) or row.get('state') not in settled for row in rows):
+                return False
+        return True
+
+    def _try_idle_exit(self):
+        # 中文注释：与快照相同的写锁顺序；落盘中或失败时不为退出清理任何状态。
+        if not self.persist_lock.acquire(blocking=False):
+            with self.state_lock:
+                self.idle_exit_since = None
+            return False
+        try:
+            with self.state_lock, self.vault_private._lock, self.cookie_mirror.lock, self.cookie_mirror.relay.lock:
+                blocked = (self.lifecycle_connections or self.lifecycle_operations
+                           or self.extensions or self.tab_leases or self.inflight_requests or self.preparing_requests
+                           or self.action_approvals or self.api_credentials or self.api_connections
+                           or self.persist_dirty or self.persist_timer is not None or self.persist_error is not None
+                           or self.pending_journal or self.vault_private._nonces
+                           or self.cookie_mirror.operations or self.cookie_mirror.relay.chunks)
+                if blocked or not all(self._task_safe_for_idle_exit(task) for task in self.tasks.values()):
+                    self.idle_exit_since = None
+                    return False
+                now = time.monotonic()
+                if self.idle_exit_since is None:
+                    self.idle_exit_since = now
+                    return False
+                if now - self.idle_exit_since < _DAEMON_IDLE_GRACE_SECONDS:
+                    return False
+                self.stop_event.set()
+                return True
+        finally:
+            self.persist_lock.release()
+
     def _idle_watch(self):
         # 中文注释：启动即扫描；独立线程避免浏览器的有界清理阻塞 socket 接收。
         while not self.stop_event.is_set():
             self._sweep_empty_needs_sync()
             self._sweep_idle_tasks()
+            if self._try_idle_exit():
+                return
             self.stop_event.wait(0.5)
 
     def _primary_browser(self):
@@ -655,16 +760,17 @@ class BridgeDaemon:
         server.bind(str(self.socket_path))
         os.chmod(self.socket_path, 0o600)
         server.listen(64)
-        server.settimeout(0.2)
+        server.setblocking(False)
         _atomic_write_private(self.pid_path, str(os.getpid()).encode("ascii"))
 
         try:
             self.vault_private.start()
             threading.Thread(target=self._idle_watch, daemon=True).start()
             while not self.stop_event.is_set():
-                try:
-                    conn, _ = server.accept()
-                except socket.timeout:
+                if not select.select([server], [], [], 0.2)[0]:
+                    continue
+                conn = self._accept_connection(server)
+                if conn is None:
                     continue
                 threading.Thread(target=self._serve_connection, args=(conn, token), daemon=True).start()
         finally:
@@ -889,6 +995,7 @@ class BridgeDaemon:
         finally:
             reader.close()
             conn.close()
+            self._connection_closed(conn)
 
     def _serve_client(self, conn: socket.socket, reader) -> None:
         while not self.stop_event.is_set():
@@ -903,19 +1010,20 @@ class BridgeDaemon:
             conn.sendall(_encode_line(response))
 
     def _dispatch_client(self, method: Any, params: Any) -> Any:
-        # 中文注释：直接共享 RPC（含官方适配器）也计入活动；清理查询和生命周期信号不延长任务寿命。
-        if (isinstance(method, str) and method.startswith('shared.') and isinstance(params, dict)
-                and method not in {'shared.activity', 'shared.session_end', 'shared.cleanup_status', 'shared.cleanup_retry', 'shared.sweep_ungroup', 'shared.sweep_close'}):
-            owner = self._required_string(params, 'owner')
-            if 'taskId' in params:
-                self._owned_task(params)
-            if self._session_activity(owner, params.get('taskId')):
+        with self._lifecycle_activity():
+            # 中文注释：直接共享 RPC（含官方适配器）也计入活动；清理查询和生命周期信号不延长任务寿命。
+            if (isinstance(method, str) and method.startswith('shared.') and isinstance(params, dict)
+                    and method not in {'shared.activity', 'shared.session_end', 'shared.cleanup_status', 'shared.cleanup_retry', 'shared.sweep_ungroup', 'shared.sweep_close'}):
+                owner = self._required_string(params, 'owner')
+                if 'taskId' in params:
+                    self._owned_task(params)
+                if self._session_activity(owner, params.get('taskId')):
+                    self._flush_tasks()
+            result = self._dispatch_client_impl(method, params)
+            # 中文注释：创建、撤销与清理回执必须在返回前持久化；动作路径仍合并快照。
+            if method in {'shared.create', 'shared.cancel', 'shared.close', 'shared.handoff', 'shared.resume', 'shared.cleanup_retry', 'shared.session_end', 'shared.sweep_ungroup', 'shared.sweep_close'}:
                 self._flush_tasks()
-        result = self._dispatch_client_impl(method, params)
-        # 中文注释：创建、撤销与清理回执必须在返回前持久化；动作路径仍合并快照。
-        if method in {'shared.create', 'shared.cancel', 'shared.close', 'shared.handoff', 'shared.resume', 'shared.cleanup_retry', 'shared.session_end', 'shared.sweep_ungroup', 'shared.sweep_close'}:
-            self._flush_tasks()
-        return result
+            return result
 
     def _dispatch_client_impl(self, method: Any, params: Any) -> Any:
         if not isinstance(params, dict):
@@ -2137,7 +2245,7 @@ class BridgeDaemon:
                             self._persist_tasks()
         if extension is not None and task.get("workTabs"):
             # 中文注释：终态收组在后台执行，不能把有界 release 延长为等待在途动作。
-            threading.Thread(target=self._ungroup_terminal_tasks, args=(task["instanceId"], extension, task["id"]), daemon=True).start()
+            self._start_lifecycle_worker(self._ungroup_terminal_tasks, task["instanceId"], extension, task["id"])
         self._notify_tasks_changed(task["instanceId"])
         return self._public_task(task)
 
@@ -2865,7 +2973,7 @@ class BridgeDaemon:
                     self._finish_approval_locked(key, 'approval_denied', '用户拒绝，未执行')
                     return {'status': 'denied'}
                 pending['status'] = 'approved'
-                threading.Thread(target=self._approval_worker, args=(key,pending), daemon=True).start()
+                self._start_lifecycle_worker(self._approval_worker, key, pending)
                 return {'status': 'approved'}
         if method in {'extension.pause', 'extension.unpause'}:
             task_id = self._required_string(params, 'taskId')
@@ -3396,7 +3504,7 @@ class BridgeDaemon:
                 hello_result.update(instanceId=instance_id, connectionGeneration=connection_generation)
             self._send_extension(extension, {"id": request.get("id"), "result": hello_result})
             # 中文注释：hello 后只对最近终态且清理未确认的任务补收组，needs_sync 保留恢复组。
-            threading.Thread(target=self._ungroup_terminal_tasks, args=(instance_id, extension), daemon=True).start()
+            self._start_lifecycle_worker(self._ungroup_terminal_tasks, instance_id, extension)
             while not self.stop_event.is_set():
                 request = _read_line(reader)
                 if self._accept_extension_response(extension, request):
@@ -3419,7 +3527,7 @@ class BridgeDaemon:
                 ):
                     self._notify_tasks_changed(instance_id)
                     if method in {"extension.stop", "extension.revoke_access"}:
-                        threading.Thread(target=self._ungroup_terminal_tasks, args=(instance_id, extension, request.get("params", {}).get("taskId")), daemon=True).start()
+                        self._start_lifecycle_worker(self._ungroup_terminal_tasks, instance_id, extension, request.get("params", {}).get("taskId"))
         finally:
             if instance_id is not None:
                 with self.state_lock:

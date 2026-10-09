@@ -4,9 +4,11 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
+import socket
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / "native-bridge"
@@ -19,6 +21,193 @@ try:
     spec.loader.exec_module(daemon_module)
 finally:
     sys.path.remove(str(BRIDGE))
+
+
+class SafeIdleExitTests(unittest.TestCase):
+    def setUp(self):
+        self.daemon = daemon_module.BridgeDaemon(Path(tempfile.gettempdir()) / 'idle-unit')
+
+    def tick(self, now):
+        with patch.object(daemon_module.time, 'monotonic', return_value=now):
+            return self.daemon._try_idle_exit()
+
+    def test_safe_idle_exit_waits_full_default_grace(self):
+        grace = daemon_module._DAEMON_IDLE_GRACE_SECONDS
+        self.assertFalse(self.tick(10))
+        self.assertFalse(self.tick(10 + grace - .01))
+        self.assertTrue(self.tick(10 + grace))
+        self.assertTrue(self.daemon.stop_event.is_set())
+
+    def test_safe_idle_exit_requires_verified_terminal_tasks(self):
+        clean = {'state': 'closed', 'cleanupState': 'succeeded', 'requestHistory': []}
+        blocked = [
+            {**clean, 'state': state} for state in
+            ('ready', 'running', 'paused', 'needs_sync', 'pending_approval', 'authorizing', 'future')
+        ] + [
+            {**clean, 'cleanupState': state} for state in ('pending', 'unknown', 'failed', None)
+        ] + [
+            {**clean, 'currentOperation': operation} for operation in
+            (None, {}, {'state': 'running'}, {'state': 'pending'}, {'state': 'unknown'}, {'state': 'future'})
+        ] + [
+            {**clean, 'requestHistory': history} for history in
+            (None, {}, [{}], [{'state': state} for state in ('dispatched',)],
+             [{'state': 'awaiting_approval'}], [{'state': 'awaiting_human'}], [{'state': 'unknown'}])
+        ] + [{**clean, 'operationTimeline': [{'state': 'unknown'}]},
+             {**clean, 'idlePendingHuman': True}, {**clean, 'vaultPermit': {'pending': True}}]
+        for task in blocked:
+            with self.subTest(task=task):
+                self.daemon = daemon_module.BridgeDaemon(Path(tempfile.gettempdir()) / 'idle-unit')
+                self.daemon.tasks['task'] = task
+                self.assertFalse(self.tick(10))
+                self.assertFalse(self.tick(100))
+                self.assertFalse(self.daemon.stop_event.is_set())
+                self.assertEqual(self.daemon.tasks['task'], task)
+        for state in ('closed', 'cancelled', 'failed'):
+            with self.subTest(terminal=state):
+                self.daemon = daemon_module.BridgeDaemon(Path(tempfile.gettempdir()) / 'idle-unit')
+                self.daemon.tasks['task'] = {**clean, 'state': state,
+                    'currentOperation': {'state': 'succeeded'},
+                    'requestHistory': [{'state': 'confirmed'}, {'state': 'rejected'}]}
+                self.assertFalse(self.tick(10))
+                self.assertTrue(self.tick(100))
+
+    def test_safe_idle_exit_blocks_pending_state_and_persistence(self):
+        for field, value in (
+                ('extensions', {'ext': {'pending': {'r': {}}}}),
+                ('tab_leases', {('ext', 7): 'task'}), ('inflight_requests', {'r': {}}),
+                ('preparing_requests', {'r': {}}), ('action_approvals', {'r': {}}),
+                ('api_credentials', {'task': {}}), ('api_connections', {'task': object()}),
+                ('pending_journal', [{}]), ('persist_dirty', True),
+                ('persist_error', OSError('fixture')), ('persist_timer', object())):
+            with self.subTest(field=field):
+                self.daemon = daemon_module.BridgeDaemon(Path(tempfile.gettempdir()) / 'idle-unit')
+                self.assertFalse(self.tick(10))
+                setattr(self.daemon, field, value)
+                self.assertFalse(self.tick(100))
+                self.assertFalse(self.daemon.stop_event.is_set())
+        self.daemon = daemon_module.BridgeDaemon(Path(tempfile.gettempdir()) / 'idle-unit')
+        self.daemon.persist_lock.acquire()
+        try:
+            self.assertFalse(self.tick(10))
+            self.assertFalse(self.tick(100))
+        finally:
+            self.daemon.persist_lock.release()
+
+    def test_safe_idle_exit_preserves_private_nonce_and_mirror_pending(self):
+        for pending in ('nonce', 'mirror', 'relay'):
+            with self.subTest(pending=pending):
+                self.daemon = daemon_module.BridgeDaemon(Path(tempfile.gettempdir()) / 'idle-unit')
+                if pending == 'nonce':
+                    self.daemon.vault_private._nonces[('session', 'task', 7)] = {'expiresAt': 0}
+                elif pending == 'mirror':
+                    self.daemon.cookie_mirror.operations['fixture'] = {'status': 'preparing'}
+                else:
+                    self.daemon.cookie_mirror.relay.chunks['fixture'] = (0, [])
+                self.assertFalse(self.tick(10))
+                self.assertFalse(self.tick(100))
+                self.assertFalse(self.daemon.stop_event.is_set())
+
+
+    def test_safe_idle_exit_counts_unauthenticated_accepted_connections(self):
+        with tempfile.TemporaryDirectory(dir=tempfile.gettempdir()) as directory:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                server.bind(str(Path(directory) / 's'))
+                server.listen(1)
+                server.setblocking(False)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+                    peer.connect(str(Path(directory) / 's'))
+                    conn = self.daemon._accept_connection(server)
+                    self.assertIsNotNone(conn)
+                    assert conn is not None
+                    try:
+                        self.assertFalse(self.tick(10))
+                        self.assertFalse(self.tick(100))
+                    finally:
+                        conn.close()
+                        self.daemon._connection_closed(conn)
+                    self.assertFalse(self.tick(101))
+                    self.assertFalse(self.tick(130))
+                    self.assertTrue(self.tick(131))
+                    self.assertIsNone(self.daemon._accept_connection(server))
+
+    def test_safe_idle_exit_counts_private_unauthenticated_socket(self):
+        with tempfile.TemporaryDirectory(dir=tempfile.gettempdir()) as directory:
+            self.daemon = daemon_module.BridgeDaemon(Path(directory))
+            self.daemon._prepare_data_dir()
+            self.daemon.vault_private.socket_path = Path(directory) / 'v'
+            self.daemon.vault_private.start()
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+                    peer.connect(str(self.daemon.vault_private.socket_path))
+                    deadline = time.monotonic() + 1
+                    while not self.daemon.lifecycle_connections and time.monotonic() < deadline:
+                        time.sleep(.005)
+                    self.assertEqual(len(self.daemon.lifecycle_connections), 1)
+                    self.assertFalse(self.tick(10))
+                    self.assertFalse(self.tick(100))
+                    peer.shutdown(socket.SHUT_RDWR)
+                deadline = time.monotonic() + 1
+                while self.daemon.lifecycle_connections and time.monotonic() < deadline:
+                    time.sleep(.005)
+                self.assertFalse(self.daemon.lifecycle_connections)
+            finally:
+                self.daemon.stop_event.set()
+                self.daemon.vault_private.close()
+
+    def test_safe_idle_exit_waits_for_admitted_background_worker(self):
+        entered = daemon_module.threading.Event()
+        release = daemon_module.threading.Event()
+        def work():
+            entered.set()
+            release.wait(2)
+        worker = self.daemon._start_lifecycle_worker(work)
+        try:
+            self.assertTrue(entered.wait(1))
+            self.assertFalse(self.tick(10))
+            self.assertFalse(self.tick(100))
+        finally:
+            release.set()
+            if worker is not None:
+                worker.join(2)
+        self.assertFalse(self.tick(101))
+        self.assertTrue(self.tick(131))
+        with self.assertRaises(daemon_module.ProtocolError):
+            self.daemon._start_lifecycle_worker(work)
+
+    def test_safe_idle_exit_refuses_request_dispatch_after_latch(self):
+        self.assertFalse(self.tick(10))
+        self.assertTrue(self.tick(100))
+        with self.assertRaises(daemon_module.ProtocolError) as caught:
+            self.daemon._dispatch_client('health', {})
+        self.assertEqual(caught.exception.code, 'service_stopping')
+
+    def test_safe_idle_exit_waits_for_expired_mirror_cleanup_on_old_connection(self):
+        # 中文注释：断开的扩展仍可能有后台清理；删除 operation 不能代表收尾完成。
+        ext = {'sendLock': daemon_module.threading.RLock(),
+               'pendingLock': daemon_module.threading.Lock(), 'pending': {},
+               'socket': socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)}
+        ext['socket'].close()
+        self.daemon.cookie_mirror.operations['fixture'] = {
+            'transferId': 'fixture', 'status': 'preparing',
+            'sourceConnection': ext, 'targetConnection': ext}
+        ext['sendLock'].acquire()
+        worker = daemon_module.threading.Thread(target=self.daemon.cookie_mirror.expire, args=('fixture',))
+        worker.start()
+        try:
+            deadline = time.monotonic() + 1
+            while not ext['pending'] and time.monotonic() < deadline:
+                time.sleep(.001)
+            self.assertTrue(ext['pending'])
+            self.assertFalse(self.daemon.cookie_mirror.operations)
+            self.assertFalse(self.tick(10))
+            self.assertFalse(self.tick(40))
+            self.assertTrue(worker.is_alive())
+        finally:
+            ext['sendLock'].release()
+            worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(self.tick(50))
+        self.assertTrue(self.tick(80))
 
 
 class NativeV2DaemonTests(unittest.TestCase):

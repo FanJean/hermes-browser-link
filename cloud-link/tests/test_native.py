@@ -1,5 +1,6 @@
 """独立 Native host 的真实帧、授权入口和配对码检查。"""
 import importlib.util
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,20 @@ sys.path.insert(0,str(ROOT/'cloud-link'))
 from runtime.service import connection_code
 
 class NativeCloudTests(unittest.TestCase):
+    def test_root_exclusive_fence_blocks_native_before_hello_without_writes(self):
+        with tempfile.TemporaryDirectory(prefix='hcn-fence-') as scratch:
+            home=Path(scratch).resolve()
+            descriptor=os.open(home,os.O_RDONLY|os.O_DIRECTORY)
+            try:
+                fcntl.flock(descriptor,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                result=subprocess.run([sys.executable,str(ROOT/'cloud-link/native_host.py'),
+                    'chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/'],input=b'',capture_output=True,
+                    env={**os.environ,'HERMES_HOME':str(home)},timeout=5)
+                self.assertEqual(result.returncode,4,result.stderr.decode())
+                self.assertEqual(list(home.iterdir()),[])
+            finally:
+                os.close(descriptor)
+
     def test_paired_native_protocol_rejects_obsolete_full_access_toggle(self):
         spec=importlib.util.spec_from_file_location('cloud_native_test',ROOT/'cloud-link/native_host.py')
         assert spec is not None and spec.loader is not None
@@ -25,9 +40,17 @@ class NativeCloudTests(unittest.TestCase):
         messages=[{'id':'hello','method':'hello','params':{'instance_id':'11111111-1111-4111-8111-111111111111','browser':'Chrome'}},
                   {'id':'full','method':'full_access','params':{'enabled':False}},EOFError()]
         replies=[]
+        temporary=tempfile.TemporaryDirectory(prefix='hcn-close-fence-');self.addCleanup(temporary.cleanup)
+        home=Path(temporary.name).resolve()
+        descriptor=os.open(home,os.O_RDONLY|os.O_DIRECTORY);self.addCleanup(os.close,descriptor)
+        def close_under_fence():
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(descriptor,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        service.close.side_effect=close_under_fence
         def thread(*,target,args,**kwargs):
             return Mock(start=lambda:target(*args))
-        with patch.object(native_host.sys,'argv',['native_host.py',origin]), \
+        with patch.dict(os.environ,{'HERMES_HOME':str(home)}), \
+             patch.object(native_host.sys,'argv',['native_host.py',origin]), \
              patch.object(native_host.framing,'_load_allowed_origins',return_value=[origin]), \
              patch.object(native_host.framing,'read_native_message',side_effect=messages), \
              patch.object(native_host.framing,'write_native_message',side_effect=lambda _out,value,_lock:replies.append(value)), \
@@ -37,6 +60,7 @@ class NativeCloudTests(unittest.TestCase):
             self.assertEqual(native_host.main(),0)
         self.assertIn('error',replies[1]);service.set_full_access.assert_not_called()
         service.close.assert_called_once()
+        fcntl.flock(descriptor,fcntl.LOCK_EX|fcntl.LOCK_NB)
 
     def test_native_channel_does_not_start_local_daemon_or_accept_unpaired_full_access(self):
         with tempfile.TemporaryDirectory(prefix='hcn-') as scratch:

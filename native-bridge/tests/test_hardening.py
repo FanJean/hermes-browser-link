@@ -24,7 +24,7 @@ class HardeningTests(unittest.TestCase):
         # Use the canonical short path for both daemon bind and peer connect.
         scratch = (Path.home() / ".hermes" / "cache" / "scratch").resolve()
         scratch.mkdir(parents=True, exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(prefix="bn-hardening-", dir=scratch)
+        self.temp = tempfile.TemporaryDirectory(prefix="bh-", dir=scratch)
         self.home = Path(self.temp.name) / "h"
         self.clients = []
         self.peers = []
@@ -76,7 +76,12 @@ class HardeningTests(unittest.TestCase):
         daemon.task_locks[task["id"]] = threading.RLock()
         daemon.dedupe[task["id"]] = {}
         daemon.tab_leases[(task["instanceId"], 7)] = task["id"]
-        daemon.extensions[task["instanceId"]] = {"instanceId": task["instanceId"]}
+        # 中文注释：合成扩展也使用真实写锁和可写 socket，覆盖任务通知的生产路径。
+        writer, reader = socket.socketpair()
+        self.addCleanup(writer.close)
+        self.addCleanup(reader.close)
+        daemon.extensions[task["instanceId"]] = {"instanceId": task["instanceId"],
+                                                "sendLock": threading.Lock(), "socket": writer}
         self.direct_daemons.append(daemon)
         return daemon, task
 
@@ -133,7 +138,7 @@ class HardeningTests(unittest.TestCase):
         # 中文注释：临时目录删除前结束恢复实例的异步快照，避免测试后台线程越过清理。
         restored._flush_tasks()
 
-    def test_extension_timeout_revokes_authority_instead_of_returning_ready(self):
+    def test_extension_timeout_preserves_authority_without_reexecution(self):
         daemon, task = self.direct_daemon()
         calls = []
 
@@ -144,22 +149,18 @@ class HardeningTests(unittest.TestCase):
             return {"released": True}
 
         daemon._extension_call = extension_call
+        params = {"owner": "owner-1", "taskId": "task-1", "requestId": "timeout-1",
+                  "action": "snapshot", "tabId": 7}
         with self.assertRaises(ProtocolError) as timed_out:
-            daemon._run_task(
-                {
-                    "owner": "owner-1",
-                    "taskId": "task-1",
-                    "requestId": "timeout-1",
-                    "action": "snapshot",
-                    "tabId": 7,
-                }
-            )
+            daemon._run_task(params)
         self.assertEqual(timed_out.exception.code, "extension_timeout")
-        self.assertEqual(task["state"], "needs_sync")
-        self.assertEqual(task["tabIds"], [])
-        self.assertNotIn(("instance-1", 7), daemon.tab_leases)
-        self.assertEqual([method for method, _params in calls], ["browser.execute", "browser.release"])
-        self.assertFalse(calls[-1][1]["closeAgentTabs"])
+        self.assertEqual(task["state"], "ready")
+        self.assertEqual(task["tabIds"], [7])
+        self.assertEqual(daemon.tab_leases[("instance-1", 7)], task['id'])
+        with self.assertRaises(ProtocolError) as replay:
+            daemon._run_task(params)
+        self.assertEqual(replay.exception.code, 'extension_timeout')
+        self.assertEqual([method for method, _params in calls], ["browser.execute"])
 
     def test_extension_error_is_deduplicated_without_reexecution(self):
         daemon, _task = self.direct_daemon()

@@ -53,9 +53,11 @@ Cookie copying does not copy localStorage, IndexedDB, device keys or MFA state, 
 
 ## Stable-release updates
 
-After installing the maintenance component, use `./install.sh --check-update`, `--update`, or `--auto-update check|install|off`. Scheduled checks run hourly; automatic installation waits until Chrome, Edge and Hermes exit. GitHub asset digest, archive paths, complete package inventory, version and extension identity are checked before the existing backup/rollback transaction. Manual upgrade, update and uninstall share the installation lock.
+The shared root contains one regular program directory at `plugins/browser-link`; named profiles reference it with direct directory links. Profile enablement, optional capabilities, task identities and private data stay separate. Upgrade includes old copies and unrecorded entries without enabling disabled profiles. Transactional backups and Hermes Desktop's application-level UI cache remain outside the shared-program claim. Unknown links and linked data/ancestor paths are refused; link-creation failure never falls back to copying or privilege elevation.
 
-Only stable releases qualify. GitHub pre-releases are skipped. Upgrade an older installation manually once if it predates the current stable update source. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
+After installing the maintenance component, use `./install.sh --check-update`, `--update`, or `--auto-update check|install|off`. Scheduled checks run hourly; automatic installation waits until Chrome, Edge and Hermes exit. GitHub asset digest, archive paths, complete package inventory, version and extension identity are checked before the existing backup/rollback transaction. Manual upgrade, update, uninstall and development sync share the installation and lifecycle guards. Active or unknown local/cloud work blocks replacement; the bridge exits after 30 seconds of verified safe idle, including completion of Cookie mirror cleanup.
+
+Only stable releases qualify. GitHub pre-releases are skipped. Older updaters reject the shared package. Upgrade manually once, using `--upgrade --maintenance` when the old cloud launcher requires it; maintenance preserves pairing and restores the launcher on failure. The updater does not close applications or approve browser access, and the updated extension still needs reloading. See [installation](installation.md#automatic-updates--自动更新).
 ## 独立云端连接
 
 扩展弹窗提供云端连接码、配对管理和独立云端连接授权；确认后云端普通任务直接执行，不再切换审批模式。网页端显示已配对浏览器的实际在线状态；云端只授权任务页，原本地权限保持独立。

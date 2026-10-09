@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import select
 import socket
 import stat
 import threading
@@ -100,7 +101,7 @@ class VaultPrivateService:
             raise
         os.chmod(self.socket_path, stat.S_IRUSR | stat.S_IWUSR)
         server.listen(16)
-        server.settimeout(0.2)
+        server.setblocking(False)
         self.server = server
         threading.Thread(target=self._accept, args=(server, token), name="browser-link-native-vault", daemon=True).start()
 
@@ -119,11 +120,13 @@ class VaultPrivateService:
     def _accept(self, server: socket.socket, token: str):
         while not self.daemon.stop_event.is_set():
             try:
-                conn, _ = server.accept()
-            except socket.timeout:
-                continue
-            except OSError:
+                if not select.select([server], [], [], 0.2)[0]:
+                    continue
+                conn = self.daemon._accept_connection(server)
+            except (OSError, ValueError):
                 return
+            if conn is None:
+                continue
             threading.Thread(target=self._serve, args=(conn, token), daemon=True).start()
 
     def _serve(self, conn: socket.socket, token: str):
@@ -150,7 +153,8 @@ class VaultPrivateService:
                     return
                 self._seen[request_id] = now
             try:
-                result = self._dispatch(request["op"], request["params"])
+                with self.daemon._lifecycle_activity():
+                    result = self._dispatch(request["op"], request["params"])
                 response = {"id": request_id, "result": result}
             except Exception:
                 # 中文注释：扩展、网页和后端的异常可能含秘密，私有端口统一返回固定错误。
@@ -162,6 +166,7 @@ class VaultPrivateService:
             if reader is not None:
                 reader.close()
             conn.close()
+            self.daemon._connection_closed(conn)
 
     def _scope(self, scope: Any):
         keys = {"sessionId", "owner", "taskId", "instanceId", "generation", "modeGeneration", "tabId", "allowedOrigins"}

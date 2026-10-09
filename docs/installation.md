@@ -56,15 +56,21 @@ hermes profile create work  # 仅当不存在 / only if missing
 ./install.sh --profile default --profile work
 ```
 
-只用 `work` 时运行 `./install.sh --profile work`。原生宿主和扩展固定安装到共享根目录，默认是 `$HOME/.hermes`；命名 profile 的插件副本位于 `<共享根>/profiles/<名>/plugins/browser-link`，由 Hermes CLI 单独启用。新增 profile 用 `./install.sh --upgrade --profile <名>`，不必在浏览器加载第二份扩展。
+只启用 `work` 时运行 `./install.sh --profile work`。共享根默认是 `$HOME/.hermes`；仅 `<共享根>/plugins/browser-link` 保存一份使用中的正规程序目录，命名 profile 的 `<共享根>/profiles/<名>/plugins/browser-link` 是直接指向它的目录链接，由 Hermes CLI 单独启用。新增 profile 用 `./install.sh --upgrade --profile <名>`，不必复制程序或加载第二份扩展。
 
-For only `work`, run `./install.sh --profile work`. The native host and extension live in the shared root (`$HOME/.hermes` by default); each named profile's plugin copy lives at `<shared-root>/profiles/<name>/plugins/browser-link` and is enabled through the Hermes CLI. Add a profile with `./install.sh --upgrade --profile <name>`; no second browser extension is needed.
+To enable only `work`, run `./install.sh --profile work`. The shared root defaults to `$HOME/.hermes`; one regular program directory lives at `<shared-root>/plugins/browser-link`. Named profiles use direct directory links at `<shared-root>/profiles/<name>/plugins/browser-link` and are enabled separately through the Hermes CLI. Add a profile with `./install.sh --upgrade --profile <name>`; no program copy or second extension is needed.
+
+程序共用不等于权限共用：各 profile 的启停、可选权限、配置、记忆、工作区、站点工具、任务身份和凭据数据继续隔离。Hermes Desktop 仍会生成一份应用级界面缓存；升级备份也保留，不承诺磁盘上没有任何额外程序副本。
+
+Sharing code does not share permissions: profile settings, optional capabilities, memory, workspaces, site tools, task identities and credential data remain separate. Hermes Desktop still materializes an application-level UI cache, and upgrade backups are retained; this is not a zero-copy claim for the entire disk.
 
 `HERMES_HOME` 或 `--hermes-home` 指向 `.../profiles/<名>` 时，安装器会解析到共享根；**仍需用 `--profile <名>` 选择启用对象**。自定义目录示例：`./install.sh --hermes-home /path/to/hermes-root --profile work`，其中 `work` 必须已存在于该根目录。不要把当前 profile 的 `HERMES_HOME` 直接用作连接检查根目录。
 
 When `HERMES_HOME` or `--hermes-home` points to `.../profiles/<name>`, the installer resolves the shared root; **you must still select the profile with `--profile <name>`**. For a custom root: `./install.sh --hermes-home /path/to/hermes-root --profile work`, where `work` must already exist under that root. Do not use the active profile's `HERMES_HOME` directly as the connection-check root.
 
-升级和卸载会自动处理此前安装的 profile。/ Upgrade and uninstall include previously installed profiles.
+升级会将已有全副本、未登记或停用的入口一并迁移为共享引用，但不把迁移当作启用授权。未传 `--profile` 的升级保留原启停状态；停用的仍停用。卸载包含已有入口，删除合法引用只解除链接，不沿链接删除共享程序。
+
+Upgrade includes existing, unrecorded and disabled program entries, migrating copies to shared references without granting enablement. An upgrade without `--profile` preserves each profile's enablement. Disabled profiles stay disabled. Uninstall includes existing entries; removing a valid reference unlinks it rather than following it to delete the shared program.
 
 ## Upgrade / 升级
 
@@ -78,6 +84,29 @@ Finish active tasks, then run from the new package or updated source:
 重载扩展并重启 Hermes 桌面端；此前若加载了其他目录，改为加载本次打印的路径。升级自动备份，失败时回滚；需要查看备份目录时加 `--verbose`。
 
 Reload the extension and restart Hermes Desktop. If you previously loaded another directory, load the newly printed path. Upgrade backs up the installation and rolls back on failure; add `--verbose` to see the backup directory.
+
+升级备份位于 `<共享根>/plugin-backups/`，在插件扫描目录之外；目录、原链接目标和配置按原类型恢复。未知、断链、链式、跨根及祖先链接会拒绝；数据目录不享受程序链接例外。无法创建目录链接时不提权、不回退复制，保持目标不变。
+
+Backups live outside plugin discovery in `<shared-root>/plugin-backups/`; rollback preserves directory types, original link targets and configuration. Unknown, broken, chained, cross-root and ancestor links are rejected. Data directories have no program-link exception. If directory links cannot be created, installation leaves targets unchanged instead of elevating privileges or falling back to copies.
+
+升级到本版后，退出 Chrome、Edge 和 Hermes，桥接仅在无连接、任务已终结且清理成功、没有未决操作并且账本已保存时，等待 30 秒自行退出。未知状态会继续阻止升级；安装器不会停止任务或进程。云端所有实例和历史账本也必须能确认空闲。
+
+After upgrading to this version and quitting Chrome, Edge and Hermes, the bridge exits after 30 seconds only when there are no clients, all tasks have finished with successful cleanup, no operations are pending, and state is saved. Unknown state blocks upgrade. The installer never stops tasks or processes; all cloud instances and legacy journals must also be verified idle.
+
+旧版桥接没有这项自动退出功能。首次迁移时先在旧版界面核实并完成任务和清理，再退出上述应用；若安装器仍报告旧桥接在运行，需要你核实 PID 对应本次共享根目录的 `daemon.py`，并自行以 `SIGTERM` 或 `SIGINT` 正常退出该旧进程。安装器不会代为停止进程。未决任务、`needs_sync` 或清理未知仍须先处理，不能强停或删除账本绕过门禁；系统重启也可能保留旧 PID/socket，不能作为已安全退出的证明。
+
+Older bridges do not support automatic exit. For the first migration, verify and finish tasks and cleanup in the old UI, then quit those apps. If the installer still reports a running bridge, verify that its PID belongs to this shared root's `daemon.py` and manually request a normal exit with `SIGTERM` or `SIGINT`. The installer never stops it. Pending tasks, `needs_sync` and unknown cleanup still block migration; do not force-stop or delete journals to bypass the guard. A system restart may leave stale PID/socket files and does not prove a safe exit.
+
+如果旧云端入口提示需要维护迁移，确认已退出上述应用后，在新包目录运行一次：
+For an older cloud launcher that requires maintenance, quit those apps and run once from the new package:
+
+```sh
+./install.sh --upgrade --maintenance
+```
+
+此流程备份并临时暂停旧启动入口，再核实空闲；成功后切换到新版，失败恢复原入口，不删除配对。旧更新器会拒绝自动安装此共享包，须先完成这次手动迁移。
+
+Maintenance backs up and temporarily pauses the old launcher, verifies idle state, and restores the original launcher on failure. Pairing data is kept. Older updaters reject this shared package; complete the manual migration first.
 
 ## Automatic updates / 自动更新
 
@@ -162,6 +191,6 @@ For custom installs, set `bridge_home` to the actual **shared root**, not `<shar
 | 安装包校验失败 / Package validation failed | 重新下载完整 Release ZIP / Download the complete Release ZIP again |
 | 未连接 / Not connected | 加载或重载打印的目录，在弹窗点“连接 Hermes”，再运行上面的检查命令 / Load or reload the printed directory, click Connect Hermes in the popup and rerun the check |
 | 插件启用失败 / Plugin activation failed | 运行 `hermes --profile <name> plugins enable browser-link` 查看原因 / Run this command to see the cause |
-| 升级无法停止旧连接 / Upgrade cannot stop the old connection | 退出浏览器和 Hermes 后重试 / Quit the browser and Hermes, then retry |
+| 升级检测到活动或未知状态 / Upgrade finds active or unknown state | 退出浏览器和 Hermes 后重试 / Quit the browser and Hermes, then retry |
 
 [代理安装提示词 / Agent prompt](agent-install-prompt.md) · [配置 / Configuration](configuration.md) · [安全说明 / Security](https://github.com/fanjing188/hermes-browser-link/blob/main/SECURITY.md) · [开发与手动安装 / Development and manual installation](development.md)

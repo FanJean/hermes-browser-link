@@ -257,12 +257,15 @@ try {
   await copyTree(path.join(source,'docs'),path.join(output,'docs'));
   await copyFile(path.join(source,'CHANGELOG.md'),path.join(output,'docs/CHANGELOG.md'));
   await writeFile(path.join(output,'RELEASE-STATUS.txt'),releaseVersion?
-    `RELEASE V${releaseVersion}: formal release built from commit ${commit}. See docs/CHANGELOG.md for the verified scope and stated limits.\n`:
+    // 中文注释：旧更新器只识别 RELEASE V 前缀，必须在其进入旧 CLI 前拒绝共享安装包。
+    `SHARED RELEASE V${releaseVersion}: formal release built from commit ${commit}. See docs/CHANGELOG.md for the verified scope and stated limits.\n`:
     `NOT FROZEN: V${declaredVersion} remains a development candidate, not a formal release. See docs/CHANGELOG.md for acceptance limits.\n`);
   // 中文注释：安装说明仅提供命令和操作；发布构建信息仍在 RELEASE-STATUS.txt。
   await writeFile(path.join(output,'INSTALL.txt'),`Browser Link ${releaseVersion || declaredVersion}
 Run ./install.sh. Python 3.11+ and Hermes are needed; source installation also needs Node.js 22.12+.
 Currently supported: macOS + Chrome/Edge. Tested with Hermes 0.21.4.
+One shared program at <shared-root>/plugins/browser-link; named profiles use direct links, while profile settings and private data remain separate.
+Upgrade migrates existing program copies without enabling disabled profiles; backups and the Hermes Desktop UI cache are retained separately.
 Load the printed extension directory, confirm connection authorization in the extension and restart Hermes Desktop; ordinary task-page actions run directly.
 Takeover, stop and credential protection remain available. Cookie mirroring and adopting an existing OAuth login window require separate confirmation.
 Upgrade: ./install.sh --upgrade, then reload the extension and restart Hermes Desktop.
