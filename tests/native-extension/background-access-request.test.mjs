@@ -35,7 +35,7 @@ async function loadAccessRequestHandler({windows=fakeWindows(),bridgeRequest=asy
  source=source.replace(/^import .*;\n/gm,'')
   .replace(/^const consent=new BrowserConsent.*;$/m,"const consent={load:async()=>{},readStatus:async()=>'disabled'};")
   .replace(/connect\(\);\s*$/,"globalThis.openAccessManagementRequest=openAccessManagementRequest;bridge=injectedBridge;connected=true;connectedInstanceId='browser-a';connectedGeneration='generation-a';");
- const context={CloudLink,showPanelNotification,clearPanelNotification,CookieMirror,chrome,Executor:function(){return executor;},registerWorkspaceStartup:()=>{},NativeWorkspaces:class{},Bridge:class{},BrowserConsent:class{},origin(){},isUiSender:()=>false,createApprovalNotifier(){},injectedBridge:{request:bridgeRequest}};
+ const context={CloudLink,showPanelNotification,clearPanelNotification,CookieMirror,chrome,Executor:function(){return executor;},reloadForInstalledBuild:async()=>false,BUILD_ID:'',registerWorkspaceStartup:()=>{},NativeWorkspaces:class{},Bridge:class{},BrowserConsent:class{},origin(){},isUiSender:()=>false,createApprovalNotifier(){},injectedBridge:{request:bridgeRequest}};
  vm.runInNewContext(source,context);
  return {handler:context.openAccessManagementRequest,events,chrome,windows};
 }

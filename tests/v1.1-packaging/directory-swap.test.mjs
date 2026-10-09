@@ -20,8 +20,12 @@ async function developmentFixture(t,selectedHome){
  await writeFile(marker,JSON.stringify({package:'browser-link',source:path.dirname(installed)}));
  const profile=path.join(home,'profiles','named'),link=path.join(profile,'plugins','browser-link');
  await mkdir(path.dirname(link),{recursive:true});await symlink(root,link);
- const run=(script,selectedHome=home)=>spawnSync(process.execPath,[path.join(repo,'scripts',script)],{encoding:'utf8',env:{...process.env,HERMES_HOME:selectedHome},timeout:1500,killSignal:'SIGINT'});
- return {base,repo,home,root,source,installed,desktop,marker,profile,link,run};
+ // 中文注释：替身 hermes 只写临时 ESTOP，测试绝不调用用户真实的 Hermes。
+ const hermes=path.join(base,'fake-hermes');
+ await writeFile(hermes,'#!/bin/sh\ncase "$1" in pause) : > "$HERMES_HOME/ESTOP";; resume) rm -f "$HERMES_HOME/ESTOP";; esac\n',{mode:0o700});
+ const env=selectedHome=>({...process.env,HERMES_HOME:selectedHome,BROWSER_LINK_HERMES:hermes,BROWSER_LINK_DEV_SYNC_WAIT_SECONDS:'0'});
+ const run=(script,selectedHome=home)=>spawnSync(process.execPath,[path.join(repo,'scripts',script)],{encoding:'utf8',env:env(selectedHome),timeout:1500,killSignal:'SIGINT'});
+ return {base,repo,home,root,source,installed,desktop,marker,profile,link,run,env};
 }
 
 test('dev watch normalizes a profile home and only updates the shared and application entries',async t=>{
@@ -153,11 +157,13 @@ test('real dev sync packages and swaps the shared root once while preserving pro
  }
  assert.ok(ready,`隔离 daemon 未启动：${daemonError}`);
  const originalLink=await readlink(f.link),config=path.join(f.profile,'config.yaml');await writeFile(config,'disabled-sentinel');
- const run=()=>spawnSync(process.execPath,[path.join(f.repo,'scripts','dev-sync-local.mjs')],{encoding:'utf8',env:{...process.env,HOME:f.base,HERMES_HOME:f.profile},timeout:120000});
- const refused=run();assert.notEqual(refused.status,0);assert.equal(daemon.exitCode,null);
+ const run=()=>spawnSync(process.execPath,[path.join(f.repo,'scripts','dev-sync-local.mjs')],{encoding:'utf8',env:{...f.env(f.profile),HOME:f.base},timeout:120000});
+ // 中文注释：维护模式只给身份核实过的 daemon 发 SIGTERM；缺少云端升级保护时仍在首次写入前拒绝，并删除维护标记。
+ const exited=once(daemon,'exit');
+ const refused=run();assert.notEqual(refused.status,0);
+ assert.deepEqual(await exited,[0,null]);
  assert.equal(await readFile(f.installed,'utf8'),'globalThis.preview = "old";');
- // 中文注释：测试仅结束自己启动的进程，正向同步验证从已退出的服务开始。
- daemon.kill('SIGTERM');await once(daemon,'exit');
+ assert.ok(!(await readdir(data)).includes('maintenance.json'));
  await mkdir(path.join(f.root,'cloud_link'),{recursive:true});
  await cp(path.join(f.repo,'cloud-link/native_host.py'),path.join(f.root,'cloud_link/native_host.py'),{recursive:true});
  await mkdir(path.join(f.root,'maintenance'),{recursive:true});
@@ -268,4 +274,97 @@ test('profile references must be direct links to the exact shared root',async t=
   await assert.rejects(installedPluginTargets(home),/link|链接/i);
   assert.equal(await readlink(target),destination);await rm(target);
  }
+});
+
+const ORIGIN='chrome-extension://dhioigkigkkhceflkkkmoljhdaefjohb/';
+const PYTHON=process.env.BROWSER_LINK_TEST_PYTHON||'python3';
+const REPO=path.resolve(import.meta.dirname,'../..');
+
+// 中文注释：维护标记存在时，本地宿主、客户端自动启动、daemon 本身和云端宿主都不能拉起服务。
+async function maintenanceHome(t){
+ const home=path.join(tmpdir(),`m${randomUUID().slice(0,4)}`);await mkdir(home,{mode:0o700});
+ t.after(()=>rm(home,{recursive:true,force:true}));
+ const data=path.join(home,'plugin-data','browser-link-native');
+ await mkdir(data,{recursive:true,mode:0o700});
+ await writeFile(path.join(data,'host-config.json'),JSON.stringify({allowedOrigins:[ORIGIN]}),{mode:0o600});
+ await writeFile(path.join(data,'maintenance.json'),JSON.stringify({version:1,pid:process.pid,token:'t'}),{mode:0o600});
+ return {home,data};
+}
+
+test('维护标记存在时 Native 宿主直接退出且不拉起 daemon',async t=>{
+ const {home,data}=await maintenanceHome(t);
+ const result=spawnSync(PYTHON,[path.join(REPO,'native-bridge/host.py'),ORIGIN],{input:'',encoding:'utf8',env:{...process.env,HERMES_HOME:home},timeout:10000});
+ assert.equal(result.status,5,result.stderr);
+ const names=await readdir(data);
+ for(const name of ['daemon.pid','bridge.sock','daemon.lock','client-startup.lock','token'])assert.ok(!names.includes(name),`不应创建 ${name}`);
+});
+
+test('维护标记存在时客户端自动启动报 maintenance，daemon 启动后立即退出',async t=>{
+ const {home,data}=await maintenanceHome(t);
+ const client=spawnSync(PYTHON,['-c',`
+import sys
+sys.path.insert(0,sys.argv[1])
+from client import ensure_service, BridgeError
+try:
+    ensure_service(sys.argv[2])
+except BridgeError as error:
+    print(error.code)
+`,path.join(REPO,'native-bridge'),home],{encoding:'utf8',timeout:10000});
+ assert.equal(client.stdout.trim(),'maintenance',client.stderr);
+ const daemon=spawnSync(PYTHON,[path.join(REPO,'native-bridge/daemon.py'),'--home',home],{encoding:'utf8',timeout:10000});
+ assert.equal(daemon.status,0,daemon.stderr);
+ const names=await readdir(data);
+ for(const name of ['daemon.pid','bridge.sock','daemon.lock'])assert.ok(!names.includes(name),`不应创建 ${name}`);
+});
+
+test('维护标记存在时云端宿主不取锁直接退出；运行中的云端宿主看到标记后自行退出',async t=>{
+ const {home,data}=await maintenanceHome(t);
+ const early=spawnSync(PYTHON,[path.join(REPO,'cloud-link/native_host.py'),ORIGIN],{input:'',env:{...process.env,HERMES_HOME:home},timeout:10000});
+ assert.equal(early.status,5,String(early.stderr));
+ assert.ok(!(await readdir(path.join(home,'plugin-data'))).includes('browser-link-cloud'));
+ await rm(path.join(data,'maintenance.json'));
+ const running=spawn(PYTHON,[path.join(REPO,'cloud-link/native_host.py'),ORIGIN],{stdio:['pipe','ignore','pipe'],env:{...process.env,HERMES_HOME:home}});
+ t.after(async()=>{if(running.exitCode===null&&running.signalCode===null){running.kill('SIGKILL');await once(running,'exit');}});
+ await new Promise(resolve=>setTimeout(resolve,700));
+ assert.equal(running.exitCode,null,'无标记时宿主应保持运行');
+ const exited=once(running,'exit');
+ await writeFile(path.join(data,'maintenance.json'),'{}',{mode:0o600});
+ const timer=setTimeout(()=>running.kill('SIGKILL'),5000);
+ const [code,signal]=await exited;clearTimeout(timer);
+ // 中文注释：宿主给自己发 SIGTERM 后走原收尾路径正常返回，而不是被外部强杀。
+ assert.equal(signal,null);assert.equal(code,0);
+});
+
+test('扩展检测到已安装构建变化只重载一次，未构建源码和读取失败不重载',async()=>{
+ const {reloadForInstalledBuild,RELOAD_KEY}=await import('../../native-extension/build-reload.mjs');
+ const A='a'.repeat(64),B='b'.repeat(64),C='c'.repeat(64);
+ let installed=B,reloads=0,fetches=0,fail=false;const store={};
+ const chrome={runtime:{getURL:file=>`chrome-extension://id/${file}`,reload(){reloads++;}},
+  storage:{local:{get:async key=>({[key]:store[key]}),set:async value=>{Object.assign(store,value);}}}};
+ const fetch=async(url,options)=>{fetches++;assert.equal(url,'chrome-extension://id/BUILD-DEPS.json');assert.equal(options.cache,'no-store');
+  if(fail)throw Error('swap in progress');return {ok:true,json:async()=>({buildId:installed})};};
+ assert.equal(await reloadForInstalledBuild({chrome,fetch,loadedBuildId:''}),false);
+ assert.equal(fetches,0,'源码目录未构建时不读取');
+ assert.equal(await reloadForInstalledBuild({chrome,fetch,loadedBuildId:B}),false);
+ assert.equal(reloads,0);
+ assert.equal(await reloadForInstalledBuild({chrome,fetch,loadedBuildId:A}),true);
+ assert.equal(reloads,1);assert.equal(store[RELOAD_KEY],B);
+ // 中文注释：重载后仍加载旧构建（如文件不完整）时同一哈希不再重载，避免循环。
+ assert.equal(await reloadForInstalledBuild({chrome,fetch,loadedBuildId:A}),false);
+ assert.equal(reloads,1);
+ installed=C;
+ assert.equal(await reloadForInstalledBuild({chrome,fetch,loadedBuildId:A}),true);
+ assert.equal(reloads,2);
+ fail=true;installed='d'.repeat(64);
+ assert.equal(await reloadForInstalledBuild({chrome,fetch,loadedBuildId:A}),false);
+ fail=false;installed='not-a-hash';
+ assert.equal(await reloadForInstalledBuild({chrome,fetch,loadedBuildId:A}),false);
+ assert.equal(reloads,2);
+});
+
+test('扩展连接本地桥前先检查构建，握手前断开不快速重试',async()=>{
+ const source=await readFile(path.join(REPO,'native-extension/background.mjs'),'utf8');
+ const connect=source.slice(source.indexOf('async function connect(){'));
+ assert.ok(connect.indexOf('reloadForInstalledBuild(')>0&&connect.indexOf('reloadForInstalledBuild(')<connect.indexOf("connectNative('com.hermes.browser_link')"));
+ assert.match(connect,/if\(wasConnected\)setTimeout\(\(\)=>\{connect\(\);\},1500\);/);
 });

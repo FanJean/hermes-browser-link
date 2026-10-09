@@ -5,6 +5,8 @@ registerWorkspaceStartup(chrome);
 import {Executor,origin} from './core.mjs';
 import {Bridge,isUiSender,BrowserConsent} from './bridge.mjs';
 import {CloudLink} from './cloud-link.mjs';
+import {BUILD_ID} from './build-id.mjs';
+import {reloadForInstalledBuild} from './build-reload.mjs';
 import {CookieMirror} from './cookie-mirror.mjs';
 import {createApprovalNotifier,showPanelNotification,clearPanelNotification} from './approval-notifier.mjs';
 let bridge=null,connected=false,connecting=false,lastError='尚未连接本地桥';
@@ -292,15 +294,18 @@ async function refreshOverlaySteps(current){
 const changed=()=>{chrome.runtime.sendMessage({type:'changed'}).catch(()=>{});if(connected&&bridge){const current=bridge;void refreshOverlaySteps(current);consent.synchronize(current).catch(e=>{lastError=e.message;}).then(()=>refreshApprovals(current));}};
 async function connect(){if(bridge||connecting)return;connecting=true;try{
  await consentLoaded;await disconnectBarrier;
+ // 中文注释：开发同步替换已安装文件后先重载扩展，再用新代码连接；同一构建只重载一次。
+ if(await reloadForInstalledBuild({chrome,fetch:(...args)=>fetch(...args),loadedBuildId:BUILD_ID}))return;
  const stored=await chrome.storage.local.get('browserInstanceId');const session=await chrome.storage.session.get('instanceId');const instanceId=stored.browserInstanceId||session.instanceId||crypto.randomUUID();await chrome.storage.local.set({browserInstanceId:instanceId});await chrome.storage.session.set({instanceId});
  // 中文注释：独立连接云端 host；原本地 Native 端口及重连流程保持原样。
  void cloud.connect(instanceId,/Edg/.test(navigator.userAgent)?'Edge':'Chrome');
  if(!executor.workspaces)executor.workspaces=new NativeWorkspaces(chrome,instanceId,id=>executor.leases.has(id));
  await executor.workspaces.manager.reconcile();
  const port=chrome.runtime.connectNative('com.hermes.browser_link');const current=new Bridge(port,executor,changed,{onConsentStatus:()=>consent.readStatus(),onAccessRequest:openAccessManagementRequest,onContentFilter:readContentFilter,onCookieMirror:(method,p)=>cookieMirror.handle(method,p),onCookieDisconnect:()=>{cookieMirror.disconnect();}});bridge=current;
- port.onDisconnect.addListener(()=>{if(bridge!==current)return;lastError=chrome.runtime.lastError?.message||'本地桥已断开；操作不会自动重放';connected=false;connectedInstanceId=null;connectedGeneration=null;if(accessWindow)accessWindow.requestId=null;bridge=null;current.close();const old=notifier;notifier=null;approvalInstance=null;old?.dispose().catch(()=>{});disconnectBarrier=executor.disconnect().catch(()=>{});
+ port.onDisconnect.addListener(()=>{if(bridge!==current)return;const wasConnected=connected;lastError=chrome.runtime.lastError?.message||'本地桥已断开；操作不会自动重放';connected=false;connectedInstanceId=null;connectedGeneration=null;if(accessWindow)accessWindow.requestId=null;bridge=null;current.close();const old=notifier;notifier=null;approvalInstance=null;old?.dispose().catch(()=>{});disconnectBarrier=executor.disconnect().catch(()=>{});
   // 中文注释：本地桥意外断开（如 daemon 重启）后很快重连一次；在途动作不重放，其余仍靠 30 秒定时重连兜底。
-  setTimeout(()=>{connect();},1500);});
+  // 握手前就断开（如开发同步维护中宿主直接退出）不快速重试，等 30 秒定时重连，避免反复拉起宿主进程。
+  if(wasConnected)setTimeout(()=>{connect();},1500);});
  // 中文注释：握手版本与扩展清单保持一致，避免安装后仍报告旧版本。
  // 中文注释：握手版本读取当前扩展清单，清单由 version:set 与根包版本同步。
  const hello=await current.request('extension.hello',{instanceId,browser:/Edg/.test(navigator.userAgent)?'edge':'chrome',version:chrome.runtime.getManifest().version,capabilities:{features:['browser_core_v1','page_parse_v1','page_function_v1','network_evidence_v1','cookie_mirror_v1'],statusProjection:true,consentStatus:true,accessRequest:typeof chrome.windows?.create==='function'}});if(bridge===current){connected=true;connectedInstanceId=instanceId;connectedGeneration=typeof hello?.connectionGeneration==='string'?hello.connectionGeneration:null;lastError='';if(chrome.windows?.create&&chrome.windows?.update&&chrome.runtime.getURL){notifier=createApprovalNotifier({chrome,instanceId});approvalInstance=instanceId;}try{executor.diagnostics.recordSafely({component:'mv3_background',event_type:'connection_state',connection_id:executor.diagnosticConnection,status:'connected'});}catch{}// 中文注释：握手后按 daemon 本实例终态与本地工作区日志清理重载遗留浮层，先于恢复授权派发。

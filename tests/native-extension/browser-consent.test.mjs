@@ -86,7 +86,7 @@ test('trusted popup rejects removed mode controls without changing tasks',async(
   let source=await readFile(new URL('../../native-extension/background.mjs',import.meta.url),'utf8');
   source=source.replace(/^import .*;\n/gm,'').replace(/connect\(\);\s*$/,'bridge=injectedBridge;connected=true;');
   vm.runInNewContext(source,{CloudLink,CookieMirror,chrome,Executor,BrowserConsent:module.BrowserConsent,isUiSender:module.isUiSender,
-   registerWorkspaceStartup:()=>{},injectedBridge:{closed:false,request:async method=>{calls.push(method);return method==='extension.tasks'?[]:{revoked:true};}}});
+   reloadForInstalledBuild:async()=>false,BUILD_ID:'',registerWorkspaceStartup:()=>{},injectedBridge:{closed:false,request:async method=>{calls.push(method);return method==='extension.tasks'?[]:{revoked:true};}}});
   for(const message of [{type:'browser_consent',enabled:false},{type:'mode',taskId:'task',mode:'smart'}]){
    const result=await new Promise(resolve=>listener(message,{id:'extension',url:'chrome-extension://extension/popup.html'},resolve));
    assert.equal(result.error,'不支持的操作');

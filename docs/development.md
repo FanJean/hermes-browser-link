@@ -52,8 +52,23 @@ docs/                   Documentation
    {"extensionDir": "/absolute/path/to/native-extension"}
    ```
 
-2. Run `npm run dev:sync`. It refuses to run while browser tasks are active, packages the source, updates the shared root program once plus the extension and Desktop UI cache, reloads Hermes plugins after releasing the installation locks. It refuses active or unknown local and cloud state and never stops a running daemon. The next browser connection starts the new daemon. Named profile references follow the root without being replaced. Old profile copies must first be migrated with `./install.sh --upgrade`; unknown, indirect or linked ancestor paths are rejected before writing targets. A temporary backup is kept only if the sync fails. It refuses when the installed extension version differs from the source; for a version upgrade (source newer, same extension) run `npm run dev:sync -- --allow-upgrade` after making your own backup.
-3. Click **Reload** on the extension in each browser. Restart Hermes Desktop if you changed `executor-plugin/dashboard/plugin_api.py`.
+2. Run `npm run dev:sync`. One command performs the whole local deployment; you do not need to quit the browsers, stop the Hermes gateway, edit `tasks.json` or reload the extension by hand:
+   1. It runs `hermes pause --reason "browser-link dev:sync"` so Hermes starts no new work. If Hermes was already paused (`$HERMES_HOME/ESTOP` exists) it neither pauses nor resumes. `BROWSER_LINK_HERMES` selects a different `hermes` executable.
+   2. It polls `tasks.json` until every task is `closed`, `cancelled` or `failed` with cleanup `succeeded`. The limit is 300 seconds; change it with `--wait-seconds <n>` or `BROWSER_LINK_DEV_SYNC_WAIT_SECONDS`. On timeout it lists the unfinished task ids and titles and exits without stopping any process. A task that already ended but whose cleanup is `unknown` or `failed` is listed at once, because waiting will not change it (see step 4 below).
+   3. It writes the maintenance marker `$HERMES_HOME/plugin-data/browser-link-native/maintenance.json` (0600, private directory, links refused). While it exists the Native host and plugin client do not start the daemon, a daemon started anyway exits immediately, and cloud hosts close themselves and release their instance locks. The extension waits for its regular 30-second reconnect instead of retrying quickly.
+   4. It sends SIGTERM only to a daemon whose PID file and command line match this installation, waits for it to exit by itself, and waits for the cloud instance locks to be released. Unknown processes are refused and never signalled.
+   5. It packages the source and, under the formal installation locks, updates the shared root program once plus the extension and Desktop UI cache. Named profile references follow the root without being replaced. Old profile copies must first be migrated with `./install.sh --upgrade`; unknown, indirect or linked ancestor paths are rejected before writing targets. A temporary backup is kept only if the sync fails.
+   6. Whether the sync succeeded or failed, it removes the maintenance marker, runs `hermes resume` (unless Hermes was paused before), and reloads Hermes plugins.
+
+   It refuses when the installed extension version differs from the source; for a version upgrade (source newer, same extension) run `npm run dev:sync -- --allow-upgrade` after making your own backup.
+3. The extension reloads itself: on its next connection to the local bridge (within about 30 seconds) it compares the `buildId` in the installed `BUILD-DEPS.json` with the build it loaded and calls `chrome.runtime.reload()` once per new build. Restart Hermes Desktop if you changed `executor-plugin/dashboard/plugin_api.py`.
+4. If a closed task with unknown cleanup blocks the sync, check in the browser that it left nothing behind, then mark it verified:
+
+   ```sh
+   npm run tasks:ack -- <taskId> --reason "checked in Edge" --stop-daemon
+   ```
+
+   It only writes while the daemon is stopped and its start lock is held; without `--stop-daemon` it refuses a running daemon, with it the command uses the same maintenance marker to stop the verified daemon first and removes the marker afterwards. It copies `tasks.json` to `tasks.json.ack-<time>-<random>.bak`, sets `cleanupState=succeeded` and `cleanupReason=verified_complete`, and records the reason and previous cleanup state under `userVerified`. It refuses tasks that are not closed, still hold permits or pending input, and an unmerged request journal. Once the daemon is confirmed stopped, closed tasks with successful cleanup no longer block the sync because of leftover `unknown`/`dispatched` entries in `requestHistory` or `operationTimeline`.
 
 For Desktop-page-only work, `npm run dev:watch` re-syncs `executor-plugin/desktop/plugin.js` on every save, writing only the shared root entry and application-level Desktop UI cache. It does not create per-profile program copies or enable profiles.
 

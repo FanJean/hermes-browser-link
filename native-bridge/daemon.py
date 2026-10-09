@@ -757,6 +757,9 @@ class BridgeDaemon:
 
     def run(self) -> int:
         self._prepare_data_dir()
+        # 中文注释：维护标记是最后一道防线；任何入口在同步期间拉起的 daemon 都立即退出。
+        if os.path.lexists(self.data_dir / "maintenance.json"):
+            return 0
         lock_fd = _open_private_regular(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         self.lock_file = os.fdopen(lock_fd, "a+")
         try:

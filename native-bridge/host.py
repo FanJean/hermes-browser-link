@@ -13,7 +13,7 @@ import sys
 import threading
 from typing import Any, ContextManager, Dict
 
-from client import ensure_service
+from client import ensure_service, maintenance_active
 
 _MAX_MESSAGE = 1024 * 1024
 
@@ -127,6 +127,9 @@ def main() -> int:
     data_dir = home / "plugin-data" / "browser-link-native"
     if origin not in _load_allowed_origins(data_dir):
         return 3
+    # 中文注释：开发同步维护中直接退出，不拉起 daemon；扩展按定时重连稍后再试。
+    if maintenance_active(home):
+        return 5
 
     ensure_service(home)
     token = (data_dir / "token").read_text(encoding="ascii").strip()

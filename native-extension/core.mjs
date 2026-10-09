@@ -2680,7 +2680,7 @@ export class Executor {
      // 中文注释：主框架可能先于 tabs.get 提交跳转；等标签页网址更新后再判定来源。
      if(error?.message==='origin denied')redirected=true;
      // 中文注释：新页提交导航前主框架是 about:blank 或空网址，只跳过本轮；关闭探测会退回等全部子资源加载完（常到上限 8 秒）。
-     else if(error?.message==='origin scheme denied'||error instanceof TypeError&&/Invalid URL/i.test(error.message)){}
+     else if(error?.message==='origin scheme denied'||error instanceof TypeError&&/Invalid URL/i.test(error.message)){/* 跳过本轮 */}
      else if(!isTransientLoadError(error))probeOff=true;
     }
     if(redirected){

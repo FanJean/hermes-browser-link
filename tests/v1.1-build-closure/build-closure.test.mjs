@@ -28,6 +28,8 @@ const sourceCopies = [
   'icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png',
   // 中文注释：独立云端连接和弹窗必须进入显式产物清单并逐字核验。
   'cloud-link.mjs', 'cloud-popup.mjs',
+  // 中文注释：开发同步后的自动重载模块逐字复制；构建哈希文件单独生成。
+  'build-reload.mjs',
   'bridge.mjs',
   'request-ledger.mjs',
   'background.mjs',
@@ -162,6 +164,7 @@ async function assertBuildContents(sourceRoot, output) {
     'core.mjs',
     'workspace-adapter.mjs',
     'BUILD-DEPS.json',
+    'build-id.mjs',
     ...Object.keys(vendorSources),
   ].sort();
   const actualFiles = (await collectFiles(output)).map(file => path.relative(output, file).split(path.sep).join('/')).sort();
@@ -195,6 +198,9 @@ async function assertBuildContents(sourceRoot, output) {
     assert.equal(deps.dependencies[staged].sha256, sha256(bytes), `${staged} source hash`);
     assert.equal(sha256(await readFile(path.join(output, staged))), deps.dependencies[staged].sha256, `${staged} staged hash`);
   }
+  // 中文注释：构建哈希同时写入 BUILD-DEPS.json 和扩展内嵌模块，供开发同步后的自动重载比对。
+  assert.match(deps.buildId, /^[a-f0-9]{64}$/);
+  assert.equal(await readFile(path.join(output, 'build-id.mjs'), 'utf8'), `// 中文注释：由 build.mjs 生成，记录本次构建哈希。\nexport const BUILD_ID='${deps.buildId}';\n`);
 
   const sourceManifest = JSON.parse(await readFile(path.join(sourceRoot, 'native-extension/manifest.json'), 'utf8'));
   const stagedManifest = JSON.parse(await readFile(path.join(output, 'manifest.json'), 'utf8'));

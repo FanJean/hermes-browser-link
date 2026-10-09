@@ -313,9 +313,20 @@ def _checked_data_dir(home: os.PathLike[str] | str) -> Path:
     return data_dir
 
 
+MAINTENANCE_MARKER = "maintenance.json"
+
+
+def maintenance_active(home: os.PathLike[str] | str) -> bool:
+    """开发同步维护期间存在标记；任何形式的同名节点都按维护处理，不跟随也不读取。"""
+    return os.path.lexists(_data_dir(home) / MAINTENANCE_MARKER)
+
+
 def ensure_service(home: os.PathLike[str] | str, timeout: float = 5.0) -> None:
     """Start the per-profile daemon if needed and wait for authenticated health."""
     home_path = Path(home).expanduser().resolve()
+    # 中文注释：维护期间不连接正在退出的旧 daemon，也不拉起新 daemon；调用方稍后重试。
+    if maintenance_active(home_path):
+        raise BridgeError("maintenance", "native bridge is under maintenance; retry later")
     data_dir = _checked_data_dir(home_path)
 
     if _probe(home_path):

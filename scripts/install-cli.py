@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import shutil
 import shlex
+import signal
 import sqlite3
 import stat
 import subprocess
@@ -28,7 +29,7 @@ EXTENSION_ID = 'dhioigkigkkhceflkkkmoljhdaefjohb'
 ORIGIN = f'chrome-extension://{EXTENSION_ID}/'
 TESTED_HERMES = (0, 21, 4)
 MIN_NODE = (22, 12, 0)
-CLOUD_FENCE_HOST_SHA256 = '884b6ba448cc7bd09c333533696ffc24dd642b68b630de71edd37709e15ff985'
+CLOUD_FENCE_HOST_SHA256 = '549d0d6a066220fb52420c8d500b13306dd9196a0280e832ef972cc3c8b526f3'
 ROOT = Path(__file__).resolve().parent
 if ROOT.name == 'scripts':
     ROOT = ROOT.parent
@@ -475,31 +476,52 @@ def activate(hermes, home, profiles, action, env):
                                f'运行 hermes --profile {name} plugins {action} browser-link 检查原因。')
 
 
-def assert_tasks_idle(home):
+TERMINAL_TASK_STATES = {'closed', 'cancelled', 'failed'}
+MAINTENANCE_MARKER = 'maintenance.json'
+
+
+def private_task_files(home):
     data = home / 'plugin-data/browser-link-native'
     tasks, journal = data / 'tasks.json', data / 'requests.jsonl'
     EXECUTOR.reject_target_symlinks([tasks, journal])
+    for path in (tasks, journal):
+        if path.exists():
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+                raise ValueError('unsafe persistence')
+    return tasks, journal
+
+
+def load_task_records(home):
+    tasks, journal = private_task_files(home)
+    # 中文注释：未合并派发日志无法证明空闲；不加载 daemon 以免恢复/改写任务。
+    if journal.exists() and journal.stat().st_size:
+        raise ValueError('unmerged request journal')
+    value = json.loads(tasks.read_bytes()) if tasks.exists() else {'version': 1, 'tasks': []}
+    if not isinstance(value, dict) or value.get('version') != 1 or not isinstance(value.get('tasks'), list):
+        raise ValueError('unknown persistence')
+    return value
+
+
+def assert_tasks_idle(home, *, daemon_stopped=False):
     try:
-        for path in (tasks, journal):
-            if path.exists():
-                info = path.lstat()
-                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
-                    raise ValueError('unsafe persistence')
-        # 中文注释：未合并派发日志无法证明空闲；不加载 daemon 以免恢复/改写任务。
-        if journal.exists() and journal.stat().st_size:
-            raise ValueError('unmerged request journal')
-        value = json.loads(tasks.read_bytes()) if tasks.exists() else {'version': 1, 'tasks': []}
-        if not isinstance(value, dict) or value.get('version') != 1 or not isinstance(value.get('tasks'), list):
-            raise ValueError('unknown persistence')
+        value = load_task_records(home)
         for task in value['tasks']:
             if (not isinstance(task, dict) or not isinstance(task.get('id'), str)
-                    or not isinstance(task.get('owner'), str) or task.get('state') not in {'closed', 'cancelled', 'failed'}
+                    or not isinstance(task.get('owner'), str) or task.get('state') not in TERMINAL_TASK_STATES
                     or task.get('cleanupState') != 'succeeded' or task.get('idlePendingHuman')
                     or task.get('idleRecoveryState') in {'paused', 'pending_approval'}
-                    or 'vaultPermit' in task or 'gatewayPermit' in task
-                    or not isinstance(task.get('currentOperation', {'state': 'succeeded'}), dict)
-                    or task.get('currentOperation', {'state': 'succeeded'}).get('state') not in {'succeeded', 'failed'}):
+                    or 'vaultPermit' in task or 'gatewayPermit' in task):
                 raise ValueError('active or unknown task')
+            # 中文注释：用户经 tasks:ack 核实过的已关闭任务，残留的当前操作不再代表可执行授权。
+            verified = daemon_stopped and isinstance(task.get('userVerified'), dict)
+            operation = task.get('currentOperation', {'state': 'succeeded'})
+            if not isinstance(operation, dict) or (operation.get('state') not in {'succeeded', 'failed'} and not verified):
+                raise ValueError('active or unknown task')
+            # 中文注释：daemon 已确认停止且任务已关闭、清理成功时，历史里的 unknown/dispatched 只是旧记录，
+            # 不会再有回执或执行；daemon 仍可能运行时继续拒绝。
+            if daemon_stopped:
+                continue
             for field, settled in (('requestHistory', {'confirmed', 'rejected'}),
                                    ('operationTimeline', {'succeeded', 'failed'})):
                 rows = task.get(field, [] if field == 'operationTimeline' else None)
@@ -507,7 +529,7 @@ def assert_tasks_idle(home):
                     raise ValueError('unsettled operation')
     except (OSError, ValueError, TypeError) as error:
         raise CloudGateError('活动任务或状态无法核实 / Task state is active or unknown.',
-                           '先结束任务并退出浏览器和 Hermes，再重试；安装不会停止任务。') from error
+                           '先结束任务再重试；已关闭但清理状态未知的任务核实后用 npm run tasks:ack -- <taskId> 标记。') from error
 
 
 def assert_daemon_stopped(home, env):
@@ -517,15 +539,16 @@ def assert_daemon_stopped(home, env):
         raise CloudGateError(str(error), error.fix) from error
 
 
-def check_daemon_stopped(home, env):
-    # 中文注释：现有协议不能原子确认活 daemon 空闲；任何存活桥接都拒绝，不发信号。
+def verified_daemon_pid(home, env):
+    # 中文注释：只承认 PID 文件私有且命令行与本安装 daemon 完全一致的进程；未知进程一律拒绝。
     data = home / 'plugin-data/browser-link-native'
     pid_path = data / 'daemon.pid'
+    EXECUTOR.reject_target_symlinks([pid_path, data / 'bridge.sock'])
     if not pid_path.exists():
         if (data / 'bridge.sock').exists():
             raise InstallError('无法确认桥接进程身份 / Cannot verify bridge process.',
                                '核对无 PID 的桥接套接字后重试；不会停止未知进程。')
-        return
+        return None
     info = pid_path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
         raise InstallError('桥接 PID 文件不安全 / Unsafe bridge PID file.', '退出浏览器和 Hermes，核对后重试。')
@@ -538,13 +561,112 @@ def check_daemon_stopped(home, env):
             raise InstallError('无法确认桥接进程身份 / Cannot verify bridge process.',
                                '核对过期 PID 的桥接套接字后重试；不会停止未知进程。')
         # 中文注释：已退出进程的旧记录不发送信号，保留到下一次桥接启动处理。
-        return
+        return None
     candidates = [home / 'plugins/browser-link/native_bridge/daemon.py', data / 'host-bin/daemon.py']
     if process.returncode or not any(process.stdout.strip().endswith(f' {path} --home {home}') for path in candidates):
         raise InstallError('无法确认桥接进程身份 / Cannot verify bridge process.',
                            '退出浏览器和 Hermes，手动核对桥接进程后重试；未发送信号。')
-    raise InstallError('桥接仍在运行 / Bridge is running.',
-                       '退出浏览器和 Hermes，并确认桥接退出后重试；不会自动停止任务。')
+    return int(raw)
+
+
+def check_daemon_stopped(home, env):
+    # 中文注释：现有协议不能原子确认活 daemon 空闲；任何存活桥接都拒绝，不发信号。
+    if verified_daemon_pid(home, env) is not None:
+        raise InstallError('桥接仍在运行 / Bridge is running.',
+                           '退出浏览器和 Hermes，并确认桥接退出后重试；不会自动停止任务。')
+
+
+def maintenance_marker(home):
+    data = home / 'plugin-data/browser-link-native'
+    EXECUTOR.reject_target_symlinks([data])
+    info = data.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        raise InstallError('桥接私有目录不安全 / Unsafe bridge data directory.', '核对目录为本人所有且权限 0700 后重试。')
+    return data / MAINTENANCE_MARKER
+
+
+def enter_maintenance(home, reason, owner_pid):
+    # 中文注释：标记存在期间 Native 宿主不拉起 daemon、云端宿主主动退出；令牌防止误删他人的标记。
+    marker = maintenance_marker(home)
+    if os.path.lexists(marker):
+        info = marker.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise InstallError('维护标记不安全 / Unsafe maintenance marker.', '核对后手动删除 ' + str(marker) + '。')
+        try:
+            owner = json.loads(marker.read_text()).get('pid')
+        except (OSError, ValueError, AttributeError):
+            owner = None
+        alive = False
+        if type(owner) is int and owner > 0:
+            try:
+                # 中文注释：信号 0 只检查进程是否存在，不投递任何信号。
+                os.kill(owner, 0)
+                alive = True
+            except ProcessLookupError:
+                alive = False
+            except PermissionError:
+                alive = True
+        if alive:
+            raise InstallError('另一个同步正在维护 / Another sync holds maintenance.', '等待它结束；确认无同步运行后删除 ' + str(marker) + '。')
+        marker.unlink()
+    token = base64.urlsafe_b64encode(os.urandom(18)).decode('ascii')
+    payload = json.dumps({'version': 1, 'pid': int(owner_pid), 'token': token, 'reason': str(reason)[:200],
+                          'createdAt': datetime.now().astimezone().isoformat(timespec='seconds')}).encode()
+    descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(descriptor, payload + b'\n')
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return token
+
+
+def leave_maintenance(home, token):
+    marker = maintenance_marker(home)
+    if not os.path.lexists(marker):
+        return False
+    descriptor = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise InstallError('维护标记不安全 / Unsafe maintenance marker.', '核对后手动删除 ' + str(marker) + '。')
+        value = json.loads(os.read(descriptor, 4096) or b'{}')
+    finally:
+        os.close(descriptor)
+    if not isinstance(value, dict) or value.get('token') != token:
+        raise InstallError('维护标记已被替换 / Maintenance marker changed.', '核对后手动删除 ' + str(marker) + '。')
+    marker.unlink()
+    return True
+
+
+def stop_daemon(home, env, timeout=30):
+    # 中文注释：只给身份核实过的本安装 daemon 发 SIGTERM，等待它自行落盘、删除套接字和 PID 后退出。
+    pid = verified_daemon_pid(home, env)
+    if pid is None:
+        return False
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        current = verified_daemon_pid(home, env)
+        if current is None:
+            return True
+        if current != pid:
+            raise InstallError('桥接进程已更换 / Bridge process changed.', '确认维护标记存在且无其他启动来源后重试。')
+        time.sleep(0.1)
+    raise InstallError('桥接未在限定时间内退出 / Bridge did not exit in time.', '查看 daemon 日志；未发送其他信号。')
+
+
+def wait_cloud_released(home, timeout=30):
+    # 中文注释：维护标记让云端宿主自行关闭；这里只等待实例锁释放和账本收尾，不发信号。
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            with idle_cloud(home):
+                return
+        except CloudGateError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
 
 
 def acquire_bridge_lock(descriptor):
@@ -562,7 +684,7 @@ def idle_bridge(home, env, *, profiles=()):
     lock = data / 'daemon.lock'
     EXECUTOR.reject_target_symlinks([lock, data / 'daemon.pid', data / 'bridge.sock'])
     assert_daemon_stopped(home, env)
-    assert_tasks_idle(home)
+    assert_tasks_idle(home, daemon_stopped=True)
     if not data.is_dir():
         probe_references(home, profiles)
         yield None
@@ -578,14 +700,14 @@ def idle_bridge(home, env, *, profiles=()):
         if descriptor is not None:
             acquire_bridge_lock(descriptor)
             assert_daemon_stopped(home, env)
-            assert_tasks_idle(home)
+            assert_tasks_idle(home, daemon_stopped=True)
         # 中文注释：空闲门禁在探测前；缺失锁延后创建，建链失败不会遗留 daemon.lock。
         probe_references(home, profiles)
         if descriptor is None:
             descriptor = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
             acquire_bridge_lock(descriptor)
         assert_daemon_stopped(home, env)
-        assert_tasks_idle(home)
+        assert_tasks_idle(home, daemon_stopped=True)
         yield descriptor
     finally:
         if descriptor is not None:

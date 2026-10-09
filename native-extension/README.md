@@ -15,7 +15,8 @@ The Manifest V3 extension for Chrome and Edge. It is the only component that gra
 | `workspace-adapter.mjs` | Task tab groups (wraps `browser-workspaces`) |
 | `automation-overlay.mjs`, `interaction-highlight.mjs` | Whole-task input overlay, persistent smooth task cursor, takeover/stop controls and target highlights |
 | `popup.*`, `approval-panel.*`, `approval-notifier.mjs` | Full-only connection authorization, independent Cookie/OAuth-window confirmations, manual-input prompts |
-| `build.mjs` | Builds `dist-native/`: copies shared modules into `vendor/`, rewrites imports, writes `BUILD-DEPS.json` hashes |
+| `build.mjs` | Builds `dist-native/`: copies shared modules into `vendor/`, rewrites imports, writes `BUILD-DEPS.json` hashes and the `buildId` embedded in `build-id.mjs` |
+| `build-reload.mjs` | Before connecting, reloads the extension once when the installed `BUILD-DEPS.json` names a different build (development sync) |
 
 Permissions: `nativeMessaging`, `debugger`, `tabs`, `tabGroups`, `downloads`, `storage`, `alarms`, `cookies`, plus `<all_urls>` host access for Cookie mirror. No history or bookmarks permissions.
 

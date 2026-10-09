@@ -24,8 +24,27 @@ sys.path.remove(str(NATIVE_BRIDGE))
 CLOUD_FENCE_VERSION = 1
 
 
+MAINTENANCE_EXIT = 5
+
+
+def maintenance_active(home):
+    # 中文注释：开发同步的维护标记与本地桥共用；只判断存在，不跟随链接也不读取内容。
+    return os.path.lexists(home / 'plugin-data/browser-link-native/maintenance.json')
+
+
+def watch_maintenance(home, stopped):
+    # 中文注释：标记出现后给自己发 SIGTERM，走原有收尾路径释放实例锁；不触碰其他进程。
+    while not stopped.wait(0.5):
+        if maintenance_active(home):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
+
+
 def main():
     home = Path(os.environ.get('HERMES_HOME', Path.home() / '.hermes')).resolve()
+    # 中文注释：维护期间不取锁、不建实例目录；扩展按退避重连稍后再试。
+    if maintenance_active(home):
+        return MAINTENANCE_EXIT
     # 中文注释：稳定根目录不是可 purge 的云目录；hello 前持共享锁，close 后才释放。
     try:
         descriptor = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -99,6 +118,8 @@ def serve(home):
             # 中文注释：界面只接收固定错误，凭据、网页内容和网络异常不会经 stdout 输出。
             send({'id': request_id, 'error': '云端操作未确认，请检查连接状态后重试。'})
 
+    stopped = threading.Event()
+    threading.Thread(target=watch_maintenance, args=(home, stopped), daemon=True).start()
     try:
         while True:
             message = framing.read_native_message(sys.stdin.buffer)
@@ -114,6 +135,7 @@ def serve(home):
     except (EOFError, OSError, ValueError, json.JSONDecodeError):
         return 0
     finally:
+        stopped.set()
         # 中文注释：浏览器断线时立即结束反向请求等待，不让失效授权继续等待回执。
         with pending_lock:
             for entry in pending.values():

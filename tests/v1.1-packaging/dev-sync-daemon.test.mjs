@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import {randomUUID,createHash} from 'node:crypto';
 import {once} from 'node:events';
-import {cp,mkdtemp,mkdir,readFile,rm,stat,writeFile} from 'node:fs/promises';
+import {cp,lstat,mkdtemp,mkdir,readFile,readdir,rm,stat,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {assertDevelopmentIdle,runDevelopmentGuard} from '../../scripts/dev-sync-daemon.mjs';
@@ -82,8 +82,10 @@ async function syncFixture(t){
  const desktop=path.join(home,'desktop-plugins/browser-link/plugin.js');
  const extension=path.join(home,'browser-link-releases/dev');
  const data=path.join(home,'plugin-data/browser-link-native');
- for(const directory of [path.dirname(installed),path.dirname(desktop),extension,data,path.join(repo,'native-extension')])
+ for(const directory of [path.dirname(installed),path.dirname(desktop),extension,path.join(repo,'native-extension')])
   await mkdir(directory,{recursive:true});
+ // 中文注释：与真实 daemon 一致，私有数据目录为 0700，维护标记才允许写入。
+ await mkdir(data,{recursive:true,mode:0o700});
  await writeFile(installed,'installed-sentinel');await writeFile(desktop,'desktop-sentinel');
  const manifest=JSON.stringify({name:'Test extension',version:'1.0.0'});
  await writeFile(path.join(extension,'manifest.json'),manifest);
@@ -110,13 +112,18 @@ for file,value in manifests:
  file.parent.mkdir(parents=True,exist_ok=True);file.write_text(json.dumps(value));file.chmod(0o600)
  `,path.resolve(import.meta.dirname,'../../cloud-link/registration.py'),home,base],{encoding:'utf8'});
  assert.equal(registration.status,0,registration.stderr);
- const run=()=>spawnSync(process.execPath,[path.join(repo,'scripts/dev-sync-local.mjs')],{encoding:'utf8',env:{...process.env,HOME:base,HERMES_HOME:home},timeout:5000});
- return {base,repo,home,data,installed,desktop,run};
+ // 中文注释：替身 hermes 只记录调用并读写临时 ESTOP，绝不调用用户真实的 Hermes。
+ const hermesLog=path.join(base,'hermes.log'),hermes=path.join(base,'fake-hermes');
+ await writeFile(hermes,`#!/bin/sh\necho "$*" >> ${JSON.stringify(hermesLog)}\ncase "$1" in pause) : > "$HERMES_HOME/ESTOP";; resume) rm -f "$HERMES_HOME/ESTOP";; esac\n`,{mode:0o700});
+ const run=(args=[],extra={})=>spawnSync(process.execPath,[path.join(repo,'scripts/dev-sync-local.mjs'),...args],{encoding:'utf8',
+  env:{...process.env,HOME:base,HERMES_HOME:home,BROWSER_LINK_HERMES:hermes,BROWSER_LINK_DEV_SYNC_WAIT_SECONDS:'1',...extra},timeout:20000});
+ const hermesCalls=async()=>{try{return (await readFile(hermesLog,'utf8')).trim().split('\n').filter(Boolean);}catch{return [];}};
+ return {base,repo,home,data,installed,desktop,run,hermesCalls};
 }
 
 test('dev-sync 未知任务合同在打包及首次写入前拒绝',async t=>{
  const terminal={id:'test-task',owner:'test-owner',state:'closed',cleanupState:'succeeded',requestHistory:[]};
- for(const record of [[],null,{}, {version:1,tasks:[null]},...['future_state','needs_sync','running'].map(state=>({version:1,tasks:[{...terminal,state}]})),{version:1,tasks:[{...terminal,cleanupState:'failed'}]}, {version:1,tasks:[{...terminal,requestHistory:[{state:'dispatched'}]}]}, {version:1,tasks:[{...terminal,operationTimeline:[{state:'unknown'}]}]}, {version:1,tasks:[{...terminal,vaultPermit:{}}]}, ...[null,{}, {state:'unknown'},{state:'pending'},{state:'running'}].map(currentOperation=>({version:1,tasks:[{...terminal,currentOperation}]}))])
+ for(const record of [[],null,{}, {version:1,tasks:[null]},...['future_state','needs_sync','running'].map(state=>({version:1,tasks:[{...terminal,state}]})),{version:1,tasks:[{...terminal,cleanupState:'failed'}]}, {version:1,tasks:[{...terminal,vaultPermit:{}}]}, ...[null,{}, {state:'unknown'},{state:'pending'},{state:'running'}].map(currentOperation=>({version:1,tasks:[{...terminal,currentOperation}]}))])
   await t.test(JSON.stringify(record),async t=>{
    const f=await syncFixture(t);
    await writeFile(path.join(f.data,'tasks.json'),JSON.stringify(record),{mode:0o600});
@@ -171,4 +178,205 @@ test('dev-sync 正式守卫覆盖整个子进程并阻止真实 daemon 启动',a
  `],{...process.env,HOME:f.base});
  assert.equal(result.status,0,result.stderr);
  assert.equal(await readFile(f.installed,'utf8'),'installed-sentinel');
+});
+
+const PYTHON=process.env.BROWSER_LINK_TEST_PYTHON||'python3';
+const REPO=path.resolve(import.meta.dirname,'../..');
+const exists=async file=>{try{await lstat(file);return true;}catch{return false;}};
+
+// 中文注释：从已安装路径启动真实 daemon，命令行与正式身份核对一致。
+async function startInstalledDaemon(t,home){
+ const data=path.join(home,'plugin-data','browser-link-native');
+ const socketPath=path.join(data,'bridge.sock');
+ assert.ok(Buffer.byteLength(socketPath,'utf8')<=103,'临时 daemon 的 socket 路径超过 103 字节');
+ const script=path.join(home,'plugins/browser-link/native_bridge/daemon.py');
+ await mkdir(path.dirname(script),{recursive:true});
+ await cp(path.join(REPO,'native-bridge'),path.dirname(script),{recursive:true});
+ const daemon=spawn(PYTHON,[script,'--home',home],{stdio:'ignore'});
+ t.after(async()=>{if(daemon.exitCode===null&&daemon.signalCode===null){daemon.kill('SIGKILL');await once(daemon,'exit');}});
+ for(let i=0;i<200;i++){
+  try{if((await readFile(path.join(data,'daemon.pid'),'utf8')).trim()===String(daemon.pid))return daemon;}catch{}
+  await new Promise(resolve=>setTimeout(resolve,20));
+ }
+ throw Error('临时 daemon 未启动');
+}
+
+// 中文注释：替身打包器生成同步所需的最小产物与哈希清单，其余流程走真实 dev-sync。
+async function fakePackager(f){
+ const cloudHost=await readFile(path.join(f.home,'plugins/browser-link/cloud_link/native_host.py'),'utf8');
+ const cli=await readFile(path.join(f.home,'plugins/browser-link/maintenance/install-cli.py'),'utf8');
+ await writeFile(path.join(f.repo,'scripts/package-executor.mjs'),`
+ import {mkdir,writeFile} from 'node:fs/promises';
+ import {createHash} from 'node:crypto';
+ import path from 'node:path';
+ const output=process.argv[process.argv.indexOf('--output')+1];
+ const files=${JSON.stringify({'browser-link/desktop/plugin.js':'new-desktop','browser-link/cloud_link/native_host.py':cloudHost,
+  'browser-link/maintenance/install-cli.py':cli,'native-extension/manifest.json':JSON.stringify({name:'Test extension',version:'1.0.0'})})};
+ const hashes={};
+ for(const [name,content] of Object.entries(files)){
+  await mkdir(path.dirname(path.join(output,name)),{recursive:true});await writeFile(path.join(output,name),content);
+  hashes[name]=createHash('sha256').update(content).digest('hex');
+ }
+ await writeFile(path.join(output,'SHA256SUMS.json'),JSON.stringify(hashes));
+ `);
+}
+
+test('dev-sync 一条命令：暂停 Hermes、写维护标记、停止已核实 daemon、同步后删除标记并恢复',async t=>{
+ const f=await syncFixture(t);
+ await writeFile(path.join(f.data,'tasks.json'),JSON.stringify({version:1,tasks:[]}),{mode:0o600});
+ await fakePackager(f);
+ const daemon=await startInstalledDaemon(t,f.home);
+ const exited=once(daemon,'exit');
+ const result=f.run();
+ assert.equal(result.status,0,result.stderr);
+ const output=JSON.parse(result.stdout);
+ assert.equal(output.status,'synced');
+ assert.equal(output.daemonStopped,true);
+ assert.equal(output.hermesPausedBefore,false);
+ // 中文注释：daemon 收到 SIGTERM 后自行收尾，退出码为 0 而不是被强杀。
+ const [code,signal]=await exited;
+ assert.equal(code,0);assert.equal(signal,null);
+ assert.equal(await readFile(f.installed,'utf8'),'new-desktop');
+ assert.equal(await exists(path.join(f.data,'maintenance.json')),false,'同步结束必须删除维护标记');
+ assert.deepEqual(await f.hermesCalls(),['pause --reason browser-link dev:sync','resume']);
+ assert.equal(await exists(path.join(f.home,'ESTOP')),false);
+});
+
+test('dev-sync 等待任务超时列出 id 与标题，不停止任何进程并恢复 Hermes',async t=>{
+ const f=await syncFixture(t);
+ const task={id:'task-still-running',owner:'owner',title:'整理订单表',state:'running',cleanupState:'pending'};
+ await writeFile(path.join(f.data,'tasks.json'),JSON.stringify({version:1,tasks:[task]}),{mode:0o600});
+ const daemon=await startInstalledDaemon(t,f.home);
+ const started=Date.now(),result=f.run(['--wait-seconds','1']);
+ assert.notEqual(result.status,0);
+ assert.ok(Date.now()-started>=1000,'必须等待配置的时长');
+ assert.match(result.stderr,/超时/);
+ assert.match(result.stderr,/task-still-running/);
+ assert.match(result.stderr,/整理订单表/);
+ assert.doesNotMatch(result.stderr,/PACKAGING_REACHED/);
+ assert.equal(daemon.exitCode,null);assert.equal(daemon.signalCode,null);
+ assert.equal(await exists(path.join(f.data,'maintenance.json')),false);
+ assert.equal(await readFile(f.installed,'utf8'),'installed-sentinel');
+ assert.deepEqual(await f.hermesCalls(),['pause --reason browser-link dev:sync','resume']);
+});
+
+test('dev-sync 开始前已暂停则不暂停也不恢复，结束后保持暂停',async t=>{
+ const f=await syncFixture(t);
+ await writeFile(path.join(f.home,'ESTOP'),'operator pause');
+ await writeFile(path.join(f.data,'tasks.json'),JSON.stringify({version:1,tasks:[{id:'t',owner:'o',title:'x',state:'ready'}]}),{mode:0o600});
+ const result=f.run(['--wait-seconds','0']);
+ assert.notEqual(result.status,0);
+ assert.deepEqual(await f.hermesCalls(),[]);
+ assert.equal(await readFile(path.join(f.home,'ESTOP'),'utf8'),'operator pause');
+});
+
+test('dev-sync 已关闭但清理未知的任务立即列出并提示 tasks:ack，不等待',async t=>{
+ const f=await syncFixture(t);
+ await writeFile(path.join(f.data,'tasks.json'),JSON.stringify({version:1,tasks:[{id:'edge-old',owner:'o',title:'旧 Edge 任务',state:'closed',cleanupState:'unknown'}]}),{mode:0o600});
+ const result=f.run(['--wait-seconds','30']);
+ assert.notEqual(result.status,0);
+ assert.match(result.stderr,/edge-old/);assert.match(result.stderr,/tasks:ack/);
+ assert.deepEqual(await f.hermesCalls(),['pause --reason browser-link dev:sync','resume']);
+});
+
+test('daemon 已停止时已关闭且清理成功任务的残留历史不再阻塞守卫',async t=>{
+ const terminal={id:'test-task',owner:'test-owner',state:'closed',cleanupState:'succeeded',requestHistory:[]};
+ for(const record of [{version:1,tasks:[{...terminal,requestHistory:[{state:'dispatched'}]}]},{version:1,tasks:[{...terminal,operationTimeline:[{state:'unknown'}]}]},
+  {version:1,tasks:[{...terminal,currentOperation:{state:'unknown'},userVerified:{reason:'checked'}}]}])
+  await t.test(JSON.stringify(record),async t=>{
+   const f=await syncFixture(t);
+   await writeFile(path.join(f.data,'tasks.json'),JSON.stringify(record),{mode:0o600});
+   const result=f.run();
+   // 中文注释：通过全部门禁后才会到达替身打包器。
+   assert.match(result.stderr,/PACKAGING_REACHED/);
+  });
+ // 中文注释：未经用户核实的当前操作残留仍然拒绝。
+ const f=await syncFixture(t);
+ await writeFile(path.join(f.data,'tasks.json'),JSON.stringify({version:1,tasks:[{...terminal,currentOperation:{state:'unknown'}}]}),{mode:0o600});
+ assert.doesNotMatch(f.run().stderr,/PACKAGING_REACHED/);
+});
+
+test('daemon 仍在运行时残留历史继续拒绝',async t=>{
+ const f=await syncFixture(t);
+ await writeFile(path.join(f.data,'tasks.json'),JSON.stringify({version:1,tasks:[]}),{mode:0o600});
+ await startInstalledDaemon(t,f.home);
+ const code=`
+import importlib.util,sys
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('cli',sys.argv[1]);cli=importlib.util.module_from_spec(spec);spec.loader.exec_module(cli)
+cli.EXECUTOR=cli.load_module('ex',sys.argv[2])
+home=Path(sys.argv[3]);(home/'plugin-data/browser-link-native/tasks.json').write_text('{"version":1,"tasks":[{"id":"a","owner":"o","state":"closed","cleanupState":"succeeded","requestHistory":[{"state":"dispatched"}]}]}')
+try:
+    cli.assert_tasks_idle(home)
+except cli.CloudGateError:
+    sys.exit(3)
+`;
+ const result=spawnSync(PYTHON,['-c',code,path.join(REPO,'scripts/install-cli.py'),path.join(REPO,'scripts/install-executor.py'),f.home],{encoding:'utf8'});
+ assert.equal(result.status,3,result.stderr);
+});
+
+// 中文注释：tasks:ack 的拒绝条件与备份。
+async function ackFixture(t,tasks){
+ const home=await daemonHome();
+ t.after(()=>rm(home,{recursive:true,force:true}));
+ const data=path.join(home,'plugin-data','browser-link-native');
+ await mkdir(data,{recursive:true,mode:0o700});
+ const bytes=JSON.stringify({version:1,tasks});
+ await writeFile(path.join(data,'tasks.json'),bytes,{mode:0o600});
+ const ack=(...args)=>spawnSync(PYTHON,[path.join(REPO,'scripts/tasks-ack.py'),...args],{encoding:'utf8',env:{...process.env,HERMES_HOME:home,PYTHONDONTWRITEBYTECODE:'1'},timeout:60000});
+ const backups=async()=>(await readdir(data)).filter(name=>name.startsWith('tasks.json.ack-'));
+ return {home,data,bytes,ack,backups};
+}
+
+test('tasks:ack 备份原文件并把已关闭任务标为用户已核实',async t=>{
+ const task={id:'edge-old',owner:'o',title:'旧 Edge 任务',state:'closed',cleanupState:'unknown',cleanupReason:'browser_offline',requestHistory:[]};
+ const f=await ackFixture(t,[task]);
+ const result=f.ack('edge-old','--reason','已在 Edge 中核对无残留');
+ assert.equal(result.status,0,result.stderr);
+ const [backup]=await f.backups();
+ assert.ok(backup,'必须生成备份');
+ assert.equal(await readFile(path.join(f.data,backup),'utf8'),f.bytes);
+ assert.equal((await stat(path.join(f.data,backup))).mode&0o777,0o600);
+ assert.equal((await stat(path.join(f.data,'tasks.json'))).mode&0o777,0o600);
+ const [updated]=JSON.parse(await readFile(path.join(f.data,'tasks.json'),'utf8')).tasks;
+ assert.equal(updated.cleanupState,'succeeded');assert.equal(updated.cleanupReason,'verified_complete');
+ assert.equal(updated.userVerified.reason,'已在 Edge 中核对无残留');
+ assert.equal(updated.userVerified.previousCleanupState,'unknown');
+});
+
+test('tasks:ack 拒绝未关闭、不存在、带授权、未合并日志和 daemon 运行中的情况且不写文件',async t=>{
+ const cases=[
+  ['running',[{id:'a',owner:'o',state:'running'}],'a'],
+  ['missing',[{id:'a',owner:'o',state:'closed',cleanupState:'unknown'}],'b'],
+  ['permit',[{id:'a',owner:'o',state:'closed',cleanupState:'unknown',vaultPermit:{}}],'a'],
+ ];
+ for(const [name,tasks,id] of cases)await t.test(name,async t=>{
+  const f=await ackFixture(t,tasks);
+  const result=f.ack(id);
+  assert.notEqual(result.status,0);
+  assert.deepEqual(await f.backups(),[]);
+  assert.equal(await readFile(path.join(f.data,'tasks.json'),'utf8'),f.bytes);
+ });
+ await t.test('journal',async t=>{
+  const f=await ackFixture(t,[{id:'a',owner:'o',state:'closed',cleanupState:'unknown'}]);
+  await writeFile(path.join(f.data,'requests.jsonl'),'{}\n',{mode:0o600});
+  assert.notEqual(f.ack('a').status,0);
+  assert.deepEqual(await f.backups(),[]);
+ });
+ await t.test('daemon',async t=>{
+  const f=await ackFixture(t,[{id:'a',owner:'o',state:'closed',cleanupState:'unknown',requestHistory:[]}]);
+  const daemon=await startInstalledDaemon(t,f.home);
+  const result=f.ack('a');
+  assert.notEqual(result.status,0);
+  assert.match(result.stderr,/仍在运行|--stop-daemon/);
+  assert.equal(daemon.exitCode,null);
+  assert.deepEqual(await f.backups(),[]);
+  // 中文注释：显式 --stop-daemon 才进入维护模式停止已核实 daemon，结束后删除标记。
+  const exited=once(daemon,'exit');
+  const stopped=f.ack('a','--stop-daemon');
+  assert.equal(stopped.status,0,stopped.stderr);
+  assert.deepEqual(await exited,[0,null]);
+  assert.equal((await f.backups()).length,1);
+  assert.equal(await exists(path.join(f.data,'maintenance.json')),false);
+ });
 });

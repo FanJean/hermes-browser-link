@@ -48,6 +48,9 @@ class NativeCloudTests(unittest.TestCase):
                 fcntl.flock(descriptor,fcntl.LOCK_EX|fcntl.LOCK_NB)
         service.close.side_effect=close_under_fence
         def thread(*,target,args,**kwargs):
+            # 中文注释：维护标记监视线程是后台轮询，同步执行会阻塞协议用例。
+            if target is native_host.watch_maintenance:
+                return Mock()
             return Mock(start=lambda:target(*args))
         with patch.dict(os.environ,{'HERMES_HOME':str(home)}), \
              patch.object(native_host.sys,'argv',['native_host.py',origin]), \

@@ -1,6 +1,6 @@
 // 中文注释：同步已安装程序和界面；身份、任务与全部目标预检必须先于写入。
 import {swapInstalledDirectory,rollbackDirectorySwaps,installedPluginTargets,installationHome,rejectPathLinks} from './directory-swap.mjs';
-import {runDevelopmentGuard,assertDevelopmentIdle} from './dev-sync-daemon.mjs';
+import {runDevelopmentGuard,assertDevelopmentIdle,runMaintenanceStep,waitForTasks,hermesControl} from './dev-sync-daemon.mjs';
 import {spawnSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile} from 'node:fs/promises';
@@ -69,15 +69,51 @@ const newer=(a,b)=>{const x=semver(a),y=semver(b);for(let i=0;i<Math.max(x.lengt
 const upgrade=process.argv.includes('--allow-upgrade')&&newer(sourceManifest.version,installedManifest.version);
 if(installedManifest.name!==sourceManifest.name||installedManifest.version!==sourceManifest.version&&!upgrade)
  throw Error('安装扩展身份或版本与源码不一致，拒绝覆盖（版本升级请加 --allow-upgrade）');
-assertDevelopmentIdle(home,repo);
 if(process.env.BROWSER_LINK_DEV_GUARDED!=='1'){
- const result=runDevelopmentGuard(home,repo,[process.execPath,import.meta.filename,...process.argv.slice(2)]);
- if(result.status!==0)throw Error(result.stderr||'同步保护进程未完成');
- const output=JSON.parse(result.stdout);
+ // 中文注释：一条命令完成部署：暂停 Hermes 新工作、等任务收尾、写维护标记、停止已核实的 daemon，
+ // 在正式守卫内同步，最后删除标记并恢复原暂停状态。任何一步失败都不结束任务、不给未知进程发信号。
+ const option=name=>{const index=process.argv.indexOf(name);return index>0?process.argv[index+1]:undefined;};
+ const waitSeconds=Number(option('--wait-seconds')??process.env.BROWSER_LINK_DEV_SYNC_WAIT_SECONDS??300);
+ if(!Number.isFinite(waitSeconds)||waitSeconds<0||waitSeconds>3600)throw Error('--wait-seconds 必须是 0 到 3600 之间的秒数');
+ const hermes=hermesControl();
+ let token=null,paused=false,cleaned=false;
+ const cleanup=()=>{
+  if(cleaned)return [];cleaned=true;
+  const errors=[];
+  if(token){try{runMaintenanceStep(home,repo,'leave',[token]);}catch(error){errors.push(error.message);}}
+  if(paused){try{hermes.resume();}catch(error){errors.push(error.message);}}
+  return errors;
+ };
+ for(const name of ['SIGINT','SIGTERM','SIGHUP'])process.on(name,()=>{
+  const errors=cleanup();
+  console.error(['同步已中断；维护标记已删除，Hermes 暂停状态已还原。',...errors].join('\n'));
+  process.exit(130);
+ });
+ let output,daemonStopped=false,failure=null;
+ try{
+  hermes.pause('browser-link dev:sync');paused=true;
+  await waitForTasks(tasksFile,{timeoutMs:waitSeconds*1000});
+  token=runMaintenanceStep(home,repo,'enter',['browser-link dev:sync',process.pid]);
+  daemonStopped=runMaintenanceStep(home,repo,'stop',[30]);
+  runMaintenanceStep(home,repo,'cloud',[30]);
+  assertDevelopmentIdle(home,repo);
+  const result=runDevelopmentGuard(home,repo,[process.execPath,import.meta.filename,...process.argv.slice(2)]);
+  if(result.status!==0)throw Error(result.stderr||'同步保护进程未完成');
+  output=JSON.parse(result.stdout);
+ }catch(error){failure=error;}
+ const errors=cleanup();
+ if(failure){
+  if(errors.length)failure.message+=`\n收尾问题：${errors.join('；')}`;
+  throw failure;
+ }
+ if(errors.length)throw Error(`同步已完成，但收尾未完成：${errors.join('；')}`);
+ output.daemonStopped=daemonStopped;
+ output.hermesPausedBefore=hermes.wasPaused;
  output.gatewayReloaded=reloadGateway();
  console.log(JSON.stringify(output,null,2));
  process.exit(0);
 }
+assertDevelopmentIdle(home,repo);
 
 const scratch=await mkdtemp(path.join(tmpdir(),'hermes-browser-dev-sync-'));
 const output=path.join(scratch,'package');
@@ -88,8 +124,6 @@ const packageHashes=JSON.parse(await readFile(path.join(output,'SHA256SUMS.json'
 const token=`${new Date().toISOString().replace(/[:.]/g,'-')}-${randomUUID().slice(0,8)}`;
 const backup=path.join(home,'plugin-backups',`.browser-link-dev-tmp-${token}`);
 const swaps=[];
-const daemonStopped=false;
-const gatewayReloaded=false;
 const installStatePath=path.join(home,'plugin-data/browser-link-native/install-state.json');
 let installStateBytes;
 try{
@@ -139,6 +173,6 @@ try{
 for(const {old} of swaps)await rm(old,{recursive:true,force:true});
 // 中文注释：本机预览只需要事务期间的备份；成功后清除，失败时保留供恢复。
 await rm(backup,{recursive:true,force:true});
-console.log(JSON.stringify({status:'synced',version:sourceManifest.version,pluginCopies:pluginTargets.length,temporaryBackupRemoved:true,daemonStopped,gatewayReloaded,desktopHotReload:true,
- browserAction:'在 Chrome 与 Edge 的扩展管理页分别点击 Hermes Browser Link的重新加载',
+console.log(JSON.stringify({status:'synced',version:sourceManifest.version,pluginCopies:pluginTargets.length,temporaryBackupRemoved:true,desktopHotReload:true,
+ browserAction:'扩展在下次连接本地桥时（约 30 秒内）检测到新构建并自动重新加载一次',
  backendNote:'dashboard/plugin_api.py 改动需要重启 Hermes 桌面应用'},null,2));

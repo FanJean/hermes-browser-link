@@ -13,7 +13,7 @@ await mkdir(dest, {recursive: true});
 for (const file of ['manifest.json', 'work-window.mjs', 'work-window.html', 'action-effects.mjs', 'request-ledger.mjs', 'content-filter.mjs', 'content-shield.mjs', 'bridge.mjs', 'background.mjs', 'automation-overlay.mjs', 'interaction-highlight.mjs', 'official-actions.mjs', 'downloads.mjs', 'page-runtime.mjs', 'network-evidence.mjs', 'cdp-policy.mjs', 'page-observers.mjs', 'page-observation.mjs', 'vault.mjs',
   'oauth-popups.mjs', 'approval-notifier.mjs', 'approval-panel.html', 'approval-panel.css', 'approval-panel.mjs',
   'icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png',
-  'popup.html', 'popup.css', 'popup.mjs', 'cloud-link.mjs', 'cloud-popup.mjs']) {
+  'popup.html', 'popup.css', 'popup.mjs', 'cloud-link.mjs', 'cloud-popup.mjs', 'build-reload.mjs']) {
   await copyFile(path.join(source, file), path.join(dest, file));
 }
 
@@ -50,6 +50,25 @@ if (builtCore === sourceCore || /\.\.\/(page-semantics|browser-interactions|appr
 await writeFile(path.join(dest, 'core.mjs'), builtCore);
 const adapter = (await readFile(path.join(source, 'workspace-adapter.mjs'), 'utf8')).replace("from '../browser-workspaces/index.mjs'", "from './vendor/browser-workspaces.mjs'");
 await writeFile(path.join(dest, 'workspace-adapter.mjs'), adapter);
+// 中文注释：构建哈希覆盖除自身两个文件外的全部产物；扩展加载时内嵌该值，连接前与磁盘上的 BUILD-DEPS.json 比对。
+async function buildIdentity(root) {
+  const entries = [];
+  const visit = async directory => {
+    for (const entry of await readdir(directory, {withFileTypes: true})) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(file);
+      else if (entry.isFile()) {
+        const relative = path.relative(root, file).split(path.sep).join('/');
+        if (relative === 'BUILD-DEPS.json' || relative === 'build-id.mjs') continue;
+        entries.push(`${relative}\0${createHash('sha256').update(await readFile(file)).digest('hex')}`);
+      }
+    }
+  };
+  await visit(root);
+  return createHash('sha256').update(entries.sort().join('\n')).digest('hex');
+}
+manifest.buildId = await buildIdentity(dest);
+await writeFile(path.join(dest, 'build-id.mjs'), `// 中文注释：由 build.mjs 生成，记录本次构建哈希。\nexport const BUILD_ID='${manifest.buildId}';\n`);
 await writeFile(path.join(dest, 'BUILD-DEPS.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
 async function verifyRuntimeClosure() {

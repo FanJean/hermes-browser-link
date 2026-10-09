@@ -36,6 +36,7 @@
     "build": "node native-extension/build.mjs",
     "dev:sync": "node scripts/dev-sync-local.mjs",
     "dev:watch": "node scripts/dev-watch-desktop.mjs",
+    "tasks:ack": "python3 scripts/tasks-ack.py",
     "package": "node scripts/package-executor.mjs",
     "verify": "python3 scripts/verify-v1.1-offline.py",
     "check:public": "bash scripts/check-public-release.sh",

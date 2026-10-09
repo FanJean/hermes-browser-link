@@ -56,7 +56,7 @@ async function harness(initialStorage={},manifestVersion=packageVersion){
   alarms:{create(){},onAlarm:event},tabs:{onCreated:event,onRemoved:event,onUpdated:event,query:async()=>[{id:7,url:'https://example.test/work',title:'工作页'}],get:async()=>({id:7,url:'https://example.test/work'})},debugger:{onDetach:event}
  };
  // Only ES module linking is replaced. The background handler body is unchanged.
- vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{CloudLink,validateShieldRules,CookieMirror,Executor:TestExecutor,NativeWorkspaces:TestWorkspaces,Bridge,BrowserConsent,isUiSender,registerWorkspaceStartup:()=>{},origin:u=>new URL(u).origin,chrome:api,navigator:{userAgent:'Node DOM harness'},crypto:globalThis.crypto,console});
+ vm.runInNewContext(background.replace(/^import .*;\n/gm,''),{CloudLink,validateShieldRules,CookieMirror,Executor:TestExecutor,NativeWorkspaces:TestWorkspaces,Bridge,BrowserConsent,isUiSender,reloadForInstalledBuild:async()=>false,BUILD_ID:'',registerWorkspaceStartup:()=>{},origin:u=>new URL(u).origin,chrome:api,navigator:{userAgent:'Node DOM harness'},crypto:globalThis.crypto,console});
  const flush=async()=>{for(let i=0;i<6;i++)await new Promise(r=>setImmediate(r));};await flush();
  const sender={id:'test',url:'chrome-extension://test/popup.html'};
  const send=m=>new Promise(resolve=>{popupCalls.push(clone(m));assert.equal(dispatch(m,sender,resolve),true);});
