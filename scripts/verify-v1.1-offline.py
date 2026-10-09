@@ -507,13 +507,15 @@ def write_new_log_file(destination: Path, text: str) -> None:
 
 
 def run_steps(root: Path, result_dir: Path, steps: list[tuple[str, list[str], str]],
-              env: dict[str, str], *, timeout: int = 150) -> dict:
+              env: dict[str, str], *, timeout: int | None = None) -> dict:
     result_dir = ensure_no_symlink_components(result_dir)
     if result_dir.exists() and not result_dir.is_dir():
         raise RuntimeError(f'refusing non-directory step log root: {result_dir}')
     result_dir.mkdir(parents=True, exist_ok=True)
     result: dict = {'passed': False, 'steps': []}
     for index, (name, command, kind) in enumerate(steps):
+        # 中文注释：850 项 Node 合集沿用核心入口的 240 秒预算；单项及显式负例期限不变。
+        step_timeout = timeout if timeout is not None else (240 if name == 'node-v11-and-offline-modules' else 150)
         logfile = result_dir / f'{index:02d}-{name}.log'
         process = None
         try:
@@ -521,7 +523,7 @@ def run_steps(root: Path, result_dir: Path, steps: list[tuple[str, list[str], st
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                         text=True, errors='replace',
                                         start_new_session=(os.name == 'posix'))
-            output, _ = process.communicate(timeout=timeout)
+            output, _ = process.communicate(timeout=step_timeout)
             code = process.returncode
         except subprocess.TimeoutExpired:
             if process is not None:
@@ -554,7 +556,7 @@ def run_steps(root: Path, result_dir: Path, steps: list[tuple[str, list[str], st
             else:
                 output = ''
             code = 124
-            output += f'\nGATE TIMEOUT after {timeout}s\n'
+            output += f'\nGATE TIMEOUT after {step_timeout}s\n'
         except OSError as exc:
             code, output = 127, f'{type(exc).__name__}: {exc}\n'
         write_new_log_file(logfile, output)
