@@ -21,6 +21,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      # 中文注释：离线夹具同样需要真实 Hermes SDK，复用集成门禁的固定提交。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: NousResearch/hermes-agent
+          ref: e62a47ab680bf952b26559e540c28bc18571017c
+          path: .ci/hermes
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
@@ -31,10 +38,18 @@ jobs:
       - run: npm ci --ignore-scripts
       # 中文注释：云端站点依赖独立锁文件，只用于离线 SQLite/MCP 验收，不使用个人站点凭据。
       - run: npm ci --ignore-scripts --prefix cloud-link/site
+      - run: python -m pip install uv==0.11.2
+      - name: Prepare pinned Hermes test environment
+        run: |
+          # 中文注释：核心用例保留 Python 3.11；固定 Hermes 锁文件仅支持 3.14。
+          uv sync --project .ci/hermes --frozen --no-dev --extra web --python 3.14
+          uv pip install --python .ci/hermes/.venv/bin/python PyYAML==6.0.3
       - run: npm test
         # 中文注释：macOS AF_UNIX 路径最多 103 字节；runner.temp 是工作流拥有的短临时目录。
         env:
           TMPDIR: ${{ runner.temp }}
+          HERMES_SOURCE: ${{ github.workspace }}/.ci/hermes
+          HERMES_PYTHON: ${{ github.workspace }}/.ci/hermes/.venv/bin/python
       - run: npm run lint
       - run: npm run check:js
       - run: npm run check:docs

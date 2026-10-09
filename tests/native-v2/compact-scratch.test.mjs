@@ -78,8 +78,10 @@ test('compactScratch stages isolated source and package homes with a bindable so
 
 test('compactScratch refuses missing or overlong TMPDIR without leaking work', async () => {
   const original = process.env.TMPDIR;
-  const longScratch = await mkdtemp(path.join(await realpath(original), 'compact-too-long-'));
+  // 中文注释：即使 CI 的临时根目录很短，负例也必须确定超过 socket 字节上限。
+  const longScratch = await mkdtemp(path.join(await realpath(original), `compact-too-long-${'x'.repeat(103)}-`));
   try {
+    assert.ok(Buffer.byteLength(path.join(longScratch, '0000/plugin-data/browser-link-native/bridge.sock')) > 103);
     await assert.rejects(runner.stageRealSession({browser: 'chrome', compactScratch: true, label: 'missing/compact-escape'}), /label/u);
     delete process.env.TMPDIR;
     await assert.rejects(runner.stageRealSession({browser: 'chrome', compactScratch: true}), /explicit TMPDIR/u);

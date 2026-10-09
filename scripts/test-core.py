@@ -16,6 +16,8 @@ spec.loader.exec_module(gate)
 with (nullcontext(os.environ['TMPDIR']) if 'TMPDIR' in os.environ else tempfile.TemporaryDirectory(prefix='hbc-', dir='/tmp')) as scratch:
     # 中文注释：复用已审阅的显式用例清单，避免通配符启动真实浏览器测试。
     env = {**os.environ, 'TMPDIR': str(Path(scratch).resolve()), 'PYTHONDONTWRITEBYTECODE': '1'}
+    # 中文注释：Node 夹具继承当前解释器，不依赖个人安装路径；显式指定仍优先。
+    env.setdefault('HERMES_PYTHON', sys.executable)
     commands = [
         # 中文注释：先核对运行元数据、当前发布文档和下载链接，再执行离线用例。
         ['node', 'scripts/package-version.mjs'],
