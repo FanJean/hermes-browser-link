@@ -1,6 +1,6 @@
 {
   "name": "hermes-browser-link",
-  "version": "1.9.1",
+  "version": "1.10.0",
   "private": true,
   "description": "让 Hermes 在已登录的 Chrome/Edge 中完成网页任务，连接授权后直接执行，支持 Python 工作流、自动文本与截图屏蔽、持续任务鼠标和 Cookie 镜像。",
   "type": "module",

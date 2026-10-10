@@ -1,6 +1,6 @@
 # Hermes Browser Link
 
-**1.9.1 — macOS 正式稳定版。** 支持受授权网页任务、自动文本与截图屏蔽、持续任务鼠标、桌面 Cookie 镜像、独立云端浏览器调用和正式版自动更新。
+**1.10.0 — macOS 正式稳定版。** 支持受授权网页任务、自动文本与截图屏蔽、持续任务鼠标、桌面 Cookie 镜像、独立云端浏览器调用和正式版自动更新。
 
 ![Hermes Browser Link](docs/assets/readme-banner.png)
 
@@ -38,10 +38,10 @@
 
 ## 快速安装（3 步）
 
-1. 先确认 Hermes 和 Python 已安装（`hermes --version`、`python3 --version`），下载 [Release 附件](https://github.com/fanjing188/hermes-browser-link/releases) `hermes-browser-link-1.9.1.zip`，不要选 GitHub 的 **Source code (zip)**。无需 Node.js 或 npm；“程序安装并启用完成”只代表本机程序装好，不代表浏览器已连接：
+1. 先确认 Hermes 和 Python 已安装（`hermes --version`、`python3 --version`），下载 [Release 附件](https://github.com/fanjing188/hermes-browser-link/releases) `hermes-browser-link-1.10.0.zip`，不要选 GitHub 的 **Source code (zip)**。无需 Node.js 或 npm；“程序安装并启用完成”只代表本机程序装好，不代表浏览器已连接：
 
    ```sh
-   curl -fL https://github.com/fanjing188/hermes-browser-link/releases/download/v1.9.1/hermes-browser-link-1.9.1.zip -o hermes-browser-link-1.9.1.zip && unzip hermes-browser-link-1.9.1.zip && cd hermes-browser-link-1.9.1 && ./install.sh
+   curl -fL https://github.com/fanjing188/hermes-browser-link/releases/download/v1.10.0/hermes-browser-link-1.10.0.zip -o hermes-browser-link-1.10.0.zip && unzip hermes-browser-link-1.10.0.zip && cd hermes-browser-link-1.10.0 && ./install.sh
    ```
 
 2. 终端等待时，在浏览器打开 `chrome://extensions` 或 `edge://extensions` → 开发者模式 → 加载已解压的扩展程序 → 粘贴脚本打印的“扩展目录”绝对路径，不是 ZIP 解压目录。可用时脚本会复制路径到剪贴板；最多等待 3 分钟，显示“扩展已连接”才代表连接确认。Ctrl+C 只跳过等待；超时不会撤销安装，也不需要重装，加载扩展后运行打印的“检查 / Check”命令即可。
@@ -51,7 +51,7 @@
 
 升级：在新包目录运行 `./install.sh --upgrade`（自动备份，失败回滚），再重载扩展和重启桌面端。卸载：`./install.sh --uninstall`（默认保留任务私有数据；加 `--purge` 才删除）。
 
-1.9.1 为正式稳定版，可进入自动更新通道。旧安装先手动升级一次；旧云入口按提示使用 `--upgrade --maintenance`，退出 Chrome、Edge 和 Hermes 后执行。安装本次更新组件后运行 `./install.sh --auto-update install`，每小时检查正式 Release，在浏览器和 Hermes 退出后安装。更新后重载扩展再启动 Hermes。仅检查用 `--auto-update check`，关闭用 `--auto-update off`；立即更新用 `--update`。详见 [自动更新](docs/installation.md#automatic-updates--自动更新)。
+1.10.0 为正式稳定版，可进入自动更新通道。旧安装先手动升级一次；旧云入口按提示使用 `--upgrade --maintenance`，退出 Chrome、Edge 和 Hermes 后执行。安装本次更新组件后运行 `./install.sh --auto-update install`，每小时检查正式 Release，在浏览器和 Hermes 退出后安装。更新后重载扩展再启动 Hermes。仅检查用 `--auto-update check`，关闭用 `--auto-update off`；立即更新用 `--update`。详见 [自动更新](docs/installation.md#automatic-updates--自动更新)。
 
 [源码、手动安装、多 profile 与故障排查](docs/installation.md) · [代理安装提示词](docs/agent-install-prompt.md)。
 
