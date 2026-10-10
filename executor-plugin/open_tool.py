@@ -315,7 +315,7 @@ def register(ctx, runtime, host_bridge, *, lease_error):
 
 
 # 中文注释：显式选页只接受已绑定任务的工作页，身份仍由一次性 owner lease 注入。
-USE_TAB_SCHEMA = {'description': '将本会话官方 browser_* 工具的当前页切换为已绑定任务的工作页。',
+USE_TAB_SCHEMA = {'description': '将本会话官方 browser_* 工具的当前页切换为已绑定任务的工作页或已接管登录窗口；点击返回 popupOpened 后选择其 tabId 并重读，登录窗口关闭后自动回源重读。',
     'parameters': {'type': 'object', 'properties': {'tab_id': {'type': 'integer', 'minimum': 0}},
                    'required': ['tab_id'], 'additionalProperties': False}}
 

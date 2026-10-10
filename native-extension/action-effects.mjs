@@ -25,7 +25,7 @@ export function effectProbe(op,token){
  document.addEventListener('submit',state.submit,true);globalThis[key]=state;return true;
 }
 export const NO_EFFECT_HINT='输入已派发但未观察到效果；请读取目标页核对，检查按钮状态或改用页面支持的操作，不要反复重试。';
-export async function observeInputEffect({api,target,contextId,frameId,guard,work,timeoutMs=1500}){
+export async function observeInputEffect({api,target,contextId,frameId,guard,work,timeoutMs=1500,externalEffect=null}){
  const token=crypto.randomUUID();
  const probe=async op=>{
   const reply=await api.debugger.sendCommand(target,'Runtime.callFunctionOn',{executionContextId:contextId,functionDeclaration:effectProbe.toString(),arguments:[{value:op},{value:token}],returnByValue:true});
@@ -60,7 +60,7 @@ export async function observeInputEffect({api,target,contextId,frameId,guard,wor
   if(!requires)return result;
   const deadline=Date.now()+timeoutMs;
   do{
-   if(result?.dialogOpened||changed||await probe('read'))return {...result,effect:'observed',...(navigation?{navigation}:{})};
+   if(result?.dialogOpened||changed||externalEffect?.()||await probe('read')){guard();return {...result,effect:'observed',...(navigation?{navigation}:{})};}
    guard();if(Date.now()>=deadline)break;
    await new Promise(resolve=>setTimeout(resolve,60));
   }while(Date.now()<=deadline);

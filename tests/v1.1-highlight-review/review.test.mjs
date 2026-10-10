@@ -36,7 +36,7 @@ function fixture({debuggerEvents=true,pauseAnimationFrames=false,stallPaintProbe
  const paintProbeStarted=new Promise(resolve=>{paintProbeStartedResolve=resolve;});
  const api={
   // 中文注释：写操作会先激活本任务标签页，合成浏览器也须实现该接口。
-  tabs:{get:async id=>({id,url:`${origin}/`,windowId:5,groupId:2,status:'complete'}),update:async()=>({active:true})},
+  tabs:{query:async()=>[await api.tabs.get(7)],get:async id=>({id,url:`${origin}/`,windowId:5,groupId:2,status:'complete'}),update:async()=>({active:true})},
   debugger:{
    ...(debuggerEvents?{onEvent:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)}}:{}),
    onDetach:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)},

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createAutomationOverlay} from '../../native-extension/automation-overlay.mjs';
+import {readFileSync} from 'node:fs';
+import {createAutomationOverlay,stepLabels} from '../../native-extension/automation-overlay.mjs';
+import {V1_ACTIONS} from '../../native-extension/core.mjs';
 function styleFixture(){
  const priorities=new Map();
  return {
@@ -18,6 +20,7 @@ class Element{
  hasAttribute(name){return this.attributes.has(name);}
  removeAttribute(name){this.attributes.delete(name);}
  append(...children){for(const child of children){this.children.push(child);child.parentNode=this;child.isConnected=this.isConnected;}}
+ insertBefore(child,before){if(child.parentNode)child.parentNode.children=child.parentNode.children.filter(node=>node!==child);const index=before?this.children.indexOf(before):this.children.length;this.children.splice(index,0,child);child.parentNode=this;child.isConnected=this.isConnected;}
  replaceChildren(...children){this.children=[];this.append(...children);}
  addEventListener(type,fn){this.listeners[type]=fn;}
  remove(){this.removed=true;this.isConnected=false;if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(child=>child!==this);}
@@ -25,6 +28,106 @@ class Element{
 }
 function fixture(){const body=new Element('body'),documentElement=new Element('html');documentElement.isConnected=true;const doc={location:{origin:'https://example.test'},documentElement,defaultView:{innerWidth:800,innerHeight:600,getComputedStyle:element=>({display:element.style.display||'block',opacity:element.style.opacity||'1'})},createElement:t=>new Element(t)};documentElement.append(body);return {doc,body};}
 const scope={taskId:'task-1',generation:2,tabId:7,origin:'https://example.test'};
+function recentFixture(){
+ const {doc}=fixture(),overlay=createAutomationOverlay({document:doc,...scope,onStop:async()=>({state:'stopped'}),onTakeover:async()=>({state:'paused'}),onResume:async()=>({state:'running'})});
+ const bar=overlay.host.shadow.children.find(node=>node.dataset.role==='status'),recent=bar.children.find(node=>node.tagName==='details');
+ return {doc,overlay,bar,recent,list:recent.children[1],detail:bar.children[2]};
+}
+test('显示层覆盖守护进程、公开工具及执行器的全部动作',()=>{
+ const actions=new Set([...V1_ACTIONS,'vault.fill','cdp.input','use_tab']);
+ for(const [file,constant] of [['../../native-bridge/daemon.py','V1_ACTIONS'],['../../executor-plugin/native_tools.py','PUBLIC_ACTIONS']]){
+  const source=readFileSync(new URL(file,import.meta.url),'utf8'),block=source.match(new RegExp(`${constant} = frozenset\\(\\{([\\s\\S]*?)\\}\\)`));
+  assert.ok(block,`${file} 的动作清单必须可核查`);
+  for(const match of block[1].matchAll(/'([^']+)'/g))actions.add(match[1]);
+ }
+ const {overlay,list}=recentFixture();
+ for(const action of actions){
+  assert.ok(Object.hasOwn(stepLabels,action),`${action} 缺少中文映射`);
+  overlay.setRecentSteps([{action,result:'succeeded'}]);
+  assert.match(list.children[0].textContent,/[\u4e00-\u9fff]/);
+  assert.doesNotMatch(list.children[0].textContent,/^处理页面 ·/);
+  assert.equal(list.children[0].textContent,`${['fill','ref_fill'].includes(action)?'在输入框输入内容':stepLabels[action]} · 成功`);
+ }
+ overlay.remove();
+});
+test('最近步骤显示动词和脱敏目标，不泄露动作、角色或占位名称',()=>{
+ const {overlay,list}=recentFixture();
+ const cases=[
+  ['ref_click','button · 登录','点击「登录」按钮'],['ref_fill','textbox · 搜索框','在「搜索框」输入内容'],
+  ['click','link · 帮助','点击「帮助」链接'],['ref_click','button · 名称未提供','点击按钮'],
+  ['ref_fill','敏感字段','填写敏感信息'],['ref_fill','textbox · 敏感字段','填写敏感信息'],
+  ['vault.fill','敏感字段','填写敏感信息'],['scroll','页面或任务','滑动页面'],['page.parse','页面或任务','扫描页面'],
+  ['ref_select_option','option · 中国','选择「中国」'],['use_tab','页面或任务','切换标签页'],
+  ['ref_select_option','combobox · 国家','在「国家」下拉框选择选项'],
+  ['unknown.action','button · 登录','处理页面'],['constructor','页面或任务','处理页面'],
+ ];
+ for(const [action,target,expected] of cases){
+  const row={action,target,result:'succeeded'};
+  for(const field of ['selector','value','key','direction','text'])Object.defineProperty(row,field,{get(){throw Error(`不允许读取 ${field}`);}});
+  overlay.setRecentSteps([row]);assert.equal(list.children[0].textContent,`${expected} · 成功`);
+  assert.doesNotMatch(list.children[0].textContent,/ref_|page\.parse|unknown\.action|button|textbox|名称未提供|敏感字段/);
+ }
+ for(const [role,translated] of Object.entries({checkbox:'复选框',combobox:'下拉框',listbox:'下拉框',option:'选项',tab:'标签',menuitem:'菜单项',radio:'单选框',switch:'开关',searchbox:'搜索框'})){
+  overlay.setRecentSteps([{action:'ref_click',target:`${role} · 目标`,result:'succeeded'}]);
+  assert.equal(list.children[0].textContent,`点击「目标」${translated} · 成功`);
+ }
+ overlay.remove();
+});
+test('最近步骤用本地时间，短耗时省略，长耗时以秒显示',()=>{
+ const previous=process.env.TZ;process.env.TZ='Asia/Shanghai';
+ const {overlay,list}=recentFixture();
+ try{
+  overlay.setRecentSteps([{time:'2026-10-10T04:03:41Z',action:'ref_click',target:'button · 登录',durationMs:230,result:'succeeded'}]);
+  assert.equal(list.children[0].textContent,'点击「登录」按钮 · 成功 · 12:03:41');
+  overlay.setRecentSteps([{time:'invalid',action:'scroll',durationMs:1234,result:'pending'}]);
+  assert.equal(list.children[0].textContent,'滑动页面 · 等待确认 · 用时 1.2 秒');
+ }finally{overlay.remove();if(previous===undefined)delete process.env.TZ;else process.env.TZ=previous;}
+});
+test('相同步骤回执不改写节点，五步窗口追加只替换过期和变化行',()=>{
+ const {overlay,list,recent}=recentFixture();recent.open=true;
+ const rows=Array.from({length:5},(_,index)=>({time:`2026-10-10T04:03:4${index}Z`,action:'ref_click',target:`button · 目标${index}`,result:'succeeded'}));
+ overlay.setRecentSteps(rows);const nodes=[...list.children];
+ let writes=0;const insert=list.insertBefore.bind(list);list.insertBefore=(...args)=>{writes++;return insert(...args);};
+ for(const node of nodes){let value=node.textContent;Object.defineProperty(node,'textContent',{get:()=>value,set:next=>{writes++;value=next;}});}
+ overlay.setRecentSteps(structuredClone(rows));assert.deepEqual(list.children,nodes);assert.equal(writes,0);assert.equal(recent.open,true);
+ overlay.setRecentSteps([...rows,{action:'page.parse',result:'succeeded'}]);
+ assert.deepEqual(list.children.slice(0,4),nodes.slice(1));assert.equal(writes,1);assert.equal(nodes[0].isConnected,false);
+ const kept=[...list.children];overlay.setRecentSteps([...rows.slice(1),{action:'page.parse',result:'unknown',errorCode:'stale_ref'}]);
+ assert.deepEqual(list.children.slice(0,4),kept.slice(0,4));assert.notEqual(list.children[4],kept[4]);assert.match(list.children[4].textContent,/结果不确定.*页面引用已失效/);assert.equal(list.children[4].title,'stale_ref');
+ overlay.remove();
+});
+test('连续动作跳过短等待文案，等待阶段立即收回派发窗口',context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
+ const {overlay,bar,detail}=recentFixture();
+ overlay.update({state:'running',step:'click'});const first=detail.textContent;
+ assert.equal(overlay.host.style.pointerEvents,'none');
+ overlay.update({state:'waiting'});assert.equal(detail.textContent,first);assert.equal(overlay.host.style.pointerEvents,'auto');
+ assert.equal(bar.style.pointerEvents,'auto');context.mock.timers.tick(300);assert.equal(detail.textContent,first);
+ overlay.update({state:'running',step:'fill'});assert.match(detail.textContent,/当前步骤：输入内容/);
+ context.mock.timers.tick(100);assert.match(detail.textContent,/当前步骤：输入内容/);
+ overlay.remove();
+});
+test('重复动作更新不重写未变化文本、按钮、边框、目标和鼠标样式',()=>{
+ const {overlay,bar}=recentFixture();const update={state:'running',step:'click',targetRect:{x:10,y:20,width:30,height:40}};
+ overlay.update(update);let writes=0;
+ const watch=(object,key)=>{let value=object[key];Object.defineProperty(object,key,{get:()=>value,set:next=>{writes++;value=next;}});};
+ for(const node of [overlay.host,...overlay.host.shadow.children,...bar.children,...bar.children.find(node=>node.dataset.role==='actions').children]){
+  watch(node,'textContent');for(const key of Object.keys(node.style))if(typeof node.style[key]!=='function')watch(node.style,key);
+ }
+ overlay.update(update);assert.equal(writes,0);overlay.remove();
+});
+test('等待文案只延迟四百毫秒，重复轮询不续期，安全状态即时显示',context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
+ const {overlay,detail}=recentFixture();
+ overlay.update({state:'running',step:'click'});overlay.update({state:'waiting'});context.mock.timers.tick(300);
+ overlay.update({state:'waiting'});context.mock.timers.tick(100);assert.match(detail.textContent,/页面暂不可点击/);
+ for(const state of ['paused','disconnected','unknown','pausing','resuming','stopping']){
+  overlay.update({state:'running',step:'fill'});overlay.update({state:'waiting'});overlay.update({state});
+  assert.doesNotMatch(detail.textContent,/当前步骤/);const text=detail.textContent;context.mock.timers.tick(400);assert.equal(detail.textContent,text);
+ }
+ overlay.update({state:'running',step:'fill'});overlay.update({state:'waiting'});const text=detail.textContent;
+ overlay.remove();context.mock.timers.tick(400);assert.equal(detail.textContent,text);
+});
 // 中文注释：等待轮询的短读取不应闪出扫描光带；超过反馈门槛仍显示真实解析状态。
 test('短读取轮询不闪出扫描，持续解析才显示光带',context=>{
  context.mock.timers.enable({apis:['setTimeout']});
@@ -273,10 +376,12 @@ test('最近步骤说明内容保护拒绝、失效引用和缺失选项，保�
  ]);
  const panel=overlay.host.shadow.children.find(x=>x.dataset.role==='status').children.find(x=>x.tagName==='details');
  const lines=panel.children[1].children.map(x=>x.textContent);
- assert.match(lines[0],/失败.*content_shield_uninspectable.*无法检查/);
- assert.match(lines[1],/结果不确定.*stale_reference.*引用已失效/);
- assert.match(lines[2],/select_option_missing.*选项/);
- assert.match(lines[3],/execution_denied.*安全检查/);
+ assert.match(lines[0],/失败.*无法检查/);
+ assert.match(lines[1],/结果不确定.*引用已失效/);
+ assert.match(lines[2],/失败.*未找到指定选项/);
+ assert.match(lines[3],/失败.*安全检查/);
+ assert.doesNotMatch(lines.join(' '),/content_shield_uninspectable|stale_reference|select_option_missing|execution_denied|\[[A-Za-z_]+\]/);
+ assert.equal(panel.children[1].children[1].title,'stale_reference');
  assert.doesNotMatch(lines.join(' '),/PRIVATE_ERROR_CANARY|SECRET_CANARY|private.invalid/);
  overlay.remove();
 });

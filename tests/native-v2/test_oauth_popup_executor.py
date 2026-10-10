@@ -18,6 +18,36 @@ from vault_adapter.integration import VaultBindingRegistry
 from vault_adapter.adapter import VaultAdapter
 
 class ExecutorPopupTests(unittest.TestCase):
+    def test_popup_close_restores_current_script_tab_and_reads_new_source_document(self):
+        task = {'id': 'task', 'instanceId': 'instance', 'generation': 1, 'state': 'ready',
+                'tabIds': [1, 2], 'workTabs': [{'tabId': 1}], 'adoptedPopupTabIds': [2], 'popupSources': {'2': 1}}
+        calls = []
+        def call(method, params):
+            calls.append((method, params))
+            if method == 'shared.get': return task
+            return {'binding': {'documentId': 'fresh-source'}, 'tabId': params['tabId']}
+        session = action.ActionSession(types.SimpleNamespace(call=call), owner='owner', task_id='task')
+        session.install_scope('instance', 1)
+        session.use_tab(2)
+        self.assertIs(session.for_tab(2), session)
+        task.update(tabIds=[1], adoptedPopupTabIds=[], popupReturns={'2': 1})
+        result = session.run('semantic_snapshot', {})
+        self.assertEqual(result['popupClosed'], {'returnedTo': 1})
+        self.assertEqual(result['tabId'], 1)
+        self.assertEqual(result['binding']['documentId'], 'fresh-source')
+        self.assertEqual(session.current_tab(), 1)
+        self.assertEqual([p['tabId'] for method, p in calls if method == 'shared.run'], [1])
+
+    def test_popup_return_does_not_cross_generation_or_foreign_source(self):
+        task = {'id': 'task', 'instanceId': 'instance', 'generation': 1, 'state': 'ready',
+                'tabIds': [1, 2], 'workTabs': [{'tabId': 1}], 'adoptedPopupTabIds': [2], 'popupSources': {'2': 1}}
+        session = action.ActionSession(types.SimpleNamespace(call=lambda *args: task), owner='owner', task_id='task')
+        session.install_scope('instance', 1);session.use_tab(2)
+        task.update(tabIds=[1], popupReturns={'2': 1}, generation=2)
+        self.assertEqual(session.current_tab(), 2)
+        task.update(generation=1, tabIds=[3], popupReturns={'2': 3})
+        self.assertEqual(session.current_tab(), 2)
+
     def test_explicit_adopted_popup_passes_vault_binding_and_private_scope_not_script_conflict(self):
         task={'id':'task','owner':'owner','instanceId':'instance','generation':1,'state':'ready','modeGeneration':2,'activeMode':'full','allowedOrigins':['https://accounts.example.test'],'tabIds':[1,2,3],'agentTabIds':[1],'workTabs':[{'tabId':1}], 'adoptedPopupTabIds':[2]}
         runtime=types.SimpleNamespace(authority=types.SimpleNamespace(owner_for_session=lambda *args:'owner'),call=lambda method,p:task if method=='shared.get' else [{'instanceId':'instance','connected':True}])

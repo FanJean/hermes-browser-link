@@ -27,6 +27,7 @@ async function harness(initialStorage={},manifestVersion=packageVersion){
     case 'extension.cdp_events':result={};break;
     case 'extension.tasks':result=[clone(task)];break;
     case 'extension.approvals':result=clone(queue);break;
+    case 'extension.popup_adopted':receive({id:m.id,error:{message:'synthetic audit rejected'}});return;
     case 'extension.approve':task={...task,...m.params,state:m.params.workspaceOnly?'authorizing':'ready',id:task.id};result=clone(task);break;
     case 'extension.mode':task={...task,state:'ready',activeMode:m.params.mode,modeGeneration:task.modeGeneration+1};result=clone(task);break;
     case 'extension.decide':queue=[];result={status:'accepted'};break;
@@ -40,12 +41,12 @@ async function harness(initialStorage={},manifestVersion=packageVersion){
  class TestExecutor{
   // 中文注释：本夹具不创建页面浮层，握手清理能力由专项 DOM 回归覆盖。
   async cleanupOrphanOverlays(){}
-  constructor(_api,_event,options={}){this.options=options;executor=this;this.tasks=new Map();this.leases=new Map();this.actionGrants=new Map();this.attached=new Set();this.diagnostics=new DiagnosticEventBuffer();}
+  constructor(_api,_event,options={}){this.options=options;this.releases=[];executor=this;this.tasks=new Map();this.leases=new Map();this.actionGrants=new Map();this.attached=new Set();this.diagnostics=new DiagnosticEventBuffer();}
   async approve(t){this.tasks.set(t.id,{...t,policy:{activeMode:'smart',modeGeneration:t.modeGeneration}});for(const id of t.tabIds)this.leases.set(id,t.id);}
   revokeMode(id){this.tasks.get(id).policy.activeMode='smart';}
   setMode(t){this.tasks.get(t.id).policy={activeMode:t.activeMode,modeGeneration:t.modeGeneration};}
   approveAction(a){this.actionGrants.set(a.nonce,a);}
-  async release({taskId}){const t=this.tasks.get(taskId);if(t){t.revoked=true;t.policy.activeMode='smart';}}
+  async release(params){this.releases.push(clone(params));const {taskId}=params;const t=this.tasks.get(taskId);if(t){t.revoked=true;t.policy.activeMode='smart';}}
   async disconnect(){}
  }
  class TestWorkspaces{constructor(){this.manager={reconcile:async()=>{}};}async status(){return [];}}
@@ -155,4 +156,19 @@ for(const storage of [{pageContentFilter:'true'},{pageContentFilter:false,pageCo
  await h.executor.options.onCdpEvents({events:[{text:'RAW_CORRUPT_SETTINGS_CANARY'}]});
  assert.equal(h.nativeCalls.filter(row=>row.method==='extension.cdp_events').length,pushed);
  h.dom.window.close();
+});
+
+
+test('automatic popup audit rejection stops the exact task and releases overlays without deleting tabs or replaying',async()=>{
+ const h=await harness();
+ try{
+  const task=h.executor.tasks.get('native-task');
+  await assert.rejects(h.executor.options.onPopupAdopt({taskId:task.id,generation:task.generation,modeGeneration:task.policy.modeGeneration,popupScope:{}}),/synthetic audit rejected/);
+  await h.flush();
+  assert.equal(task.revoked,true);
+  assert.deepEqual(h.executor.releases.at(-1),{taskId:task.id,generation:task.generation,closeAgentTabs:false});
+  assert.equal(h.nativeCalls.filter(call=>call.method==='extension.popup_adopted').length,1);
+  const stopped=h.nativeCalls.filter(call=>call.method==='extension.stop');assert.equal(stopped.length,1);
+  assert.deepEqual(stopped[0].params,{taskId:task.id,generation:task.generation});
+ }finally{h.dom.window.close();}
 });

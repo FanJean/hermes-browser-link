@@ -5,6 +5,19 @@ export async function fetchJson(url){
  return response.json();
 }
 
+export async function activateTestExtensionTab(client,targetId,cdp){
+ for(let attempt=0;;attempt++){
+  try{await client.evaluate('chrome.tabs.getCurrent().then(tab=>chrome.windows.update(tab.windowId,{focused:true}).then(()=>chrome.tabs.update(tab.id,{active:true}))).then(()=>true)');break;}
+  catch(error){
+   // 中文注释：仅重试临时 profile 的聚焦/激活；页面输入和审批决定不在重试范围。
+   if(attempt===2||!/^(?:Error: )?Tabs cannot be edited right now \(user may be dragging a tab\)\.$/.test(error.message))throw error;
+   await new Promise(resolve=>setTimeout(resolve,50*(attempt+1)));
+  }
+ }
+ await cdp.call('Target.activateTarget',{targetId});
+ await client.call('Emulation.setFocusEmulationEnabled',{enabled:true});
+}
+
 export async function waitFor(read,timeoutMs=15000,{label='未命名等待点',ready=Boolean}={}){
  const deadline=Date.now()+timeoutMs;
  let lastObserved,lastError;
@@ -15,6 +28,18 @@ export async function waitFor(read,timeoutMs=15000,{label='未命名等待点',r
  }
  // 中文注释：超时保留等待点、最后一次读数和读取错误，便于区分状态未变化与 CDP 读取失败。
  throw Error(`CDP acceptance wait timed out: ${label}; last=${JSON.stringify(lastObserved)}; error=${JSON.stringify(lastError)}`);
+}
+
+// 中文注释：Target 元信息可先于导航完成；只在指定扩展文档及其权限 API 全部就绪后执行夹具。
+export async function waitForExtensionPage(client,{extensionId,url,timeoutMs=15000}){
+ return waitFor(()=>client.evaluate(`(()=>({url:location.href,readyState:document.readyState,
+  runtimeId:globalThis.chrome?.runtime?.id??null,hasRuntime:typeof globalThis.chrome?.runtime?.getURL==='function',
+  hasTabs:typeof globalThis.chrome?.tabs?.get==='function',hasDebugger:typeof globalThis.chrome?.debugger?.sendCommand==='function',
+  popupMounted:Boolean(document.querySelector('#connection-label'))}))()`),timeoutMs,{
+  label:`扩展页面与 API 就绪 (${extensionId})`,
+  ready:state=>state?.url===url&&state.readyState==='complete'&&state.runtimeId===extensionId&&
+   state.hasRuntime&&state.hasTabs&&state.hasDebugger&&state.popupMounted,
+ });
 }
 
 export class CdpClient{

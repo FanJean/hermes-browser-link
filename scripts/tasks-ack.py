@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import stat
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,13 +59,19 @@ def hold_daemon_lock(data):
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
         os.close(descriptor)
         raise InstallError('桥接启动锁不安全 / Unsafe bridge lock.', '核对私有桥接目录后重试。')
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError as error:
-        os.close(descriptor)
-        raise InstallError('桥接仍在运行 / Bridge is running.',
-                           '加 --stop-daemon 让本命令进入维护模式并停止已核实的 daemon，或等它空闲退出后重试。') from error
-    return descriptor
+    # 中文注释：daemon 先删 PID 文件、进程退出时才释放锁；刚停止时短暂等待锁释放。
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return descriptor
+        except BlockingIOError as error:
+            if time.monotonic() < deadline:
+                time.sleep(0.1)
+                continue
+            os.close(descriptor)
+            raise InstallError('桥接仍在运行 / Bridge is running.',
+                               '加 --stop-daemon 让本命令进入维护模式并停止已核实的 daemon，或等它空闲退出后重试。') from error
 
 
 def acknowledge(home, task_id, reason, env, *, stop_daemon=False):

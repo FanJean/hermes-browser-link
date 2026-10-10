@@ -147,7 +147,15 @@ async function performOverlayCommand({taskId,generation,tabId,origin:site,kind})
 const reportDownload=p=>{const current=bridge;if(!current||!connected)return Promise.resolve();return current.request('extension.download_event',p).catch(()=>{});};
 // 中文注释：已存在的订阅也必须遵循当前开关；设置读失败时不推送原始事件。
 const pushCdpEvents=async p=>{try{if((await readContentShield()).enabled)return;}catch{return;}const current=bridge;if(!current||!connected)return;return current.request('extension.cdp_events',p).catch(()=>{});};
-const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}),{onOverlayCommand:overlayCommand,onDownloadEvent:reportDownload,onCdpEvents:pushCdpEvents,onContentShield:readContentShield,
+const executor=new Executor(chrome,p=>bridge?.request('extension.tab_event',p).catch(()=>{}),{onPopupAdopt:async p=>{
+  const current=bridge;if(!current||!connected)throw Error('POPUP_STALE');
+  try{await current.request('extension.popup_adopted',p);}
+  catch(error){
+   // 中文注释：审计回执丢失时不能继续猜测双端租约，冻结本代任务并请求宿主停止，绝不重发接管。
+   const t=executor.tasks.get(p.taskId);if(t?.generation===p.generation){t.revoked=true;void executor.release({taskId:p.taskId,generation:p.generation,closeAgentTabs:false}).catch(()=>{});}
+   void current.request('extension.stop',{taskId:p.taskId,generation:p.generation}).catch(()=>{});throw error;
+  }
+ },onOverlayCommand:overlayCommand,onDownloadEvent:reportDownload,onCdpEvents:pushCdpEvents,onContentShield:readContentShield,
  // 中文注释：系统通知只说明需要登录，不携带网站、任务或账号信息。
  onSignInRedirect:()=>void showPanelNotification(chrome,'hermes-browser-sign-in','任务页面跳到了第三方登录页。请在该标签页亲自选择账号并完成登录，完成后任务会自动继续。')});
 // 中文注释：镜像状态变化只刷新源扩展确认面板，弹窗不保留复制结果。
@@ -334,7 +342,9 @@ chrome.debugger.onEvent?.addListener?.((source,method,params)=>{executor.pageRun
 // 中文注释：主框架 DOM 就绪时立刻补完整遮罩；Page 域由预遮罩同步时开启。
 chrome.debugger.onEvent?.addListener((source,method)=>{if(method!=='Page.domContentEventFired'||source?.sessionId||!Number.isInteger(source?.tabId)||!executor.leases.has(source.tabId))return;chrome.tabs.get(source.tabId).then(tab=>executor.tabEvent(source.tabId,'navigated',tab.url,{status:'dom_ready',urlChanged:false})).catch(()=>{});});
 // 中文注释：分离后原 CDP 通道已失效；先撤销任务，再短暂附加移除残留浮层，清理自己的分离事件不能再停任务。
-chrome.debugger.onDetach.addListener(({tabId})=>{
+chrome.debugger.onDetach.addListener(({tabId},reason)=>{
+ const owner=executor.tasks.get(executor.leases.get(tabId));
+ if(reason==='target_closed'&&owner?.adoptedPopupTabs?.has(tabId)){void executor.tabEvent(tabId,'closed').catch(()=>{});return;}
  const expectedClose=executor.closingTabs.has(tabId);executor.attached.delete(tabId);
  if(expectedClose||executor.overlayCleanupTabs.has(tabId))return;
  const t=executor.tasks.get(executor.leases.get(tabId));if(!t||t.revoked)return;

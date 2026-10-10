@@ -37,7 +37,7 @@ Check `code` (or `bridgeCode`) and `outcome_unknown` in the result. If `outcome_
 
 ## Popup adoption after approval
 
-For `popup_adopt`, never resend the action for a cached receipt. Keep the original same-script catalog candidate. `wait_pending(tab=source)` is read-only: it queries the ledger/current scope and returns `state=confirmed`, not `adopted` or `tabId`.
+For login clicks, check `popupOpened` and `popupNextStep`: smart-mode provider authorization pages are automatically adopted; select the returned tab and re-read. Passwords, codes and 2FA remain user `manual_input`. `popupClosed.returnedTo` reports return to the source; read it fresh. For non-provider `popup_adopt`, never resend the action for a cached receipt. Keep the original same-script catalog candidate. `wait_pending(tab=source)` is read-only: it queries the ledger/current scope and returns `state=confirmed`, not `adopted` or `tabId`.
 
 For single tools, use `browser_shared_get` to check the original/current generation and `adoptedPopupTabIds`; select the known candidate with `browser_shared_use_tab`, then re-read the page. Scripts use `use_tab(candidate['tabId'])` and fresh `read_page`. Metadata is not access proof. Rejected, unknown, expired, revoked or changed-scope requests must not replay.
 

@@ -138,7 +138,8 @@ class HostBindingCoordinator:
                 runtime = next(bridge.runtime if hasattr(bridge, 'runtime') else bridge.adapter.runtime for bridge in self.bridges)
                 task = runtime.call('shared.get', {'owner': owner, 'taskId': task_id})
                 owned = [row.get('tabId') for row in task.get('workTabs', []) if isinstance(row, dict)]
-                if tab_id in owned:
+                owned += task.get('adoptedPopupTabIds', [])
+                if tab_id in owned and tab_id in task.get('tabIds', []):
                     matches.append(task_id)
             if len(matches) != 1:
                 raise RuntimeError('tab is missing or ambiguous across bound tasks')

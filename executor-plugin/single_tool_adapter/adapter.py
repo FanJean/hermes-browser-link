@@ -174,6 +174,7 @@ class _SessionBinding:
     revoked: bool = False
     # 中文注释：仅保存本次工具调用的封闭保护元数据，不能保存规则或网页原文。
     shield_metadata: dict = field(default_factory=dict)
+    popup_closed: dict | None = None
 
 
 class SingleToolAdapter:
@@ -255,7 +256,7 @@ class SingleToolAdapter:
             raise AdapterBindError("native task ownership, readiness, or browser connection could not be verified") from exc
 
         agent_tabs = self._agent_tabs(task)
-        if tab_id is not None and tab_id not in agent_tabs:
+        if tab_id is not None and tab_id not in self._controlled_tabs(task):
             raise AdapterBindError("explicit tab is not a task-created agent work tab")
         selected_tab = tab_id if tab_id is not None else (agent_tabs[0] if len(agent_tabs) == 1 else None)
         with self._lock:
@@ -436,6 +437,9 @@ class SingleToolAdapter:
             snap = self._run(binding, task, tab_id, "semantic_snapshot", call_id, {}, write=False)
             formatted = self._format_snapshot(binding, snap)
             binding.outcome_unknown = False
+            if binding.popup_closed:
+                formatted['popupClosed'] = binding.popup_closed
+                binding.popup_closed = None
             return self._json(formatted)
 
         if action == "browser_scroll":
@@ -546,11 +550,17 @@ class SingleToolAdapter:
                 "snapshotId": snapshot_id,
                 "ref": native_ref,
             }, write=True)
+            popup_metadata = {}
+            opened = receipt.get('popupOpened')
+            if isinstance(opened, dict):
+                popup_metadata['popupOpened'] = {key: opened[key] for key in ('candidateRef', 'origin', 'windowType', 'tabId') if key in opened}
+                if isinstance(receipt.get('popupNextStep'), str):
+                    popup_metadata['popupNextStep'] = receipt['popupNextStep']
             return self._json({
                 "success": True, "clicked": ref, "delivery": receipt["kind"],
                 **({"relocated": True} if receipt.get("relocated") is True else {}),
                 **({"fallback_reason": receipt["fallbackReason"]} if isinstance(receipt.get("fallbackReason"), str) else {}),
-                "popupOwnership": receipt.get("popupOwnership", "uncertain"),
+                **popup_metadata,
                 "native_adapter": "Page Semantics v2 ref",
                 # 中文注释：点击已派发且页面跳出授权网站时如实告知，后续读取会返回 tab_out_of_scope。
                 **({"navigated_out_of_scope": True, "next": "browser_navigate 回授权网站或 browser_shared_open 新网站"}
@@ -918,10 +928,23 @@ class SingleToolAdapter:
             return []
         return [tab for tab in raw if type(tab) is int and tab >= 0 and tab in task.get("tabIds", [])]
 
+    @classmethod
+    def _controlled_tabs(cls, task):
+        # 中文注释：接管与回源只增加当前租约页操作资格，_agent_tabs 仍单独决定工作页归属。
+        adopted = task.get('adoptedPopupTabIds', [])
+        returned = list(task.get('popupReturns', {}).values())
+        return cls._agent_tabs(task) + [tab for tab in adopted + returned if type(tab) is int and tab in task.get('tabIds', [])]
+
     def _resolve_tab(self, binding, task):
         agent_tabs = self._agent_tabs(task)
+        available = self._controlled_tabs(task)
+        returned = task.get('popupReturns', {}).get(str(binding.tab_id))
+        if binding.tab_id not in task.get('tabIds', []) and returned in available:
+            binding.tab_id = returned
+            binding.popup_closed = {'returnedTo': returned}
+            self._clear_snapshot(binding)
         if binding.explicit_tab and binding.tab_id is not None:
-            if binding.tab_id not in agent_tabs:
+            if binding.tab_id not in available:
                 raise _AdapterFailure("foreign_tab")
             return binding.tab_id
         if len(agent_tabs) == 1:

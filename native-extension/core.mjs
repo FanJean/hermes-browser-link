@@ -17,7 +17,7 @@ import {NativeWorkspaces,groupTitle} from './workspace-adapter.mjs';
 import {createApprovalPolicy,POLICY_VERSION} from '../approval-policy/policy.mjs';
 import {createPageSemantics} from '../page-semantics/index.js';
 import {createPageParser} from '../page-semantics/parser.mjs';
-import {createAutomationOverlay} from './automation-overlay.mjs';
+import {createAutomationOverlay,stepLabels} from './automation-overlay.mjs';
 import {createInteractionHighlight} from './interaction-highlight.mjs';
 import {readyState as officialReadyState,navigate as officialNavigate,openTab as officialOpenTab} from './official-actions.mjs';
 const canonical=value=>JSON.stringify(value, function(key,item){return item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a.localeCompare(b))):item;});
@@ -29,7 +29,7 @@ import {PageRuntime} from './page-runtime.mjs';
 import {observePage} from './page-observation.mjs';
 import {PageObservers,listImages} from './page-observers.mjs';
 import {VaultController} from './vault.mjs';
-import {OAuthPopups} from './oauth-popups.mjs';
+import {OAuthPopups,isOAuthProvider,OAUTH_PROVIDERS} from './oauth-popups.mjs';
 
 const MAX_PENDING_INTERACTION_PROBES=32;
 const MAX_PENDING_INTERACTION_CLEANUPS=32;
@@ -743,8 +743,8 @@ const SITE_READ_ACTIONS=new Set(['snapshot','screenshot','page.observe','page.pa
 function assertV1Action(action) { if(!V1_ACTIONS.includes(action))throw Error('V1 unsupported action'); }
 
 export class Executor {
- constructor(api,onEvent=()=>{},{beforeLeaseRelease=async()=>{},onOverlayCommand=null,releaseDeadlineMs=RELEASE_DEADLINE_MS,onDownloadEvent=null,onCdpEvents=null,onContentShield=null,onSignInRedirect=null}={}) {
-  this.onContentShield=onContentShield;this.onSignInRedirect=onSignInRedirect;this.shieldResults=new WeakMap();
+ constructor(api,onEvent=()=>{},{beforeLeaseRelease=async()=>{},onOverlayCommand=null,releaseDeadlineMs=RELEASE_DEADLINE_MS,onDownloadEvent=null,onCdpEvents=null,onContentShield=null,onSignInRedirect=null,onPopupAdopt=async()=>{},oauthProviders=OAUTH_PROVIDERS}={}) {
+  this.onPopupAdopt=onPopupAdopt;this.oauthProviders=oauthProviders;this.onContentShield=onContentShield;this.onSignInRedirect=onSignInRedirect;this.shieldResults=new WeakMap();
   this.beforeLeaseRelease=beforeLeaseRelease;
   this.releaseDeadlineMs=Number.isFinite(releaseDeadlineMs)&&releaseDeadlineMs>0?Math.min(releaseDeadlineMs,RELEASE_DEADLINE_MS):RELEASE_DEADLINE_MS;
   // Only trusted extension background code may supply this callback. It must
@@ -902,15 +902,18 @@ export class Executor {
   const t=this.tasks.get(p.taskId),guard=this.popupGuard(t,p);guard();
   return this.popups.inspect(t,p.tabId,p.candidateRef,guard);
  }
- async adoptPopup(t,p){
+ async adoptPopup(t,p,automaticScope=null){
   const guard=this.popupGuard(t,p);guard();
-  if(!p.approval)throw Object.assign(Error('confirmation required'),{preDispatch:true});
-  const grant=this.actionGrants.get(p.approval.nonce);this.actionGrants.delete(p.approval.nonce);
-  const {generation,modeGeneration,allowedOrigins,approval,popupScope,...request}=p;
-  if(!grant||grant.taskId!==t.id||grant.generation!==generation||grant.modeGeneration!==modeGeneration||grant.expiresAt*1000<=Date.now()||grant.digest!==approval.digest||canonical(grant.request)!==canonical(request)||!popupScope||canonical(grant.popupScope)!==canonical(popupScope))throw Object.assign(Error('approval mismatch or consumed'),{preDispatch:true});
+  if(!p.approval&&!automaticScope)throw Object.assign(Error('confirmation required'),{preDispatch:true});
+  const grant=automaticScope?{expiresAt:Date.now()/1000+30}:this.actionGrants.get(p.approval.nonce);if(p.approval)this.actionGrants.delete(p.approval.nonce);
+  const {generation,modeGeneration,allowedOrigins,approval,popupScope=automaticScope,...request}=p;
+  if(!automaticScope&&(!grant||grant.taskId!==t.id||grant.generation!==generation||grant.modeGeneration!==modeGeneration||grant.expiresAt*1000<=Date.now()||grant.digest!==approval.digest||canonical(grant.request)!==canonical(request)||!popupScope||canonical(grant.popupScope)!==canonical(popupScope)))throw Object.assign(Error('approval mismatch or consumed'),{preDispatch:true});
   const ids=[p.tabId,popupScope.candidate.tabId].sort((a,b)=>a-b);
   return this.taskBarrier(t.id,true,()=>this.withLocks(ids,async()=>{
-   const current=await this.popups.inspect(t,p.tabId,p.candidateRef,guard);guard();
+   const automaticGuard=()=>{guard();if(automaticScope&&t.policy.activeMode!=='smart')throw Error('POPUP_STALE');};
+   automaticGuard();
+   const current=await this.popups.inspect(t,p.tabId,p.candidateRef,automaticGuard);automaticGuard();
+   if(automaticScope&&!isOAuthProvider((await this.api.tabs.get(current.candidate.tabId)).url,this.oauthProviders))throw Error('POPUP_STALE');
    if(grant.expiresAt*1000<=Date.now())throw Object.assign(Error('approval expired'),{preDispatch:true});
    if(canonical(current)!==canonical(popupScope))throw Object.assign(Error('POPUP_STALE'),{preDispatch:true});
    this.popups.current(current.source,p.candidateRef);
@@ -918,13 +921,14 @@ export class Executor {
    if(addedOrigin)t.allowedOrigins.push(candidate.origin);
    let initializing=true;
    const wasAttached=this.attached.has(candidate.tabId),documentGeneration=this.docs.get(candidate.tabId)||0;
-   const initializationGuard=()=>{guard();this.popups.current(current.source,p.candidateRef);if(!initializing||this.leases.has(candidate.tabId)||(this.docs.get(candidate.tabId)||0)!==documentGeneration||grant.expiresAt*1000<=Date.now())throw Error('POPUP_STALE');};
+   const initializationGuard=()=>{automaticGuard();this.popups.current(current.source,p.candidateRef);if(!initializing||this.leases.has(candidate.tabId)||(this.docs.get(candidate.tabId)||0)!==documentGeneration||grant.expiresAt*1000<=Date.now())throw Error('POPUP_STALE');};
    try{
     // 中文注释：沿用持续浮层初始化；双页锁已持有，遮罩确认前不发布操作/Vault 租约。
     if(!await this.restoreOverlay(t,candidate.tabId,{locked:true,guard:initializationGuard}))throw Error('overlay injection failed');
     if(await this.documentChanged(t,candidate.tabId))throw Error('POPUP_STALE');
     const latest=await this.popups.inspect(t,p.tabId,p.candidateRef,initializationGuard);
     if(canonical(latest)!==canonical(current))throw Error('POPUP_STALE');
+    if(automaticScope&&!isOAuthProvider((await this.api.tabs.get(candidate.tabId)).url,this.oauthProviders))throw Error('POPUP_STALE');
     initializationGuard();
    }catch(error){
     initializing=false;
@@ -936,11 +940,72 @@ export class Executor {
     error.preDispatch=true;throw error;
    }
    initializing=false;
+   (t.popupSources??=new Map()).set(candidate.tabId,p.tabId);
    t.tabIds.add(candidate.tabId);(t.adoptedPopupTabs??=new Set()).add(candidate.tabId);this.leases.set(candidate.tabId,t.id);
    void this.syncPreveil(t,candidate.tabId);
+   if(automaticScope){
+    // 中文注释：仅从原生审计派发开始禁止重试；之前的导航初始化失败仍可重新检查。
+    const row=this.popups.candidates.get(p.candidateRef);if(row)row.adoptionAttempted=true;
+    try{await this.onPopupAdopt({taskId:t.id,generation:t.generation,modeGeneration:p.modeGeneration,popupScope:current});}
+    catch(error){
+     t.popupSources.delete(candidate.tabId);t.tabIds.delete(candidate.tabId);t.adoptedPopupTabs.delete(candidate.tabId);
+     if(this.leases.get(candidate.tabId)===t.id)this.leases.delete(candidate.tabId);
+     if(addedOrigin)t.allowedOrigins=t.allowedOrigins.filter(site=>site!==candidate.origin);
+     await this.closeTabResources(t,candidate.tabId).catch(()=>{});throw error;
+    }
+   }
    this.popups.candidates.delete(p.candidateRef);
    return {adopted:true,...candidate,sourceTabId:p.tabId,cleanupOwned:false};
   }));
+ }
+ schedulePopupAdoption(tabId){
+  const row=[...this.popups.candidates.values()].find(row=>row.tabId===tabId);
+  if(!row||row.adoptionAttempted)return;
+  if(row.autoWork){row.autoAgain=true;return;}
+  const discoveries=row.task.popupDiscoveries??=new Map();
+  for(const [ref,item] of discoveries)if(item.expiresAt<=Date.now())discoveries.delete(ref);
+  if(discoveries.size>=32)discoveries.delete(discoveries.keys().next().value);
+  discoveries.set(row.candidateRef,row);
+  const t=row.task,p={taskId:t.id,generation:row.generation,modeGeneration:row.modeGeneration,tabId:row.source.tabId,candidateRef:row.candidateRef};
+  row.autoWork=(async()=>{
+   try{do{
+    row.autoAgain=false;row.automaticBlocked=false;
+    try{
+     const scope=await this.popups.inspect(t,p.tabId,p.candidateRef,this.popupGuard(t,p));
+     if(t.policy.activeMode!=='smart'||!isOAuthProvider((await this.api.tabs.get(tabId)).url,this.oauthProviders))continue;
+     row.adoption=await this.adoptPopup(t,p,scope);
+    }catch{row.automaticBlocked=true;}
+   }while(row.autoAgain&&!row.adoptionAttempted&&this.popups.candidates.get(row.candidateRef)===row);}
+   finally{row.autoWork=null;}
+  })();
+ }
+ observeClickEffect(t,p,options){
+  if(!['click','ref_click','interaction.click'].includes(p.action))return observeInputEffect(options);
+  const priorRefs=new Set(t.popupDiscoveries?.keys()||[]);
+  // 中文注释：只使用本次派发期间由候选跟踪器核实的新页；发现效果不等于授予该页访问权。
+  const externalEffect=()=>!t.paused&&!t.pauseRequested&&this.leases.get(p.tabId)===t.id&&
+   [...(t.popupDiscoveries?.values()||[])].some(row=>!priorRefs.has(row.candidateRef)&&row.task===t&&
+    row.generation===t.generation&&row.modeGeneration===t.policy.modeGeneration&&row.source.tabId===p.tabId&&
+    row.source.documentGeneration===(this.docs.get(p.tabId)||0)&&row.expiresAt>Date.now()&&
+    (!this.leases.has(row.tabId)||this.leases.get(row.tabId)===t.id));
+  return observeInputEffect({...options,externalEffect});
+ }
+ async popupClickResult(t,p,result,priorRefs){
+  // 中文注释：onCreated 与 CDP 点击回执来自不同队列，给新标签事件短暂传播时间，不延长授权观察期。
+  if(this.popups.observations.get(p.tabId)?.task===t)await new Promise(resolve=>setTimeout(resolve,100));
+  const rows=[...(t.popupDiscoveries?.values()||[])].filter(row=>row.expiresAt>Date.now()&&row.source.tabId===p.tabId&&!priorRefs.has(row.candidateRef));
+  // 中文注释：源页锁已释放；接管复用双页锁，不在点击派发内等待造成互锁。
+  await Promise.all(rows.map(row=>row.autoWork));
+  const row=rows.find(row=>row.candidate)||rows.find(row=>this.popups.candidates.get(row.candidateRef)===row);
+  if(!row)return result;
+  this.popupGuard(t,p)();
+  if(row.closed){const value={...result,popupClosed:row.closed};const prior=this.shieldResults.get(result);if(prior)this.shieldResults.set(value,prior);return value;}
+  const candidate=row.candidate||{candidateRef:row.candidateRef,origin:null,windowType:row.windowType??null,tabId:row.tabId};
+  const adopted=this.leases.get(candidate.tabId)===t.id&&t.adoptedPopupTabs?.has(candidate.tabId);
+  const value={...result,popupOpened:{candidateRef:candidate.candidateRef,origin:candidate.origin,windowType:candidate.windowType,tabId:candidate.tabId},
+   popupNextStep:!candidate.origin?'已发现新登录标签，页面尚未就绪；用源 tabId 调用 popup_catalog；若已在 adoptedPopupTabIds 中则直接选页重读，否则按候选请求确认。':row.automaticBlocked?'自动接管未确认；先 browser_shared_get 核对任务状态，不重发点击；仍有效时重新 popup_catalog 核对候选。':adopted?'登录窗口已自动接管；用 browser_shared_use_tab 选择该 tabId，然后重新读取页面；密码、验证码和 2FA 请用户亲自填写。':'已发现登录窗口；先 popup_catalog，再 popup_adopt 等待用户确认，确认后选择该标签并重新读取。'};
+  const shield=this.shieldResults.get(result);if(shield)this.shieldResults.set(value,shield);
+  return value;
  }
  async assess(p){
   const t=this.tasks.get(p.taskId);this.check(t,p);
@@ -1042,8 +1107,8 @@ export class Executor {
   try{return await fn();}finally{if(prior)this.spawnScopes.set(tabId,prior);else this.spawnScopes.delete(tabId);}
  }
  tabCreated(tab){
-  if(!Number.isInteger(tab?.openerTabId))return this.popups.recoverCreated(tab).then(()=>null);
-  if(this.popups.created(tab))return Promise.resolve(null);
+  if(!Number.isInteger(tab?.openerTabId))return this.popups.recoverCreated(tab).then(found=>{if(found)this.schedulePopupAdoption(tab.id);return null;});
+  if(this.popups.created(tab)){this.schedulePopupAdoption(tab.id);return Promise.resolve(null);}
   if(!Number.isInteger(tab?.id)||!Number.isInteger(tab.openerTabId))return Promise.resolve(null);
   const lineage=this.spawnLineage.get(tab.openerTabId),direct=this.spawnScopes.get(tab.openerTabId);
   const scope=direct||(lineage&&this.spawnScopes.get(lineage.root)===lineage.scope?lineage.scope:null);
@@ -1269,6 +1334,7 @@ export class Executor {
  async tabEvent(tabId,event,url,{status=null,urlChanged=true}={}) {
   // 中文注释：导航/关闭先同步撤销候选，异步资源清理期间旧审批也不能继续授予租约。
   this.popups.invalidate(tabId,event);
+  if(event==='navigated')this.schedulePopupAdoption(tabId);
   const t=this.tasks.get(this.leases.get(tabId));if(!t)return;
   // 中文注释：浏览器事件会跨异步清理，旧任务回调不得修改新任务的标签租约。
   const current=()=>this.tasks.get(t.id)===t&&!t.revoked&&this.leases.get(tabId)===t.id;
@@ -1288,6 +1354,10 @@ export class Executor {
    const documentGeneration=(this.docs.get(tabId)||0)+1;this.docs.set(tabId,documentGeneration);return documentGeneration;
   };
   if(event==='closed') {
+   const sourceTabId=t.popupSources?.get(tabId);
+   t.popupSources?.delete(tabId);
+   const popupClosed=Number.isInteger(sourceTabId)&&this.leases.get(sourceTabId)===t.id?{returnedTo:sourceTabId}:null;
+   if(popupClosed){(t.popupReturns??=new Map()).set(tabId,sourceTabId);for(const row of t.popupDiscoveries?.values()||[])if(row.tabId===tabId)row.closed=popupClosed;}
    const documentGeneration=await bump();
    if(documentGeneration===null)return;
    this.closingTabs.delete(tabId);
@@ -1296,7 +1366,7 @@ export class Executor {
    t.tabIds.delete(tabId);t.agentTabs.delete(tabId);t.adoptedPopupTabs?.delete(tabId);t.agentTabGroups?.delete(tabId);t.officialBlank?.delete(tabId);t.officialBlankSeeds?.delete(tabId);t.officialBlankSeen?.delete(tabId);t.officialTargets?.delete(tabId);t.offScopeTabs?.delete(tabId);t.preveils?.delete(tabId);this.leases.delete(tabId);this.attached.delete(tabId);
    // 中文注释：关闭通知可能早于建页回执；宿主以原请求核对这个尚未登记的模型页。
    const creationRequestId=t.agentTabRequests?.get(tabId);t.agentTabRequests?.delete(tabId);
-   this.onEvent({taskId:t.id,generation:t.generation,tabId,event,documentGeneration,...(creationRequestId?{creationRequestId}:{})});return;
+   this.onEvent({taskId:t.id,generation:t.generation,tabId,event,documentGeneration,...(popupClosed?{popupClosed}:{}),...(creationRequestId?{creationRequestId}:{})});return;
   }
   let inScope=true;
   try{
@@ -1598,7 +1668,9 @@ export class Executor {
   }
   if(settings.enabled&&prior?.document){
    const t=this.tasks.get(request.params.taskId);let inventory;
-   try{inventory=await this.shieldInventory(t,request.params,settings,prior.writeTarget);}
+   const params=Number.isInteger(prior.returnedTabId)?{...request.params,tabId:prior.returnedTabId}:request.params;
+   if(Number.isInteger(prior.returnedTabId)&&(t?.popupReturns?.get(request.params.tabId)!==prior.returnedTabId||this.leases.get(prior.returnedTabId)!==t.id))throw rejected('CONTENT_SHIELD_STALE');
+   try{inventory=await this.shieldInventory(t,params,settings,prior.writeTarget);}
    catch(error){if(/^CONTENT_SHIELD_(?:UNINSPECTABLE|UNAVAILABLE|CHANGED)$/.test(error?.message))throw rejected(error.message);throw error;}
    if(prior.document!==inventory.document)throw rejected('CONTENT_SHIELD_STALE');
    // 中文注释：已处理截图仍含旧像素；DOM、位置或文本变化不能回放旧图。
@@ -1608,7 +1680,19 @@ export class Executor {
   return result;
  }
  async execute(p) {
-  return observeAction(()=>this.executeAction(p),this.diagnostics,{component:'mv3_background',event_type:'action_state',action:p.action,request_id:crypto.randomUUID(),connection_id:this.diagnosticConnection});
+  const t=this.tasks.get(p.taskId),sourceTabId=t?.popupReturns?.get(p.tabId);
+  const returned=Number.isInteger(sourceTabId)&&SITE_READ_ACTIONS.has(p.action)&&!this.leases.has(p.tabId)&&this.leases.get(sourceTabId)===t?.id;
+  if(returned)p={...p,tabId:sourceTabId};
+  const priorRefs=new Set(this.tasks.get(p.taskId)?.popupDiscoveries?.keys()||[]);
+  return observeAction(async()=>{
+   let result=await this.executeAction(p);
+   if(returned){
+    const prior=this.shieldResults.get(result);
+    result={...result,popupClosed:{returnedTo:sourceTabId}};
+    if(prior)this.shieldResults.set(result,{...prior,returnedTabId:sourceTabId});
+   }
+   return ['click','ref_click','interaction.click'].includes(p.action)?this.popupClickResult(this.tasks.get(p.taskId),p,result,priorRefs):result;
+  },this.diagnostics,{component:'mv3_background',event_type:'action_state',action:p.action,request_id:crypto.randomUUID(),connection_id:this.diagnosticConnection});
  }
  async executeAction(p) {
   assertV1Action(p.action);
@@ -2271,7 +2355,7 @@ export class Executor {
     functionDeclaration:`function(scope){
      const states={waiting:'Hermes 正在工作',running:'Hermes 正在工作',pausing:'正在暂停…',paused:'已暂停 · 你可以操作页面',resuming:'正在恢复…',stopping:'正在停止…',stopped:'已停止',disconnected:'与扩展的连接已断开',unknown:'状态待核查'};
      const interactionLabels={click:'准备点击',input:'正在输入',select:'正在选择',drag:'正在拖动'};
-     const stepLabels={tabs:'读取标签页',new_tab:'打开新标签页',navigate:'打开网页',snapshot:'解析页面元素',click:'点击页面',fill:'填写内容',press:'按键',screenshot:'截取页面','page.parse':'解析页面结构','page.observe':'读取页面结构',semantic_snapshot:'解析页面元素',frame_catalog:'读取页面结构',ref_click:'点击元素',ref_fill:'填写元素',ref_press:'按键操作',ref_set_checked:'设置选项',ref_select_option:'选择选项','files.upload':'选择网站文件',scroll:'滚动页面',back:'返回上一页'};
+     const stepLabels=${JSON.stringify(stepLabels)};
      const rectOk=r=>r&&[r.x,r.y,r.width,r.height].every(Number.isFinite)&&r.x>=0&&r.y>=0&&r.width>0&&r.height>0&&r.width<=100000&&r.height<=100000;
      const highlightRectOk=r=>r&&[r.left,r.top,r.width,r.height].every(Number.isFinite)&&r.width>0&&r.height>0&&r.width<=100000&&r.height<=100000;
      const labels=Object.freeze({click:'准备点击',input:'正在输入',select:'正在选择',drag:'正在拖动'});
@@ -3015,7 +3099,7 @@ export class Executor {
     const visibility=['ref_click','ref_set_checked','ref_select_option'].includes(p.action)?
      await this.callSemanticWorld(frameTarget,frame.id,'input_visibility',basePayload,guard,entry?.contextId):null;
     const targetPayload={...basePayload,syntheticHidden:visibility?.visibility==='hidden',...(p.action==='ref_set_checked'?{checked:p.checked}:{})};
-    const effectWork=work=>observeInputEffect({api:this.api,target:frameTarget,contextId:entry?.contextId,frameId:frame.id,guard,work});
+    const effectWork=work=>this.observeClickEffect(t,p,{api:this.api,target:frameTarget,contextId:entry?.contextId,frameId:frame.id,guard,work});
     let checkedPlan,selectPlan,relocated=false;
     const deliverSemanticPointer=async(highlightBinding,syntheticOp,onDispatch)=>{
      const payload={...targetPayload,highlightBinding};
@@ -3125,7 +3209,6 @@ export class Executor {
      dispatch:highlightBinding=>['ref_click','ref_set_checked','ref_select_option'].includes(p.action)?this.withSpawnScope(t,p.tabId,()=>dispatch(highlightBinding)):dispatch(highlightBinding),
     });
     if(relocated&&result&&typeof result==='object')result={...result,relocated:true};
-    if(p.action==='ref_click')result={...result,popupOwnership:'uncertain'};
    }
    // 中文注释：JS 对话框打开后该页的 CDP 调用会停住；对话框出现即结束收尾核实，并把对话框告知调用方。
    const settled=DISPATCHING_ACTIONS.has(p.action)?null:await this.raceDialog(t,p.tabId,this.checkedFrameTree(target,t,guard,false));
@@ -3162,14 +3245,14 @@ export class Executor {
      const centerX=result.rect.x+result.rect.width/2,dpr=result.imageCenter.x/centerX;
      if(Number.isFinite(dpr)&&dpr>0){refs.set(result.ref,{screenshotId:p.screenshotId,selector:p.selector,rect:result.rect,dpr,documentId});while(refs.size>256)refs.delete(refs.keys().next().value);}
     }else if(p.action==='interaction.click'){
-     if(!overlay)result=await observeInputEffect({api:this.api,target,contextId:executionContextId,guard,work:async()=>({...await this.withSpawnScope(t,p.tabId,()=>interactions.clickCoordinates({...scoped,screenshotId:p.screenshotId,point:p.point,expectedRef:p.expectedRef})),effect:'unverified'})});
+     if(!overlay)result=await this.observeClickEffect(t,p,{api:this.api,target,contextId:executionContextId,guard,work:async()=>({...await this.withSpawnScope(t,p.tabId,()=>interactions.clickCoordinates({...scoped,screenshotId:p.screenshotId,point:p.point,expectedRef:p.expectedRef})),effect:'unverified'})});
      else{
       const meta=await this.checkedCoordinateTarget(t,p,interactions,p.point,p.expectedRef,guard,documentId);
       result=await this.withInteractionHighlight({t,p,entry:overlay,guard,visualOnly:true,
        prepare:binding=>this.interactionHighlightCall(p.tabId,overlay,'prepare-selector',{binding,selector:meta.selector,kind:'click',point:{x:p.point.x/meta.dpr,y:p.point.y/meta.dpr},allowedOrigins:t.allowedOrigins},guard),
        verify:async()=>{await this.checkedCoordinateTarget(t,p,interactions,p.point,p.expectedRef,guard,documentId);return {ok:true};},
        afterWait:()=>this.checkedCoordinateTarget(t,p,interactions,p.point,p.expectedRef,guard,documentId),
-       dispatch:()=>observeInputEffect({api:this.api,target,contextId:executionContextId,guard,work:async()=>({...await this.withSpawnScope(t,p.tabId,()=>interactions.clickCoordinates({...scoped,screenshotId:p.screenshotId,point:p.point,expectedRef:p.expectedRef})),effect:'unverified'})}),
+       dispatch:()=>this.observeClickEffect(t,p,{api:this.api,target,contextId:executionContextId,guard,work:async()=>({...await this.withSpawnScope(t,p.tabId,()=>interactions.clickCoordinates({...scoped,screenshotId:p.screenshotId,point:p.point,expectedRef:p.expectedRef})),effect:'unverified'})}),
       });
       t.interactionRefs.delete(p.tabId);
      }
@@ -3230,10 +3313,9 @@ export class Executor {
      result=await this.withInteractionHighlight({t,p,entry:overlay,guard,visualOnly:true,
       prepare:binding=>this.interactionHighlightCall(p.tabId,overlay,'prepare-selector',{binding,selector:p.selector,kind,allowedOrigins:t.allowedOrigins},guard),
       verify:()=>this.callWorld(target,tree.frame.id,t,`confirm_${p.action}`,p.selector,null,null,guard,executionContextId),
-      dispatch:binding=>p.action==='click'?observeInputEffect({api:this.api,target,contextId:executionContextId,guard,work:async()=>({...await this.withSpawnScope(t,p.tabId,()=>dispatch(binding)),kind:'dom-synthetic',effect:'unverified'})}):dispatch(binding),
+      dispatch:binding=>p.action==='click'?this.observeClickEffect(t,p,{api:this.api,target,contextId:executionContextId,guard,work:async()=>({...await this.withSpawnScope(t,p.tabId,()=>dispatch(binding)),kind:'dom-synthetic',effect:'unverified'})}):dispatch(binding),
      });
     }else result=await dispatch(null);
-    if(p.action==='click')result={...result,popupOwnership:'uncertain'};
     if(p.action==='press'){
      result=await observeInputEffect({api:this.api,target,contextId:executionContextId,guard,work:async()=>{
      const inspection=await this.callWorld(target,tree.frame.id,t,'inspect',null,null,null,guard);if(inspection?.hasSensitiveValue)throw Error('sensitive press blocked');

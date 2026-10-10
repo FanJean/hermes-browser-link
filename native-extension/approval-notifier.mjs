@@ -51,7 +51,8 @@ export function createApprovalNotifier({chrome,instanceId,now=()=>Date.now(),pan
    // 中文注释：新建工作页尚无租约标签，审批仅绑定当前浏览器窗口与任务。
    if(r.tabId!==null){const tab=await chrome.tabs.get(r.tabId);if(tab?.windowId!==r.windowId||new URL(tab.url).origin!==r.origin)throw Error('tab scope changed');}
    const target=await chrome.windows.get(r.windowId);
-   if(target.id!==r.windowId||target.type!=='normal')throw Error('wrong target window');
+   // 中文注释：已绑定标签的登录小窗也需要原审批面板；无标签的新建页请求仍只绑定普通窗口。
+   if(target.id!==r.windowId||!['normal','popup'].includes(target.type)||target.type==='popup'&&r.tabId===null)throw Error('wrong target window');
    // 中文注释：后台应用可能无法抢前台；聚焦失败仍建面板，只记录未确认状态。
    let targetFocused=false;
    try { const focused=await chrome.windows.update(r.windowId,{focused:true});targetFocused=focused?.id===r.windowId&&focused.focused===true; } catch {}

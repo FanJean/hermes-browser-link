@@ -30,7 +30,7 @@ function fixture({hangOverlayRemove=false,releaseDeadlineMs,beforeLeaseRelease}=
  const removeStarted=new Promise(resolve=>{removeStartedResolve=resolve;});
  const api={
   // 中文注释：高亮期限测试需要覆盖派发前激活工作页的调用。
-  tabs:{get:async id=>({id,url:`${origin}/`,windowId:5,groupId:2,status:'complete'}),update:async()=>({active:true})},
+  tabs:{query:async()=>[await api.tabs.get(7)],get:async id=>({id,url:`${origin}/`,windowId:5,groupId:2,status:'complete'}),update:async()=>({active:true})},
   debugger:{
    onEvent:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)},
    onDetach:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)},

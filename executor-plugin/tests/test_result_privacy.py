@@ -140,12 +140,27 @@ class ResultPrivacyTests(unittest.TestCase):
         self.assertEqual(output['forms'][0]['actions'], [])
         self.assertNotIn(CANARY, json.dumps(output))
 
+    def test_click_continuity_keeps_identity_but_excludes_url_and_approval_data(self):
+        opened = {'candidateRef': 'ref', 'origin': 'https://accounts.google.com', 'windowType': 'normal',
+                  'tabId': 2, 'url': CANARY, 'approval': CANARY}
+        arguments = {'click': {'selector': '#login'},
+                     'ref_click': {'binding': {'taskId': 't', 'documentId': 'd', 'leaseId': 'l'}, 'snapshot_id': 's', 'ref': 'r'},
+                     'interaction.click': {'screenshot_id': 's', 'point': {'x': 1, 'y': 2}, 'expected_ref': 'r'}}
+        for action, fields in arguments.items():
+            output, _ = self.invoke(True, 'run', {'task_id': 't', 'tab_id': 1, 'action': action, **fields},
+                {'clicked': True, 'popupOpened': opened, 'popupNextStep': '选择登录页', 'popupClosed': {'returnedTo': 1}})
+            self.assertEqual(output['popupOpened']['tabId'], 2)
+            self.assertEqual(output['popupClosed'], {'returnedTo': 1})
+            self.assertNotIn(CANARY, json.dumps(output))
+
     def test_popup_results_keep_candidate_identity_without_authority_or_oauth_url(self):
         candidate = {'candidateRef': 'popup-ref', 'tabId': 2, 'windowId': 8, 'openerTabId': 1,
                      'origin': 'https://accounts.example.test', 'windowType': 'popup', 'url': CANARY, 'nonce': CANARY}
-        raw = {'sourceTabId': 1, 'observationMs': 30000, 'candidates': [candidate], 'scope': CANARY}
+        raw = {'sourceTabId': 1, 'observationMs': 30000, 'candidates': [candidate], 'adoptedPopupTabIds': [2], 'adoptedPopups': [candidate], 'scope': CANARY}
         output, _ = self.invoke(True, 'run', {'task_id': 't', 'tab_id': 1, 'action': 'popup_catalog'}, raw)
         self.assertEqual(output['candidates'][0]['candidateRef'], 'popup-ref')
+        self.assertEqual(output['adoptedPopupTabIds'], [2])
+        self.assertEqual(output['adoptedPopups'][0]['origin'], 'https://accounts.example.test')
         self.assertNotIn(CANARY, json.dumps(output))
         output, _ = self.invoke(True, 'run', {'task_id': 't', 'tab_id': 1, 'action': 'popup_adopt', 'candidate_ref': 'popup-ref'},
                                 {'adopted': True, **candidate, 'sourceTabId': 1, 'cleanupOwned': False})

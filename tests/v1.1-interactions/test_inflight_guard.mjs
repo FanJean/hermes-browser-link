@@ -13,7 +13,7 @@ function fixture(){
  const state={token:'d',revision:0,url:'https://example.com/page',viewport:{width:100,height:80},dpr:1,scroll:{x:0,y:0},visual:{scale:1,x:0,y:0}};
  const listeners=new Set();
  // 中文注释：合成标签实现活动状态切换，保证在途写入测试覆盖真实前置调用。
- const api={tabs:{get:async id=>({id,url:state.url,windowId:1,groupId:-1}),update:async()=>({active:true})},debugger:{
+ const api={tabs:{query:async()=>[await api.tabs.get(1)],get:async id=>({id,url:state.url,windowId:1,groupId:-1}),update:async()=>({active:true})},debugger:{
   onDetach:{addListener:x=>listeners.add(x),removeListener:x=>listeners.delete(x)},
   onEvent:{addListener:x=>listeners.add(x),removeListener:x=>listeners.delete(x)},
   attach:async()=>{},detach:async()=>{},

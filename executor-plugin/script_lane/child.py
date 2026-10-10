@@ -456,7 +456,7 @@ def popup_catalog(*, tab=None):
 
 @_tab_scoped
 def popup_adopt(candidate_ref, *, tab=None):
-    """请求精确接管已有弹窗。先在同一脚本调用 popup_catalog 保留 candidate；
+    """请求精确接管需要人工确认的登录窗口。白名单自动接管时直接 use_tab(popupOpened["tabId"]) 并重读；其他窗口先在同一脚本调用 popup_catalog 保留 candidate；
     ApprovalRequired 后用 wait_pending(tab=source) 只读查询账本，不重发接管。
     等待返回 state=confirmed，不是 adopted 回执；显式 use_tab(candidate['tabId'])
     后重新 read_page 核实原窗口当前权限与内容，不另开登录网址。"""

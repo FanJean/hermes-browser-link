@@ -178,7 +178,7 @@ PUBLIC_ACTIONS = frozenset({
     'images', 'console', 'dialog',
 })
 _run_schema = TOOL_SCHEMAS['browser_shared_run']['parameters']
-TOOL_SCHEMAS['browser_shared_run']['description'] += ' popup_catalog 使用授权源 tab_id 发现刚创建的独立登录弹窗，只返回元数据；popup_adopt 传同一源 tab_id 和 candidate_ref，全部访问也必须明确确认。不得另开登录网址代替原弹窗；批准后用 browser_shared_get 核对当前代次和 adoptedPopupTabIds，再显式选择已知 candidate 的 tabId 并重新读取。脚本用 wait_pending 只读查询账本，返回 state=confirmed 而非 adopted/tabId 回执；不重发接管，不自动移动或关闭弹窗。元数据不等于当前页面访问证明。'
+TOOL_SCHEMAS['browser_shared_run']['description'] += ' 点击第三方登录后查看 popupOpened 和 popupNextStep；smart 模式下内置身份提供方授权页由本任务新打开时自动接管，直接 browser_shared_use_tab 到 popupOpened.tabId 并重读页面选账号。密码、验证码、2FA 用 manual_input 请用户亲自填写。弹窗关闭时 popupClosed.returnedTo 指向源页，返回后重读，不复用旧引用。白名单外及非 smart 模式仍需 popup_catalog 保留候选、popup_adopt 必须明确确认；脚本 wait_pending 只读查账本，返回 state=confirmed，不重发接管，再 use_tab 到已确认候选并读取；单工具用 browser_shared_get 核对 generation 与 adoptedPopupTabIds 后选页重读。不得另开登录网址替代原弹窗，不自动移动或关闭，不授予清理权；未知或变化的授权不能重放。'
 TOOL_SCHEMAS['browser_shared_run']['description'] += (
     ' 页面执行：连接授权后 js.evaluate / cdp.send / cdp.events 直接执行，不逐项确认。'
     '发生过凭据填写的页面不能运行任意 JS/CDP。原始脚本结果不做字段级脱敏。'

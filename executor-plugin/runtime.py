@@ -291,6 +291,7 @@ _RESULT_TASK = {
     'allowedOrigins': [None], 'tabIds': [None], 'adoptedPopupTabIds': [None],
     'workTabs': [_scalar_fields('tabId windowId groupId state')],
     'pendingInteraction': _scalar_fields('kind count'),
+    'popupClosed': _scalar_fields('returnedTo'),
     'resumeSummary': _scalar_fields('urlChanged documentReplaced referencesInvalid readPageFirst'),
     # 中文注释：日志状态和固定错误码一起交付，云端读取不能把未知结果的原因再次裁掉。
     'recentLog': [_scalar_fields('time action target durationMs result errorCode')],
@@ -332,13 +333,14 @@ _RESULT_PARSE = {
     'collections': [{**_RESULT_SOURCE, **_scalar_fields('containerRef text classification method')}],
 }
 _RESULT_POPUP = _scalar_fields('candidateRef tabId windowId openerTabId origin windowType')
+_RESULT_POPUP_CONTINUITY = {'popupOpened': _scalar_fields('candidateRef origin windowType tabId'), 'popupNextStep': None, 'popupClosed': _scalar_fields('returnedTo')}
 _RESULT_ACTIONS = {
-    'popup_catalog': {**_scalar_fields('sourceTabId observationMs'), 'candidates': [_RESULT_POPUP]},
+    'popup_catalog': {**_scalar_fields('sourceTabId observationMs'), 'candidates': [_RESULT_POPUP], 'adoptedPopupTabIds': [None], 'adoptedPopups': [_RESULT_POPUP]},
     'popup_adopt': {**_RESULT_POPUP, **_scalar_fields('adopted sourceTabId cleanupOwned')},
     'page.parse': _RESULT_PARSE,
     'navigate': _RESULT_TAB, 'new_tab': {**_RESULT_TAB, **_scalar_fields('open_tabs tab_hint')}, 'select_tab': _RESULT_TAB,
     'close_tab': _scalar_fields('closed tabId'), 'tabs': {'tabs': [_RESULT_TAB]},
-    'snapshot': {**_RESULT_TAB, **_scalar_fields('text truncated'),
+    'snapshot': {**_RESULT_POPUP_CONTINUITY, **_RESULT_TAB, **_scalar_fields('text truncated'),
                  'contentFilter': _RESULT_CONTENT_FILTER,
                  'elements': [_scalar_fields('tag text sensitive')]},
     'screenshot': {**_scalar_fields('data path tabId omittedMoving omittedMasked'), 'artifact': _RESULT_ARTIFACT,
@@ -346,12 +348,12 @@ _RESULT_ACTIONS = {
                    'masked': [_scalar_fields('kind role name')]},
     # 中文注释：已完成点击可引发跨来源导航，保留结果状态但不扩大网页字段白名单。
     # 中文注释：可信输入的派发后状态随公共结果透出，调用方据此决定只读核实且不得自动重试。
-    'click': _scalar_fields('kind delivery effect ok clicked tabId url ready groupId windowId openedVia unsupported code popupOwnership documentChanged outOfScope outcomeUnknown'), 'fill': _scalar_fields('ok filled tabId'),
-    'press': _scalar_fields('ok pressed tabId delivery effect'), 'semantic_snapshot': _RESULT_SEMANTIC,
+    'click': {**_RESULT_POPUP_CONTINUITY, **_scalar_fields('kind delivery effect ok clicked tabId url ready groupId windowId openedVia unsupported code popupOwnership documentChanged outOfScope outcomeUnknown')}, 'fill': _scalar_fields('ok filled tabId'),
+    'press': _scalar_fields('ok pressed tabId delivery effect'), 'semantic_snapshot': {**_RESULT_SEMANTIC, 'popupClosed': _scalar_fields('returnedTo')},
     'frame_catalog': {'frames': [_scalar_fields('index origin access kind frameToken parentFrameToken documentId')],
                       'coverage': _scalar_fields('found ready complete depthLimited scope')},
     'scroll': _scalar_fields('tabId scrolled direction'), 'back': _scalar_fields('tabId url ready'),
-    'ref_click': {**_scalar_fields('clicked kind delivery fallbackReason effect tabId url ready groupId windowId openedVia unsupported code popupOwnership documentChanged outOfScope outcomeUnknown relocated'),
+    'ref_click': {**_RESULT_POPUP_CONTINUITY, **_scalar_fields('clicked kind delivery fallbackReason effect tabId url ready groupId windowId openedVia unsupported code popupOwnership documentChanged outOfScope outcomeUnknown relocated'),
                   'navigation': _scalar_fields('kind origin'), 'postCheck': _scalar_fields('status code nextStep'),
                   'dialogOpened': _scalar_fields('type message')}, 'ref_fill': _scalar_fields('filled kind relocated'),
     # 中文注释：只公开按键交付状态；网页效果仍由下一次页面读取核实。
@@ -370,7 +372,7 @@ _RESULT_ACTIONS = {
     'dialog': {**_scalar_fields('handled action'), 'dialog': _scalar_fields('type message')},
     'interaction.capture': _RESULT_CAPTURE,
     'interaction.bounds': {'ref': None, 'rect': _scalar_fields('x y width height'), 'imageCenter': _RESULT_POINT},
-    'interaction.click': _scalar_fields('ok kind delivery fallbackReason effect outcomeUnknown'),
+    'interaction.click': {**_RESULT_POPUP_CONTINUITY, **_scalar_fields('ok kind delivery fallbackReason effect outcomeUnknown')},
     'interaction.drag_coordinates': {**_scalar_fields('ok kind delivery outcomeUnknown steps'), 'from': _RESULT_POINT, 'to': _RESULT_POINT},
     'interaction.drag_elements': {**_scalar_fields('ok kind delivery outcomeUnknown trusted steps'), 'from': _RESULT_POINT, 'to': _RESULT_POINT},
 }

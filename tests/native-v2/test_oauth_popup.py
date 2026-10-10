@@ -1,5 +1,6 @@
 """OAuth popup adoption uses real daemon approval and request ledgers offline."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -15,6 +16,76 @@ assert SPEC is not None and SPEC.loader is not None
 m=importlib.util.module_from_spec(SPEC);sys.modules[SPEC.name]=m;SPEC.loader.exec_module(m)
 
 class PopupTests(unittest.TestCase):
+    def test_automatic_audit_survives_repeated_snapshot_compaction_and_restart(self):
+        self.task['activeMode']='smart'
+        event={'taskId':'task','generation':1,'modeGeneration':2,'popupScope':self.scope}
+        self.daemon._dispatch_extension('instance','extension.popup_adopted',event)
+        self.daemon.data_dir.mkdir(parents=True,exist_ok=True)
+        for _ in range(2):
+            self.daemon._flush_tasks()
+            rows=[json.loads(line) for line in self.daemon.journal_path.read_text().splitlines()]
+            self.assertEqual(len(rows),1)
+            self.assertTrue(rows[0]['entry']['automatic'])
+            self.assertEqual(rows[0]['entry']['state'],'confirmed')
+            self.assertEqual(rows[0]['task']['id'],'task')
+        self.task['state']='closed'
+        self.daemon._flush_tasks()
+        self.assertEqual(self.daemon.journal_path.read_bytes(),b'')
+        restored=m.BridgeDaemon(Path(self.temp.name));restored._load_tasks()
+        self.assertEqual(restored.tasks['task']['state'],'closed')
+        self.assertEqual(len(restored.tasks['task']['requestHistory']),1)
+        self.assertTrue(restored.tasks['task']['requestHistory'][0]['automatic'])
+
+    def test_automatic_popup_records_authority_timeline_and_ledger_without_prompt(self):
+        self.task['activeMode'] = 'smart'
+        self.scope['candidate']['origin'] = 'https://accounts.google.com'
+        self.scope['candidate']['windowId'] = 7
+        self.scope['candidate']['windowType'] = 'normal'
+        event = {'taskId': 'task', 'generation': 1, 'modeGeneration': 2, 'popupScope': self.scope}
+        result = self.daemon._dispatch_extension('instance', 'extension.popup_adopted', event)
+        self.assertEqual(result, {'adopted': True, 'tabId': 2})
+        self.assertEqual(self.daemon.tab_leases[('instance', 2)], 'task')
+        self.assertEqual(self.task['agentTabIds'], [])
+        self.assertEqual(self.daemon.action_approvals, {})
+        self.assertTrue(self.task['requestHistory'][-1]['automatic'])
+        self.assertTrue(self.task['operationTimeline'][-1]['automatic'])
+        self.assertEqual(self.task['popupSources'], {'2': 1})
+        self.assertIn('https://accounts.google.com', self.task['readOrigins'])
+        self.daemon._handle_tab_event('instance', {'taskId': 'task', 'generation': 1, 'tabId': 1,
+            'event': 'navigated', 'documentGeneration': 1, 'url': 'https://example.com/logged-in'})
+        self.daemon._handle_tab_event('instance', {'taskId': 'task', 'generation': 1, 'tabId': 2,
+            'event': 'closed', 'documentGeneration': 1, 'popupClosed': {'returnedTo': 1}})
+        self.assertEqual(self.task['popupReturns'], {'2': 1})
+        self.assertEqual(self.daemon._public_task(self.task)['popupClosed'], {'returnedTo': 1})
+        self.assertEqual(self.daemon.tab_leases[('instance', 1)], 'task')
+        self.task['readOrigins'].append('https://example.com')
+        def read_source(_extension, method, params, timeout=15):
+            if method == 'browser.read_origin': return {'origin': 'https://example.com'}
+            self.assertEqual(params['tabId'], 1)
+            return {'tabId': 1, 'text': 'fresh source document'}
+        self.daemon._extension_call = read_source
+        read = self.daemon._run_task(self.params('snapshot', tabId=2))
+        self.assertEqual(read['text'], 'fresh source document')
+        self.assertEqual(read['popupClosed'], {'returnedTo': 1})
+
+    def test_automatic_popup_rejects_changed_control_scope_foreign_and_duplicate_leases(self):
+        for change in ('paused', 'cancelled', 'mode', 'generation', 'instance', 'source', 'target'):
+            with self.subTest(change=change):
+                self.task.update(state='ready', activeMode='smart')
+                event = {'taskId': 'task', 'generation': 1, 'modeGeneration': 2, 'popupScope': self.scope}
+                if change in {'paused', 'cancelled'}: self.task['state'] = change
+                if change == 'mode': event['modeGeneration'] = 1
+                if change == 'generation': event['generation'] = 0
+                if change == 'instance': event['taskId'] = 'peer'
+                if change == 'source': self.daemon.tab_leases[('instance', 1)] = 'peer'
+                if change == 'target': self.daemon.tab_leases[('instance', 2)] = 'peer'
+                with self.assertRaises(m.ProtocolError):
+                    self.daemon._dispatch_extension('instance', 'extension.popup_adopted', event)
+                self.assertNotIn(2, self.task['tabIds'])
+                self.assertEqual(self.task.get('operationTimeline', []), [])
+                self.daemon.tab_leases[('instance', 1)] = 'task'
+                self.daemon.tab_leases.pop(('instance', 2), None)
+
     def test_denial_and_expiry_are_terminal_without_replay(self):
         for decision in ('denied','expired'):
             with self.subTest(decision=decision):

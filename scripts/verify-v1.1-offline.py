@@ -55,6 +55,8 @@ NODE_TESTS = (
     'tests/native-extension/background-access-request.test.mjs',
     # 中文注释：pure-offline；真实 Executor/后台审批配合合成 tabs、windows 和 VM，不启动浏览器。
     'tests/native-extension/oauth-popup.test.mjs',
+    # 中文注释：临时完整链路 OAuth 配置只测文件、真实模式校验和离线页面，不启动浏览器。
+    'tests/native-extension/oauth-fixture.test.mjs',
     'tests/native-extension/oauth-popup-approval.test.mjs',
     # 中文注释：核心范围/隐私回归仅用合成 API；打包回归只构建并解压到 scratch，不安装或启动浏览器。
     'tests/native-extension/core.test.mjs',
@@ -97,8 +99,11 @@ NODE_TESTS = (
     # 中文注释：1.3.5 后台滚动短期限与任务租约回归在固定离线清单中运行。
     'tests/native-v2/native_core.test.mjs',
     'tests/native-extension/site-read-origin.test.mjs',
+    'tests/native-extension/oauth-approval-notifier.test.mjs',
     'tests/native-extension/redirect-ready.test.mjs',
     'tests/popup-integration/popup.test.mjs',
+    # 中文注释：扩展上下文就绪检查只使用合成 CDP 状态，不启动浏览器或监听器。
+    'tests/popup-integration/extension-context.test.mjs',
     # 中文注释：内容过滤必须覆盖缓存重放和真实阻塞信息保留。
     'tests/popup-integration/content-filter.test.mjs',
     # 中文注释：受信 UI 配置和持续事件出口复用真实后台消息路由。

@@ -33,6 +33,72 @@ async function fixture({workspace=false,...options}={}){
  return {executor,tabs,command,create,mutations,debugCalls,listeners};
 }
 
+test('provider navigation arriving during blank inspection is retried without another click',async()=>{
+ const audits=[],f=await fixture({onPopupAdopt:async p=>audits.push(p)}),t=f.executor.tasks.get('a');
+ await f.executor.withSpawnScope(t,1,async()=>{});
+ const get=f.executor.api.tabs.get;let entered,release,held=false;
+ const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ f.executor.api.tabs.get=async id=>{const tab=await get(id);if(id===2&&!held){held=true;entered();await gate;}return tab;};
+ await f.create(2,{url:'about:blank'});await started;
+ const row=[...f.executor.popups.candidates.values()][0],work=row.autoWork;
+ f.tabs.get(2).url='https://accounts.google.com/login';
+ await f.executor.tabEvent(2,'navigated',f.tabs.get(2).url);release();await work;
+ assert.equal(f.executor.leases.get(2),'a');assert.equal(audits.length,1);
+ assert.equal(row.automaticBlocked,false,'成功的后续检查必须清除先前未就绪的标记');
+ const catalog=await f.executor.execute(f.command('popup_catalog'));
+ assert.deepEqual(catalog.adoptedPopupTabIds,[2]);assert.equal(catalog.adoptedPopups[0].origin,'https://accounts.google.com');
+});
+
+test('candidate can navigate from an inspected non-provider to a provider during its lifetime',async()=>{
+ const f=await fixture(),t=f.executor.tasks.get('a');await f.executor.withSpawnScope(t,1,async()=>{});
+ await f.create();const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ f.tabs.get(2).url='https://accounts.google.com/login';await f.executor.tabEvent(2,'navigated',f.tabs.get(2).url);await row.autoWork;
+ assert.equal(f.executor.leases.get(2),'a');
+});
+
+test('pendingUrl alone never grants a provider lease and failed native acknowledgment is not replayed on navigation',async()=>{
+ let attempts=0;
+ const f=await fixture({onPopupAdopt:async()=>{attempts++;throw Error('receipt lost');}}),t=f.executor.tasks.get('a');
+ await f.executor.withSpawnScope(t,1,async()=>{});
+ await f.create(2,{url:'about:blank',pendingUrl:'https://accounts.google.com/login'});
+ const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ assert.equal(attempts,0);assert.equal(f.executor.leases.has(2),false);
+ f.tabs.get(2).url='https://accounts.google.com/login';delete f.tabs.get(2).pendingUrl;
+ await f.executor.tabEvent(2,'navigated',f.tabs.get(2).url);await row.autoWork;
+ assert.equal(attempts,1);assert.equal(f.executor.leases.has(2),false);
+ await f.executor.tabEvent(2,'navigated',f.tabs.get(2).url);await row.autoWork;
+ assert.equal(attempts,1);assert.equal(f.executor.leases.has(2),false);
+});
+
+test('navigation during overlay initialization retries only before the native adoption receipt is dispatched',async()=>{
+ const audits=[],f=await fixture({onPopupAdopt:async p=>audits.push(p)}),t=f.executor.tasks.get('a');
+ await f.executor.withSpawnScope(t,1,async()=>{});
+ const restore=f.executor.restoreOverlay.bind(f.executor);let initializations=0;
+ f.executor.restoreOverlay=async(...args)=>{
+  const result=await restore(...args);
+  if(++initializations===1){f.executor.docs.set(2,1);await f.executor.tabEvent(2,'navigated',f.tabs.get(2).url,{status:'complete',urlChanged:false});}
+  return result;
+ };
+ await f.create(2,{url:'https://accounts.google.com/login'});
+ const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ assert.equal(f.executor.leases.get(2),'a');assert.equal(audits.length,1);assert.equal(initializations,2);
+});
+
+for(const change of ['paused','revoked','expired','source navigated'])test(`queued provider navigation still rejects ${change}`,async()=>{
+ const f=await fixture(),t=f.executor.tasks.get('a');await f.executor.withSpawnScope(t,1,async()=>{});
+ const get=f.executor.api.tabs.get;let entered,release,held=false;
+ const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ f.executor.api.tabs.get=async id=>{const tab=await get(id);if(id===2&&!held){held=true;entered();await gate;}return tab;};
+ await f.create(2,{url:'about:blank'});await started;
+ const row=[...f.executor.popups.candidates.values()][0],work=row.autoWork;
+ f.tabs.get(2).url='https://accounts.google.com/login';await f.executor.tabEvent(2,'navigated',f.tabs.get(2).url);
+ if(change==='paused')t.paused=true;
+ if(change==='revoked')t.revoked=true;
+ if(change==='expired')row.expiresAt=0;
+ if(change==='source navigated')await f.executor.tabEvent(1,'navigated','https://example.com/new');
+ release();await work;assert.equal(f.executor.leases.has(2),false);
+});
+
 function publicBridge(f,onContentFilter=async()=>true){
  let deliver;
  const bridge=new Bridge({onMessage:{addListener(){}},postMessage:message=>deliver(message)},f.executor,()=>{},{onContentFilter});
@@ -301,16 +367,16 @@ for(const [name,change] of [
  assert.ok(!t.tabIds.has(2));assert.ok(!t.allowedOrigins.includes('https://accounts.example.test'));assert.deepEqual(f.mutations,[]);
 });
 
-test('catalog cannot claim old personal pages, no-opener pages or normal-window children',async()=>{
+test('catalog excludes old personal and unrelated pages while including same-window children',async()=>{
  const f=await fixture(),t=f.executor.tasks.get('a');
  await f.create(4); // Created before the observation window, even with an opener.
  await f.executor.execute(f.command('popup_catalog'));
  await f.create(5,{openerTabId:undefined});
- // No live spawn scope: ordinary tab is not an independent popup candidate.
+ // 中文注释：同窗口新标签现在也属于候选，仍无自动访问资格。
  await f.create(6,{windowId:7});
  await f.create(7,{openerTabId:9});
  const catalog=await f.executor.execute(f.command('popup_catalog'));
- assert.equal(catalog.candidates.length,0);assert.equal(t.tabIds.size,1);
+ assert.deepEqual(catalog.candidates.map(row=>row.tabId),[6]);assert.equal(t.tabIds.size,1);
 });
 
 test('source changing during popup window inspection cannot cross the adoption fence',async()=>{
@@ -418,4 +484,174 @@ test('full mode still requires exact confirmation; adoption preserves existing o
  assert.ok(t.allowedOrigins.includes('https://accounts.example.test'));
  assert.equal(f.tabs.get(2).openerTabId,1);assert.deepEqual(f.mutations,[]);
  await assert.rejects(f.executor.execute({...command,popupScope:scope,approval:{nonce,digest}}),/approval mismatch|POPUP_STALE/);
+});
+
+// 中文注释：浏览器输入以合成回执替代；执行器的源页锁、接管、浮层和结果边界保持真实。
+for(const action of ['click','ref_click','interaction.click'])test(`${action} returns opened identity and automatically adopts a provider without an action grant`,async()=>{
+ const audits=[],f=await fixture({onPopupAdopt:async p=>audits.push(p)}),t=f.executor.tasks.get('a');
+ assert.equal(t.policy.activeMode,'smart');
+ f.executor.performSettled=async()=>f.executor.withSpawnScope(t,1,async()=>{
+  await f.create(2,{url:'https://accounts.google.com/o/oauth2/auth?private=canary'});
+  return {clicked:true,kind:'dom-synthetic'};
+ });
+ const result=await f.executor.execute(f.command(action));
+ assert.deepEqual(Object.keys(result.popupOpened).sort(),['candidateRef','origin','tabId','windowType']);
+ assert.equal(result.popupOpened.origin,'https://accounts.google.com');assert.equal(result.popupOpened.tabId,2);
+ assert.match(result.popupNextStep,/browser_shared_use_tab/);assert.equal(result.popupOwnership,undefined);
+ assert.equal(f.executor.leases.get(2),'a');assert.equal(audits.length,1);assert.equal(audits[0].popupScope.candidate.tabId,2);
+ assert.ok(t.popupSources.get(2)===1);assert.ok(!t.agentTabs.has(2));assert.equal(f.executor.actionGrants.size,0);
+ assert.ok(!JSON.stringify(result).includes('canary'));
+});
+
+test('non-provider and social-site ordinary pages retain manual confirmation',async()=>{
+ for(const url of ['https://accounts.example.test/login','https://github.com/user/repo','https://x.com/home','https://accounts.google.com.evil.test/login','http://accounts.google.com/login']){
+  const f=await fixture(),t=f.executor.tasks.get('a');await f.executor.withSpawnScope(t,1,async()=>{});await f.create(2,{url});
+  const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+  assert.equal(f.executor.leases.has(2),false);
+  await assert.rejects(f.executor.execute(f.command('popup_adopt',{candidateRef:row.candidateRef})),/confirmation required/);
+ }
+});
+
+for(const windowId of [7,8])test(`normal window ${windowId} provider tab automatically adopts`,async()=>{
+ const f=await fixture(),t=f.executor.tasks.get('a');f.executor.api.windows.get=async id=>({id,type:'normal'});
+ await f.executor.withSpawnScope(t,1,async()=>{});await f.create(2,{windowId,url:'https://github.com/login/oauth/authorize'});
+ const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ assert.equal(f.executor.leases.get(2),'a');assert.equal(row.candidate.windowType,'normal');
+});
+
+test('pre-existing tabs and foreign-task leases cannot be recognized or auto-adopted',async()=>{
+ const f=await fixture(),t=f.executor.tasks.get('a');
+ f.tabs.set(2,{id:2,windowId:8,openerTabId:1,url:'https://accounts.google.com/login'});
+ await f.executor.withSpawnScope(t,1,async()=>{});await f.executor.tabCreated(f.tabs.get(2));
+ f.executor.leases.set(3,'peer');await f.create(3,{url:'https://accounts.google.com/login'});
+ assert.equal(f.executor.popups.candidates.size,0);assert.equal(f.executor.leases.has(2),false);assert.equal(f.executor.leases.get(3),'peer');
+});
+
+for(const change of ['paused','pauseRequested','revoked','mode'])test(`provider adoption is fenced after ${change}`,async()=>{
+ const f=await fixture(),t=f.executor.tasks.get('a');await f.executor.withSpawnScope(t,1,async()=>{});
+ if(change==='mode')f.executor.setMode({...trustedTask(),modeGeneration:2,activeMode:'full'});else t[change]=true;
+ await f.create(2,{url:'https://accounts.google.com/login'});
+ await Promise.all([...f.executor.popups.candidates.values()].map(row=>row.autoWork));
+ assert.equal(f.executor.leases.has(2),false);
+});
+
+test('late provider navigation retries discovery and closed popup reports the live source after refresh',async()=>{
+ const events=[],f=await fixture(),t=f.executor.tasks.get('a');f.executor.onEvent=p=>events.push(p);
+ await f.executor.withSpawnScope(t,1,async()=>{});await f.create(2,{url:'about:blank'});
+ let row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ assert.equal(f.executor.leases.has(2),false);
+ f.tabs.get(2).url='https://accounts.google.com/login';await f.executor.tabEvent(2,'navigated',f.tabs.get(2).url);await row.autoWork;
+ assert.equal(f.executor.leases.get(2),'a');
+ f.tabs.get(1).url='https://example.com/logged-in';await f.executor.tabEvent(1,'navigated',f.tabs.get(1).url);
+ f.tabs.delete(2);await f.executor.tabEvent(2,'closed');
+ assert.deepEqual(events.at(-1).popupClosed,{returnedTo:1});assert.equal(f.executor.leases.get(1),'a');
+ f.tabs.get(1).status='complete';
+ const send=f.executor.api.debugger.sendCommand;
+ f.executor.api.debugger.sendCommand=async(target,method,params)=>{
+  if(method==='Runtime.callFunctionOn'&&params.arguments?.[0]?.value==='snapshot')return {result:{value:{tabId:target.tabId,text:'fresh source document'}}};
+  return send(target,method,params);
+ };
+ const snapshot=await f.executor.execute(f.command('snapshot',{tabId:2}));
+ assert.equal(snapshot.text,'fresh source document');assert.equal(snapshot.tabId,1);
+ assert.deepEqual(snapshot.popupClosed,{returnedTo:1});assert.equal(f.executor.docs.get(1),1);
+});
+
+test('automatic provider scope cannot expand during initialization or publish after audit rejection',async()=>{
+ for(const failure of ['provider path changed','audit rejected']){
+  const f=await fixture({onPopupAdopt:async()=>{if(failure==='audit rejected')throw Error('audit unavailable');}}),t=f.executor.tasks.get('a');
+  await f.executor.withSpawnScope(t,1,async()=>{});
+  if(failure==='provider path changed'){
+   const restore=f.executor.restoreOverlay.bind(f.executor);f.executor.restoreOverlay=async(...args)=>{const result=await restore(...args);f.tabs.get(2).url='https://github.com/user/repo';return result;};
+  }
+  await f.create(2,{url:'https://github.com/login/oauth/authorize'});const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+  assert.equal(f.executor.leases.has(2),false);assert.ok(!t.allowedOrigins.includes('https://github.com'));
+ }
+});
+
+
+test('click reports a newly created blank login tab without inventing its origin',async()=>{
+ const f=await fixture(),t=f.executor.tasks.get('a');
+ f.executor.performSettled=async()=>f.executor.withSpawnScope(t,1,async()=>{await f.create(2,{url:'about:blank'});return {clicked:true};});
+ const result=await f.executor.execute(f.command('click'));
+ assert.equal(result.popupOpened.tabId,2);assert.equal(result.popupOpened.origin,null);
+ assert.match(result.popupNextStep,/popup_catalog/);assert.equal(f.executor.leases.has(2),false);
+});
+
+test('provider observation and candidate lifetimes permit slow pages but still expire',async()=>{
+ const f=await fixture();const catalog=await f.executor.execute(f.command('popup_catalog'));
+ assert.equal(catalog.observationMs,120000);await f.create();
+ const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ assert.ok(row.expiresAt>Date.now()+500000);
+ row.expiresAt=Date.now()-1;
+ assert.deepEqual((await f.executor.execute(f.command('popup_catalog'))).candidates,[]);
+});
+
+test('a whitelisted origin in full mode still uses explicit adoption approval',async()=>{
+ const f=await fixture(),t=f.executor.tasks.get('a');f.executor.setMode({...trustedTask(),modeGeneration:2,activeMode:'full'});
+ await f.executor.withSpawnScope(t,1,async()=>{});await f.create(2,{url:'https://accounts.google.com/login'});
+ const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ assert.equal(f.executor.leases.has(2),false);
+ await assert.rejects(f.executor.execute(f.command('popup_adopt',{modeGeneration:2,candidateRef:row.candidateRef})),/confirmation required/);
+});
+
+test('Edge missing creation opener readback adopts only the verified new provider tab',async()=>{
+ const f=await fixture(),t=f.executor.tasks.get('a');await f.executor.withSpawnScope(t,1,async()=>{});
+ f.tabs.set(2,{id:2,windowId:7,openerTabId:1,url:'https://accounts.google.com/login'});
+ await f.executor.tabCreated({id:2,windowId:7});const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ assert.equal(f.executor.leases.get(2),'a');
+});
+
+
+test('pause during automatic overlay initialization prevents the popup lease',async()=>{
+ const f=await fixture(),t=f.executor.tasks.get('a');await f.executor.withSpawnScope(t,1,async()=>{});
+ const restore=f.executor.restoreOverlay.bind(f.executor);
+ f.executor.restoreOverlay=async(...args)=>{const result=await restore(...args);t.pauseRequested=true;return result;};
+ await f.create(2,{url:'https://accounts.google.com/login'});const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ assert.equal(f.executor.leases.has(2),false);assert.ok(!t.allowedOrigins.includes('https://accounts.google.com'));
+});
+
+test('shielded public snapshot returns the fresh source after popup close without reusing its document',async()=>{
+ const f=await fixture({onContentShield:async()=>({enabled:true,rules:{}})}),t=f.executor.tasks.get('a');
+ await f.executor.withSpawnScope(t,1,async()=>{});await f.create(2,{url:'https://accounts.google.com/login'});
+ const row=[...f.executor.popups.candidates.values()][0];await row.autoWork;
+ f.tabs.delete(2);await f.executor.tabEvent(2,'closed');f.tabs.get(1).status='complete';
+ f.executor.docs.set(1,1);
+ f.executor.shieldInventory=async(_task,p)=>{
+  assert.equal(p.tabId,1);
+  return {document:`fresh-${f.executor.docs.get(1)}`,tokens:[],rects:[],siteAutomationRestricted:false};
+ };
+ const send=f.executor.api.debugger.sendCommand;
+ f.executor.api.debugger.sendCommand=async(target,method,p)=>{
+  if(method==='Runtime.callFunctionOn'&&p.arguments?.[0]?.value==='snapshot')return {result:{value:{tabId:target.tabId,text:'fresh protected source'}}};
+  return send(target,method,p);
+ };
+ const command=f.command('snapshot',{tabId:2}),b=publicBridge(f),response=await b.send(b.request(command));
+ assert.equal(response.error,undefined);assert.equal(response.result.text,'fresh protected source');
+ assert.deepEqual(response.result.popupClosed,{returnedTo:1});
+});
+
+
+for(const scenario of ['old candidate','pre-existing tab','foreign opener','foreign target lease','no popup'])test(`popup effect excludes ${scenario} and preserves CLICK_NO_EFFECT`,async()=>{
+ const f=await fixture({workspace:true}),t=f.executor.tasks.get('a'),command=f.command('click');
+ if(scenario==='old candidate'){
+  await f.executor.withSpawnScope(t,1,async()=>{});await f.create();
+  await [...f.executor.popups.candidates.values()][0].autoWork;
+ }
+ if(scenario==='pre-existing tab')f.tabs.set(2,{id:2,openerTabId:1,windowId:8,url:'https://accounts.example.test/login'});
+ if(scenario==='foreign target lease')f.executor.leases.set(2,'peer');
+ const send=f.executor.api.debugger.sendCommand;
+ f.executor.api.debugger.sendCommand=async(target,method,p)=>{
+  if(method==='Runtime.callFunctionOn'&&p.functionDeclaration.startsWith('function effectProbe'))return {result:{value:p.arguments[0].value!=='read'}};
+  return send(target,method,p);
+ };
+ let dispatches=0;
+ await assert.rejects(f.executor.observeClickEffect(t,command,{
+  api:f.executor.api,target:{tabId:1},contextId:1,guard:f.executor.popupGuard(t,command),timeoutMs:20,
+  work:()=>f.executor.withSpawnScope(t,1,async()=>{
+   dispatches++;
+   if(!['old candidate','no popup'].includes(scenario))await f.create(2,{openerTabId:scenario==='foreign opener'?9:1});
+   return {clicked:true,kind:'dom-synthetic',effect:'unverified'};
+  }),
+ }),error=>error.code==='CLICK_NO_EFFECT'&&error.outcomeUnknown===true);
+ assert.equal(dispatches,1);assert.equal(f.executor.leases.get(2),scenario==='foreign target lease'?'peer':undefined);
 });

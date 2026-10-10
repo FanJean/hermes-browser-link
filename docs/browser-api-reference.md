@@ -146,7 +146,7 @@ Wait until document.readyState reaches ``until``; returns the final state.  The 
 
 ### `popup_adopt(candidate_ref, *, tab=None)`
 
-请求精确接管已有弹窗。先在同一脚本调用 popup_catalog 保留 candidate； ApprovalRequired 后用 wait_pending(tab=source) 只读查询账本，不重发接管。 等待返回 state=confirmed，不是 adopted 回执；显式 use_tab(candidate['tabId']) 后重新 read_page 核实原窗口当前权限与内容，不另开登录网址。
+请求精确接管需要人工确认的登录窗口。白名单自动接管时直接 use_tab(popupOpened["tabId"]) 并重读；其他窗口先在同一脚本调用 popup_catalog 保留 candidate； ApprovalRequired 后用 wait_pending(tab=source) 只读查询账本，不重发接管。 等待返回 state=confirmed，不是 adopted 回执；显式 use_tab(candidate['tabId']) 后重新 read_page 核实原窗口当前权限与内容，不另开登录网址。
 
 扩展能力：`browser_core_v1`。
 
@@ -521,7 +521,7 @@ Wait for the same approval/manual-input request (max 300 s). Ordinary requests r
 
 ```json
 {
-  "description": "同一页需要两步以上（填表、翻页、采集、点击后读结果）请用一次 browser_shared_script；打开或导航后先看回执摘要，不足再读取页面；同一页不要混用 browser_exec。需要用户处理时列出标签页；会话结束会保留待处理页。在任务的工作页执行一个动作。浏览器连接授权后，普通读取、导航、写入和 Python 工作流直接执行，不逐项确认；tabs 只返回任务标签。除 popup_adopt 外，返回 approval_required 或 user_input_required 时，等用户处理后用相同 request_id 和参数再查一次，不要改参重发；popup_adopt 的等待只读查询当前任务，不重发接管。outcome_unknown 为真时不要重试，先读页面核实。详见技能 browser-link:use-my-browser。 popup_catalog 使用授权源 tab_id 发现刚创建的独立登录弹窗，只返回元数据；popup_adopt 传同一源 tab_id 和 candidate_ref，全部访问也必须明确确认。不得另开登录网址代替原弹窗；批准后用 browser_shared_get 核对当前代次和 adoptedPopupTabIds，再显式选择已知 candidate 的 tabId 并重新读取。脚本用 wait_pending 只读查询账本，返回 state=confirmed 而非 adopted/tabId 回执；不重发接管，不自动移动或关闭弹窗。元数据不等于当前页面访问证明。 页面执行：连接授权后 js.evaluate / cdp.send / cdp.events 直接执行，不逐项确认。发生过凭据填写的页面不能运行任意 JS/CDP。原始脚本结果不做字段级脱敏。 read_page/page_text 返回 dict：读 page[\"items\"] / page[\"elements\"]，不能切片 dict；wait_for timeout 上限 60 秒。 JS 用 evaluate(\"(selector)=>document.querySelector(selector)?.textContent\", \"#result\") 传值；isolated 共享 DOM，不共享网站 JS 全局变量，main 需明确理由且不自动切换。 上传：files.upload 传 selector 与 paths（用户在对话中给出的本地文件路径，可用 ~）。",
+  "description": "同一页需要两步以上（填表、翻页、采集、点击后读结果）请用一次 browser_shared_script；打开或导航后先看回执摘要，不足再读取页面；同一页不要混用 browser_exec。需要用户处理时列出标签页；会话结束会保留待处理页。在任务的工作页执行一个动作。浏览器连接授权后，普通读取、导航、写入和 Python 工作流直接执行，不逐项确认；tabs 只返回任务标签。除 popup_adopt 外，返回 approval_required 或 user_input_required 时，等用户处理后用相同 request_id 和参数再查一次，不要改参重发；popup_adopt 的等待只读查询当前任务，不重发接管。outcome_unknown 为真时不要重试，先读页面核实。详见技能 browser-link:use-my-browser。 点击第三方登录后查看 popupOpened 和 popupNextStep；smart 模式下内置身份提供方授权页由本任务新打开时自动接管，直接 browser_shared_use_tab 到 popupOpened.tabId 并重读页面选账号。密码、验证码、2FA 用 manual_input 请用户亲自填写。弹窗关闭时 popupClosed.returnedTo 指向源页，返回后重读，不复用旧引用。白名单外及非 smart 模式仍需 popup_catalog 保留候选、popup_adopt 必须明确确认；脚本 wait_pending 只读查账本，返回 state=confirmed，不重发接管，再 use_tab 到已确认候选并读取；单工具用 browser_shared_get 核对 generation 与 adoptedPopupTabIds 后选页重读。不得另开登录网址替代原弹窗，不自动移动或关闭，不授予清理权；未知或变化的授权不能重放。 页面执行：连接授权后 js.evaluate / cdp.send / cdp.events 直接执行，不逐项确认。发生过凭据填写的页面不能运行任意 JS/CDP。原始脚本结果不做字段级脱敏。 read_page/page_text 返回 dict：读 page[\"items\"] / page[\"elements\"]，不能切片 dict；wait_for timeout 上限 60 秒。 JS 用 evaluate(\"(selector)=>document.querySelector(selector)?.textContent\", \"#result\") 传值；isolated 共享 DOM，不共享网站 JS 全局变量，main 需明确理由且不自动切换。 上传：files.upload 传 selector 与 paths（用户在对话中给出的本地文件路径，可用 ~）。",
   "parameters": {
     "type": "object",
     "properties": {
@@ -1255,7 +1255,7 @@ Wait for the same approval/manual-input request (max 300 s). Ordinary requests r
 
 ```json
 {
-  "description": "将本会话官方 browser_* 工具的当前页切换为已绑定任务的工作页。",
+  "description": "将本会话官方 browser_* 工具的当前页切换为已绑定任务的工作页或已接管登录窗口；点击返回 popupOpened 后选择其 tabId 并重读，登录窗口关闭后自动回源重读。",
   "parameters": {
     "type": "object",
     "properties": {

@@ -7,7 +7,8 @@ import {copyFile, mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promise
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {realpathSync} from 'node:fs';
-import {CdpClient, waitFor, fetchJson} from './cdp-client.mjs';
+import {CdpClient, waitFor, fetchJson, waitForExtensionPage, activateTestExtensionTab} from './cdp-client.mjs';
+import {configureOAuthFixture} from './oauth-fixture.mjs';
 
 const exec = promisify(execFile);
 export const root = path.resolve(import.meta.dirname, '../..');
@@ -47,7 +48,7 @@ export async function helperCall(...args) {
 }
 
 // 中文注释：离线 staging 与真实启动共用布局，dispose() 只删除本次独占创建的目录。
-export async function stageRealSession({browser, packageMode = false, label = 'm', compactScratch = false, sharedWith = null}) {
+export async function stageRealSession({browser, packageMode = false, label = 'm', compactScratch = false, sharedWith = null, oauthProviders = null}) {
   const scratch = scratchRoot(compactScratch);
   if (compactScratch && path.basename(label) !== label) throw Error('compactScratch label must not contain a path');
   const work = await mkdtemp(path.join(scratch, `${label}${browser[0]}-`));
@@ -62,6 +63,7 @@ export async function stageRealSession({browser, packageMode = false, label = 'm
     const extensionRoot = packageMode ? path.join(packageRoot, 'native-extension') : path.join(work, 'dist-native');
     if (packageMode) await exec(process.execPath, [path.join(root, 'scripts/package-executor.mjs'), '--source', root, '--output', packageRoot], {cwd: root, timeout: 120000});
     else await exec(process.execPath, [path.join(root, 'native-extension/build.mjs'), extensionRoot], {cwd: root});
+    const oauthFixture=oauthProviders?await configureOAuthFixture(extensionRoot,oauthProviders):null;
     const profile = path.join(work, 'profile');
     const downloadsDir = path.join(work, 'downloads');
     const temp = path.join(work, 'tmp');
@@ -79,13 +81,13 @@ export async function stageRealSession({browser, packageMode = false, label = 'm
     const profileManifest = path.join(profile, 'NativeMessagingHosts/com.hermes.browser_link.json');
     await mkdir(path.dirname(profileManifest), {recursive: true});
     await copyFile(staged.manifests[browser === 'chrome' ? 0 : 1], profileManifest);
-    return {work, profile, downloadsDir, temp, compactHome, staged, extensionRoot, expectedExtensionId, dispose};
+    return {work, profile, downloadsDir, temp, compactHome, staged, extensionRoot, expectedExtensionId, oauthFixture, dispose};
   } catch (error) { await dispose(); throw error; }
 }
 
 // 中文注释：启动临时 profile；compactScratch=true 可把所有 fixture 产物限制在指定 TMPDIR 内。
-export async function openRealSession({browser, packageMode = false, hostRules = '', label = 'm', headed = false, workWindowMode, idleCloseSeconds, taskIdleTimeoutSeconds, sharedWith = null, compactScratch = false}) {
-  const fixture = await stageRealSession({browser, packageMode, label, sharedWith, compactScratch});
+export async function openRealSession({browser, packageMode = false, hostRules = '', label = 'm', headed = false, workWindowMode, idleCloseSeconds, taskIdleTimeoutSeconds, sharedWith = null, compactScratch = false, oauthProviders = null}) {
+  const fixture = await stageRealSession({browser, packageMode, label, sharedWith, compactScratch, oauthProviders});
   const {work, profile, downloadsDir, temp, compactHome, staged, extensionRoot, expectedExtensionId} = fixture;
   // 中文注释：浏览器必须继承真实 HOME（见 tests/v1-launch-safety），只把 HERMES_HOME/TMPDIR 指到临时目录。
   const browserEnv = {
@@ -96,14 +98,10 @@ export async function openRealSession({browser, packageMode = false, hostRules =
   if(workWindowMode!==undefined)browserEnv.HERMES_BROWSER_WORK_WINDOW=workWindowMode;
   if(idleCloseSeconds!==undefined)browserEnv.HERMES_BROWSER_IDLE_CLOSE_SECONDS=String(idleCloseSeconds);
   if(taskIdleTimeoutSeconds!==undefined)browserEnv.HERMES_BROWSER_TASK_IDLE_TIMEOUT_SECONDS=String(taskIdleTimeoutSeconds);
-  const session = {work, profile, downloadsDir, compactHome, staged, browser, extensionId: expectedExtensionId, logs: ''};
+  const session = {work, profile, downloadsDir, compactHome, staged, browser, extensionId: expectedExtensionId, oauthFixture:fixture.oauthFixture, logs: ''};
   let proc, cdp, ui, popupTarget, base;
 
-  const activateExtensionTab = async (client, targetId) => {
-    await client.evaluate('chrome.tabs.getCurrent().then(tab=>chrome.windows.update(tab.windowId,{focused:true}).then(()=>chrome.tabs.update(tab.id,{active:true}))).then(()=>true)');
-    await cdp.call('Target.activateTarget', {targetId});
-    await client.call('Emulation.setFocusEmulationEnabled', {enabled: true});
-  };
+  const activateExtensionTab = (client, targetId) => activateTestExtensionTab(client,targetId,cdp);
   const trustedClick = async (client, targetId, selector) => {
     await activateExtensionTab(client, targetId);
     const point = await client.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('missing '+${JSON.stringify(selector)});e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
@@ -134,6 +132,7 @@ export async function openRealSession({browser, packageMode = false, hostRules =
     popupTarget = await waitFor(async () => (await fetchJson(`${base}/json/list`)).find(item => item.url === `chrome-extension://${id}/popup.html`));
     ui = new CdpClient(popupTarget.webSocketDebuggerUrl); await ui.connect();
     session.ui = ui; session.cdp = cdp; session.base = base;
+    await waitForExtensionPage(ui,{extensionId:expectedExtensionId,url:`chrome-extension://${expectedExtensionId}/popup.html`});
     await waitFor(() => ui.evaluate(`document.querySelector('#connection-label')!==null`));
     if (!await ui.evaluate(`document.querySelector('#connection-label').textContent==='已连接'`)) await trustedClick(ui, popupTarget.id, '#connect');
     await waitFor(() => ui.evaluate(`document.querySelector('#connection-label').textContent==='已连接'`), 35000);
@@ -170,10 +169,15 @@ export async function openRealSession({browser, packageMode = false, hostRules =
     const client = new CdpClient(target.webSocketDebuggerUrl); await client.connect();
     try { return await client.evaluate(expression); } finally { client.close(); }
   };
+  session.approvalPanelTargets = async () => ({
+    expectedUrl: `chrome-extension://${expectedExtensionId}/approval-panel.html`,
+    targets: (await fetchJson(`${base}/json/list`)).map(({id,type,url,title}) => ({id,type,url,title})),
+  });
   session.approvePanel = async (decision = 'approve', textIncludes = null) => {
-    const panelTarget = await waitFor(async () => (await fetchJson(`${base}/json/list`)).find(item => item.url === `chrome-extension://${expectedExtensionId}/approval-panel.html`), 20000);
-    const panel = new CdpClient(panelTarget.webSocketDebuggerUrl); await panel.connect();
+    let panel;
     try {
+      const panelTarget = await waitFor(async () => (await fetchJson(`${base}/json/list`)).find(item => item.url === `chrome-extension://${expectedExtensionId}/approval-panel.html`), 20000, {label: '审批面板目标出现'});
+      panel = new CdpClient(panelTarget.webSocketDebuggerUrl); await panel.connect();
       await waitFor(() => panel.evaluate(`Boolean(document.querySelector('button[data-decision="${decision}"]'))`));
       if (textIncludes){const body=await panel.evaluate('document.body.innerText');assert.ok(body.includes(textIncludes),JSON.stringify({expected:textIncludes,body}));}
       await activateExtensionTab(panel, panelTarget.id);
@@ -182,7 +186,11 @@ export async function openRealSession({browser, packageMode = false, hostRules =
       await panel.call('Input.dispatchMouseEvent', {type: 'mouseReleased', button: 'left', clickCount: 1, ...point});
       // 中文注释：等待本次审批窗口关闭，避免紧接着的新请求误命中上一个弹窗。
       await waitFor(async()=>!(await fetchJson(`${base}/json/list`)).some(item=>item.id===panelTarget.id),10000);
-    } finally { panel.close(); }
+    } catch(error) {
+      try { error.approvalPanelTargets = await session.approvalPanelTargets(); }
+      catch(failure) { error.approvalPanelTargets = {error:failure.message}; }
+      throw error;
+    } finally { panel?.close(); }
   };
   // 中文注释：重载只作用于本 fixture 扩展；刷新共享 ui 引用，后续工具不再使用已关闭的 popup 端点。
   // 中文注释：重载只作用于本 fixture 扩展；用 chrome://extensions 页自身的重新加载（与用户点"重新加载"相同），

@@ -3,13 +3,29 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 import {openRealSession,openTask} from '../native-v2/real-session.mjs';
 import {CdpClient,fetchJson,waitFor} from '../native-v2/cdp-client.mjs';
+import {oauthSourcePage,oauthProviderPage,oauthDonePage,OAUTH_DONE_MARKER} from './oauth-fixture-page.mjs';
+import {oauthReturnReadDiagnostics} from '../native-v2/oauth-fixture.mjs';
 
 const fixture=await readFile(new URL('./login-windows.html',import.meta.url),'utf8');
-const server=createServer((_request,response)=>{response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end(fixture);});
+const completionResponses=new Map();
+const server=createServer((request,response)=>{
+ const origin=`http://127.0.0.1:${server.address().port}`,url=new URL(request.url,origin);
+ if(url.pathname==='/oauth-complete'){
+  const flow=url.searchParams.get('flow');
+  if(completionResponses.has(flow)){response.writeHead(409);response.end('duplicate completion');return;}
+  completionResponses.set(flow,response);return;
+ }
+ response.writeHead(200,{'content-type':'text/html; charset=utf-8'});
+ if(url.pathname==='/oauth-source')response.end(oauthSourcePage({origin,loginOrigin:origin.replace('127.0.0.1','login.localhost'),manualOrigin:origin.replace('127.0.0.1','manual.localhost'),flow:url.searchParams.get('flow')}));
+ else if(url.pathname==='/oauth-provider')response.end(oauthProviderPage());
+ else if(url.pathname==='/oauth-done')response.end(oauthDonePage);
+ else response.end(fixture);
+});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-const origin=`http://127.0.0.1:${server.address().port}`,loginOrigin=origin.replace('127.0.0.1','login.localhost');
+const origin=`http://127.0.0.1:${server.address().port}`,loginOrigin=origin.replace('127.0.0.1','login.localhost'),manualOrigin=origin.replace('127.0.0.1','manual.localhost');
 const browser=process.argv.includes('--edge')?'edge':'chrome';
 const output=path.join(process.env.TMPDIR,`login-windows-${browser}`),results=[];
 await mkdir(output,{recursive:true});
@@ -19,10 +35,10 @@ async function check(name,fn){
  if(process.argv.includes('--popup-only')&&!/独立小窗|关闭任务/.test(name))return;
  const started=performance.now();
  try{const detail=await fn();results.push({name,ok:true,ms:Math.round(performance.now()-started),detail});}
- catch(error){results.push({name,ok:false,error:String(error.message).slice(0,1000)});}
+ catch(error){results.push({name,ok:false,error:String(error.message),stack:error.stack,diagnostics:error.diagnostics});}
 }
 try{
- session=await openRealSession({browser,label:'login',headed:true,compactScratch:true});
+ session=await openRealSession({browser,label:'login',headed:true,compactScratch:true,hostRules:'MAP login.localhost 127.0.0.1, MAP manual.localhost 127.0.0.1',oauthProviders:[{origin:loginOrigin,paths:['/oauth-provider']}]});
  await session.enableFullAccess();
  const tab=await openTask(session,{owner:'login-windows',origins:[origin],url:origin,title:'本地登录窗口'});
  const run=async(action,params={})=>verify(await tab.run(action,params));
@@ -164,10 +180,160 @@ try{
   for(const candidate of adoptedPopups)assert.ok(await session.ui.evaluate(`chrome.tabs.get(${candidate.tabId}).then(tab=>tab.windowId===${candidate.windowId})`));
   return {preserved:adoptedPopups.length};
  });
+
+ // 中文注释：只为临时实例选择 legacy smart/full，调用实际 background 的私有模式请求；不伪造审批或遮罩放行。
+ const taskState=handle=>session.rpc(handle.owner,'get',{task_id:handle.task.id}).then(verify);
+ let diagnostics;
+ const extensionDiagnostics=handle=>session.ui.evaluate(`chrome.runtime.sendMessage({type:'oauth_fixture_diagnostics',taskId:${JSON.stringify(handle.task.id)}})`);
+ const setMode=async(handle,mode)=>{
+  const receipt=await session.ui.evaluate(`chrome.runtime.sendMessage({type:'oauth_fixture_mode',taskId:${JSON.stringify(handle.task.id)},mode:${JSON.stringify(mode)}})`);
+  assert.equal(receipt.error,undefined,JSON.stringify(receipt));assert.equal(receipt.result.activeMode,mode);
+  const current=await taskState(handle);assert.equal(current.activeMode,mode);assert.equal(current.modeGeneration,receipt.result.modeGeneration);
+ };
+ const confirmedRun=async(handle,action,params={})=>{
+  const id=handle.nextId();
+  if(diagnostics)diagnostics.lastRequest={requestId:id,action,tabId:handle.tabId};
+  const first=verify(await handle.run(action,params,id));
+  if(first.status!=='approval_required')return first;
+  const approval={at:Date.now(),action,tabId:handle.tabId,requestId:id,receipt:structuredClone(first)};
+  if(diagnostics)(diagnostics.approvals??=[]).push(approval);
+  try{approval.panelTargetsBefore=await session.approvalPanelTargets();}catch(error){approval.panelTargetsBefore={error:error.message};}
+  try{await session.approvePanel('approve');}
+  catch(error){approval.panelTargetsAtFailure=error.approvalPanelTargets;throw error;}
+  return waitFor(async()=>{
+   const result=verify(await handle.run(action,params,id));
+   return ['approval_required','approved','executing'].includes(result.status)?null:result;
+  },15000,{label:`原请求确认后 ${action} 回执`});
+ };
+ const freshRef=async(handle,name)=>{
+  const snapshot=await confirmedRun(handle,'semantic_snapshot',{options:{mode:'interactive',query:name,budget:5000}});
+  const item=snapshot.items.find(item=>item.name===name);assert.ok(item,`缺少控件 ${name}`);
+  return {binding:snapshot.binding,snapshot_id:snapshot.snapshotId,ref:item.ref};
+ };
+ const openOnly=async(handle,button)=>{
+  const token=await freshRef(handle,button);
+  const before=await handle.read('({html:document.querySelector("main").outerHTML,url:location.href})');
+  await session.ui.evaluate(`chrome.tabs.get(${handle.tabId}).then(tab=>chrome.windows.update(tab.windowId,{state:'normal',focused:true}).then(()=>chrome.tabs.update(tab.id,{active:true}))).then(()=>true)`);
+  const result=await confirmedRun(handle,'ref_click',token);
+  if(diagnostics)diagnostics.click=structuredClone(result);
+  assert.equal(result.effect,'observed');assert.ok(result.popupOpened,JSON.stringify(result));assert.notEqual(result.outcomeUnknown,true);
+  assert.equal(await handle.read('window.oauthClickCount'),1,'只开窗按钮不得重放');
+  assert.deepEqual(await handle.read('({html:document.querySelector("main").outerHTML,url:location.href})'),before,'来源 DOM 和 URL 必须未变化');
+  if(!result.popupOpened.origin||!result.popupOpened.windowType){
+   // 中文注释：保留原始点击回执；只等待 catalog 的已验证身份，绝不重放点击或放宽来源断言。
+   const candidate=await waitFor(async()=>{
+    const catalog=verify(await handle.run('popup_catalog'));
+    if(diagnostics)(diagnostics.catalogReads??=[]).push(catalog);
+    return [...catalog.candidates,...(catalog.adoptedPopups||[])].find(row=>row.candidateRef===result.popupOpened.candidateRef&&row.origin&&row.windowType);
+   },10000,{label:'登录候选完成导航后的 catalog 身份'});
+   return {...result,popupOpened:{candidateRef:candidate.candidateRef,origin:candidate.origin,windowType:candidate.windowType,tabId:candidate.tabId}};
+  }
+  return result;
+ };
+ const persistedTask=async handle=>(JSON.parse(await readFile(path.join(session.staged.hermesHome,'plugin-data/browser-link-native/tasks.json'),'utf8')).tasks.find(row=>row.id===handle.task.id));
+ const verifyAutoAudit=async(handle,popup)=>{
+  const current=await waitFor(async()=>{
+   const value=await taskState(handle);return value.adoptedPopupTabIds?.includes(popup.tabId)?value:null;
+  },10000,{label:'background/daemon 自动接管读回'});
+  assert.ok(current.tabIds.includes(popup.tabId));assert.ok(!current.pendingInteraction);
+  const saved=await waitFor(async()=>{
+   const value=await persistedTask(handle);
+   return value?.requestHistory.some(row=>row.action==='popup_adopt'&&row.automatic===true&&row.popupTargetTabId===popup.tabId)?value:null;
+  },10000,{label:'自动接管持久化台账'});
+  const entry=saved.requestHistory.find(row=>row.action==='popup_adopt'&&row.automatic===true&&row.popupTargetTabId===popup.tabId);
+  assert.equal(entry.state,'confirmed');assert.equal(entry.modeGeneration,current.modeGeneration);
+  assert.ok(saved.operationTimeline.some(row=>row.action==='popup_adopt'&&row.automatic===true&&row.tabId===popup.tabId));
+  assert.ok(!saved.requestHistory.some(row=>row.action==='popup_adopt'&&row.automatic!==true),'自动接管不能借人工 popup_adopt 完成');
+  assert.ok(!saved.agentTabIds.includes(popup.tabId),'接管不能授予删除权');
+  const journal=(await readFile(path.join(session.staged.hermesHome,'plugin-data/browser-link-native/requests.jsonl'),'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));
+  assert.ok(journal.some(row=>row.task.id===handle.task.id&&row.entry.requestIdHash===entry.requestIdHash&&row.entry.automatic===true&&row.entry.state==='confirmed'));
+  return {automatic:true,tabId:popup.tabId,modeGeneration:current.modeGeneration,requestIdHash:entry.requestIdHash};
+ };
+ const withOAuthTask=async(label,fn)=>{
+  const flow=crypto.randomUUID(),url=origin+'/oauth-source?flow='+encodeURIComponent(flow);
+  const handle=await openTask(session,{owner:'oauth-'+label,origins:[origin],url,title:'OAuth '+label});
+  diagnostics={taskId:handle.task.id,urlTimeline:[]};
+  const capture=async()=>{try{diagnostics.urlTimeline.push(await extensionDiagnostics(handle));}catch(error){diagnostics.urlTimeline.push({at:Date.now(),error:error.message});}};
+  let sampling=Promise.resolve();
+  const timer=setInterval(()=>{sampling=sampling.then(capture);},100);
+  try{return await fn(handle,flow);}
+  catch(error){
+   clearInterval(timer);await sampling;await capture();
+   for(const [key,read] of Object.entries({task:()=>taskState(handle),persistedTask:()=>persistedTask(handle),catalog:()=>handle.run('popup_catalog'),approvalPanelTargets:()=>session.approvalPanelTargets(),
+    journal:async()=>(await readFile(path.join(session.staged.hermesHome,'plugin-data/browser-link-native/requests.jsonl'),'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse).filter(row=>row.task.id===handle.task.id)})){
+    try{diagnostics[key]=await read();}catch(failure){diagnostics[key]={error:failure.message};}
+   }
+   diagnostics.operationTimeline=diagnostics.persistedTask?.operationTimeline;
+   error.diagnostics=diagnostics;throw error;
+  }
+  finally{clearInterval(timer);await sampling;diagnostics=null;verify(await session.rpc(handle.owner,'close',{task_id:handle.task.id}));}
+ };
+ for(const [label,button,windowType] of [['popup','只开授权小窗','popup'],['same-window-tab','只开同窗授权标签','normal']]){
+  await check(`A ${label}：仅开窗的 ref_click 返回 observed 和 popupOpened`,()=>withOAuthTask('A-'+label,async handle=>{
+   const result=await openOnly(handle,button);assert.equal(result.popupOpened.origin,loginOrigin);assert.equal(result.popupOpened.windowType,windowType);
+   const target=await session.ui.evaluate(`chrome.tabs.get(${result.popupOpened.tabId})`),source=await session.ui.evaluate(`chrome.tabs.get(${handle.tabId})`);
+   if(windowType==='normal')assert.equal(target.windowId,source.windowId);else assert.notEqual(target.windowId,source.windowId);
+   return {effect:result.effect,popupOpened:result.popupOpened};
+  }));
+ }
+ for(const [label,button,windowType] of [['popup','只开授权小窗','popup'],['same-window-tab','只开同窗授权标签','normal']]){
+  await check(`B smart ${label}：本地白名单自动接管并登记审计`,()=>withOAuthTask('B-'+label,async handle=>{
+   await setMode(handle,'smart');const result=await openOnly(handle,button);
+   assert.equal(result.popupOpened.origin,loginOrigin);assert.equal(result.popupOpened.windowType,windowType);
+   if(windowType==='normal')assert.equal(await session.ui.evaluate(`chrome.tabs.get(${result.popupOpened.tabId}).then(async target=>target.windowId===(await chrome.tabs.get(${handle.tabId})).windowId)`),true);
+   const audit=await verifyAutoAudit(handle,result.popupOpened);
+   const popup=verify(await session.rpc(handle.owner,'run',{task_id:handle.task.id,tab_id:result.popupOpened.tabId,request_id:handle.nextId(),action:'semantic_snapshot'}));
+   assert.ok(popup.items.some(item=>item.name==='完成本地授权'));
+   return audit;
+  }));
+ }
+ await check('C smart 非白名单：只发现候选，人工确认后才获得租约',()=>withOAuthTask('C-manual',async handle=>{
+  await setMode(handle,'smart');const result=await openOnly(handle,'只开非白名单小窗');
+  assert.equal(result.popupOpened.origin,manualOrigin);
+  const current=await taskState(handle);assert.ok(!current.adoptedPopupTabIds?.includes(result.popupOpened.tabId));
+  const before=await session.rpc(handle.owner,'run',{task_id:handle.task.id,tab_id:result.popupOpened.tabId,request_id:handle.nextId(),action:'semantic_snapshot'});assert.equal(before.code,'foreign_tab');
+  const catalog=verify(await handle.run('popup_catalog')),candidate=catalog.candidates.find(row=>row.candidateRef===result.popupOpened.candidateRef);assert.ok(candidate);
+  assert.equal((await handle.run('popup_adopt',{candidate_ref:candidate.candidateRef})).status,'approval_required');
+  await session.approvePanel('approve',manualOrigin);
+  await waitFor(async()=>{const state=await taskState(handle);return state.adoptedPopupTabIds?.includes(candidate.tabId);},10000,{label:'非白名单人工确认授权'});
+  const saved=await persistedTask(handle);assert.ok(!saved.requestHistory.some(row=>row.automatic===true));
+  return {manual:true,tabId:candidate.tabId};
+ }));
+ await check('D smart：站点关闭登录页后回源读取新文档且不报 stale',()=>withOAuthTask('D-close',async(handle,flow)=>{
+  await setMode(handle,'smart');const sourceSnapshot=await confirmedRun(handle,'semantic_snapshot',{options:{mode:'content',budget:5000}});
+  const result=await openOnly(handle,'只开授权小窗');await verifyAutoAudit(handle,result.popupOpened);
+  const popupHandle={...handle,tabId:result.popupOpened.tabId,run:(action,params={},id)=>handle.run(action,{...params,tab_id:result.popupOpened.tabId},id)};
+  await confirmedRun(popupHandle,'ref_click',await freshRef(popupHandle,'完成本地授权'));
+  const response=await waitFor(()=>completionResponses.get(flow),10000,{label:'本地授权服务收到完成请求'});
+  // 中文注释：模拟异步授权服务器回调；浏览器页面执行 postMessage/close，测试不操作遮罩或强关标签。
+  response.writeHead(200,{'content-type':'text/plain'});response.end('authorized');completionResponses.delete(flow);
+  const current=await waitFor(async()=>{const state=await taskState(handle);return state.popupClosed?.returnedTo===handle.tabId?state:null;},15000,{label:'关闭事件自动回源'});
+  assert.ok(!current.tabIds.includes(result.popupOpened.tabId));
+  await waitFor(()=>handle.read('location.pathname==="/oauth-done"&&document.readyState==="complete"'),15000,{label:'来源新文档完成'});
+  const read=await confirmedRun(popupHandle,'semantic_snapshot',{options:{mode:'content',budget:5000}});
+  const request=diagnostics.lastRequest,requestIdHash=createHash('sha256').update(request.requestId).digest('hex');
+  diagnostics.returnRead=await oauthReturnReadDiagnostics({receipt:read,request,
+   readTask:()=>waitFor(async()=>{const task=await persistedTask(handle);return task?.currentOperation?.requestIdHash===requestIdHash?task:null;},1500,{label:'本次回源读取的实际执行标签落盘'}),
+   readTab:id=>session.ui.evaluate(`chrome.tabs.get(${id})`)});
+  assert.deepEqual(read.popupClosed,{returnedTo:handle.tabId});
+  assert.ok(JSON.stringify(read.items).includes(OAUTH_DONE_MARKER));assert.notEqual(read.binding.documentId,sourceSnapshot.binding.documentId);
+  return {popupClosed:read.popupClosed,newDocument:true};
+ }));
+ await check('E full 白名单：不自动接管，仍需要精确确认',()=>withOAuthTask('E-full',async handle=>{
+  const result=await openOnly(handle,'只开授权小窗'),current=await taskState(handle);assert.equal(current.activeMode,'full');
+  assert.ok(!current.adoptedPopupTabIds?.includes(result.popupOpened.tabId));
+  const catalog=verify(await handle.run('popup_catalog')),candidate=catalog.candidates.find(row=>row.candidateRef===result.popupOpened.candidateRef);assert.ok(candidate);
+  assert.equal((await handle.run('popup_adopt',{candidate_ref:candidate.candidateRef})).status,'approval_required');
+  await session.approvePanel('reject',loginOrigin);
+  assert.ok(!(await taskState(handle)).adoptedPopupTabIds?.includes(candidate.tabId));
+  const saved=await persistedTask(handle);assert.ok(!saved.requestHistory.some(row=>row.automatic===true));
+  return {mode:'full',automatic:false,confirmationRequired:true};
+ }));
 }finally{
+ for(const response of completionResponses.values())response.destroy();completionResponses.clear();
  await session?.close();await new Promise(resolve=>server.close(resolve));
- await writeFile(path.join(output,'results.json'),JSON.stringify({browser,origin,results},null,2));
+ await writeFile(path.join(output,'results.json'),JSON.stringify({browser,origin,oauthFixture:session?.oauthFixture,results},null,2));
 }
 for(const result of results)console.log(`${result.ok?'PASS':'FAIL'} ${result.name}${result.ok?'':': '+result.error}`);
 console.log(JSON.stringify({browser,passed:results.filter(result=>result.ok).length,total:results.length,output}));
-process.exitCode=results.every(result=>result.ok)?0:1;
+process.exitCode=results.length===(process.argv.includes('--popup-only')?3:19)&&results.every(result=>result.ok)?0:1;

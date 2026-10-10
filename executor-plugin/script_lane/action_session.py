@@ -117,6 +117,8 @@ class ActionSession:
         self._instance_id: str | None = None
         self._generation: int | None = None
         self.tab_id: int | None = None
+        self._popup_sources = {}
+        self._popup_closed = None
         self._tab_sessions = {}
         self._rpc_lock = threading.RLock()
         self._resume_summary = None
@@ -157,11 +159,25 @@ class ActionSession:
         if (type(tab_id) is not int or tab_id not in owned or tab_id not in task.get('tabIds', [])
                 or task.get('state') not in {'ready', 'running'} or task.get('generation') != self._generation):
             raise ActionRejected('foreign_tab')
+        self._popup_sources = dict(task.get('popupSources', {}))
         self.tab_id = tab_id
         return tab_id
 
     def current_tab(self):
+        if str(self.tab_id) in self._popup_sources and not self._unknown and self._pending is None:
+            self._refresh_popup_tab()
         return self.tab_id
+
+    def _refresh_popup_tab(self):
+        task = self._runtime.call('shared.get', {'owner': self._owner, 'taskId': self._task_id})
+        old = self.tab_id
+        source = task.get('popupReturns', {}).get(str(old))
+        if (old not in task.get('tabIds', []) and source == self._popup_sources.get(str(old))
+                and type(source) is int and source in task.get('tabIds', [])
+                and task.get('generation') == self._generation and task.get('state') in {'ready', 'running'}):
+            self.tab_id = source
+            self._popup_closed = {'returnedTo': source}
+        return self._popup_closed
 
     def for_tab(self, tab_id):
         # 中文注释：显式页参数不改变当前页，各页单独保存待确认及未知结果围栏。
@@ -169,6 +185,8 @@ class ActionSession:
             raise OutcomeUnknown('task operation outcome unknown')
         if type(tab_id) is not int:
             raise NoBoundTab('explicit work tab required')
+        if tab_id == self.tab_id and str(tab_id) in self._popup_sources:
+            return self
         if tab_id not in self._tab_sessions:
             child = ActionSession(self._runtime, owner=self._owner, task_id=self._task_id)
             child.install_scope(self._instance_id, self._generation)
@@ -230,6 +248,11 @@ class ActionSession:
             raise OutcomeUnknown('previous outcome unknown; reconcile before any further action')
         if self._pending is not None:
             raise PendingAction('resolve the existing request before another action')
+        popup_closed = self._popup_closed
+        if action in {'snapshot', 'semantic_snapshot', 'page.parse', 'page.observe', 'official.page_info', 'official.ready_state', 'screenshot'} and str(arguments.get('tabId')) in self._popup_sources:
+            popup_closed = self._refresh_popup_tab()
+            if popup_closed:
+                arguments['tabId'] = self.tab_id
         self._pending_popup_scope = None
         self._popup_waiting = False
         if action == 'popup_adopt':
@@ -245,7 +268,9 @@ class ActionSession:
         self._last_started = time.monotonic()
         self._pending = payload
         self._pending_kind = kind
-        return self.resume_pending()
+        result = self.resume_pending()
+        self._popup_closed = None
+        return {**result, 'popupClosed': popup_closed} if popup_closed and isinstance(result, dict) else result
 
     def operation_status(self, request_id: str | None = None) -> dict:
         """Read only the persisted receipt state of this task's prior request."""

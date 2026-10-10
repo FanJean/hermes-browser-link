@@ -105,6 +105,45 @@ class SingleToolAdapterTests(unittest.TestCase):
         clicked = json.loads(adapter.dispatch('browser_click', {'ref': '@e1'}, session_id='session-a', tool_call_id='complex-click'))
         self.assertIs(clicked['relocated'], True)
 
+    def test_official_click_exposes_popup_identity_without_extra_oauth_url_data(self):
+        runtime = FakeRuntime()
+        call = runtime.call
+        def with_popup(method, params):
+            if method == 'shared.run' and params['action'] == 'ref_click':
+                return {'clicked': True, 'kind': 'trusted-input', 'delivery': 'confirmed',
+                    'popupOpened': {'candidateRef': 'ref', 'origin': 'https://accounts.google.com',
+                                    'windowType': 'popup', 'tabId': 2, 'url': 'PRIVATE_CANARY', 'nonce': 'PRIVATE_CANARY'},
+                    'popupNextStep': '选择登录窗口重读'}
+            return call(method, params)
+        runtime.call = with_popup
+        adapter = SingleToolAdapter(runtime);adapter.bind('session-a', 'task-native')
+        adapter.dispatch('browser_snapshot', {}, session_id='session-a', tool_call_id='source-snapshot')
+        result = json.loads(adapter.dispatch('browser_click', {'ref': '@e1'}, session_id='session-a', tool_call_id='oauth-click'))
+        self.assertEqual(result['popupOpened']['tabId'], 2)
+        self.assertEqual(result['popupNextStep'], '选择登录窗口重读')
+        self.assertNotIn('PRIVATE_CANARY', json.dumps(result))
+
+    def test_adopted_login_tab_can_bind_and_closed_popup_reads_latest_source(self):
+        runtime = FakeRuntime()
+        runtime.task.update(tabIds=[12, 2], adoptedPopupTabIds=[2], popupSources={'2': 12})
+        adapter = SingleToolAdapter(runtime)
+        from single_tool_adapter.integration import HostBindingCoordinator, _NativeHostAdapter
+        coordinator = HostBindingCoordinator(_NativeHostAdapter(adapter))
+        coordinator.bind('session-a', owner='owner:session-a', task_id='task-native', tab_id=12)
+        coordinator.use_tab('session-a', owner='owner:session-a', tab_id=2)
+        first = json.loads(adapter.dispatch('browser_snapshot', {}, session_id='session-a', tool_call_id='login-read'))
+        self.assertTrue(first['success'])
+        runtime.task.update(tabIds=[12], adoptedPopupTabIds=[], popupReturns={'2': 12})
+        runtime.snapshot['binding']['documentId'] = 'new-source-document'
+        second = json.loads(adapter.dispatch('browser_snapshot', {}, session_id='session-a', tool_call_id='source-read'))
+        self.assertEqual(second['popupClosed'], {'returnedTo': 12})
+        self.assertTrue(second['success'])
+        reads = [p['tabId'] for method, p in runtime.calls if method == 'shared.run' and p['action'] == 'semantic_snapshot']
+        self.assertEqual(reads, [2, 12])
+        self.assertEqual(adapter._bindings['session-a'].semantic_binding['documentId'], 'new-source-document')
+        adapter.dispatch('browser_snapshot', {}, session_id='session-a', tool_call_id='next-source-read')
+        self.assertEqual([p['tabId'] for method, p in runtime.calls if method == 'shared.run' and p['action'] == 'semantic_snapshot'][-1], 12)
+
     def test_package_exports_adapter_and_host_registration_api(self):
         from single_tool_adapter import SingleToolAdapter as PublicAdapter
         from single_tool_adapter import register_official_overrides

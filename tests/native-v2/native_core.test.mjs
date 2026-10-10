@@ -74,6 +74,7 @@ function fixtureApi() {
   const api = {
     commands,
     tabs: {
+      query: async()=>[await api.tabs.get(7)],
       get: async id => ({ id, url: 'https://example.com/page', windowId: 7, groupId: -1 }),
       // 中文注释：受控写动作先激活任务标签，再进行高亮和派发。
       update: async id => ({id, active: true}),
@@ -172,7 +173,7 @@ test('shared native executor routes semantic snapshot and exact ref actions', as
   assert.equal(snapshot.items[0].ref, 'namespace:e1');
 
   const token = { ...snapshot.binding, snapshotId: snapshot.snapshotId, ref: snapshot.items[0].ref };
-  assert.deepEqual(await executeUserApproved(executor, api, { ...scope('ref_click'), binding: snapshot.binding, snapshotId: token.snapshotId, ref: token.ref }), { clicked: true, kind: 'trusted-input', delivery: 'confirmed', effect: 'observed', popupOwnership: 'uncertain' });
+  assert.deepEqual(await executeUserApproved(executor, api, { ...scope('ref_click'), binding: snapshot.binding, snapshotId: token.snapshotId, ref: token.ref }), { clicked: true, kind: 'trusted-input', delivery: 'confirmed', effect: 'observed' });
   assert.deepEqual(await executeUserApproved(executor, api, { ...scope('ref_fill'), binding: snapshot.binding, snapshotId: token.snapshotId, ref: token.ref, text: 'draft' }), { filled: true, kind: 'dom-synthetic' });
   assert.ok(api.commands.some(([method, params]) => method === 'Runtime.callFunctionOn' && params.arguments?.[0]?.value === 'semantic_snapshot'));
 });
@@ -194,7 +195,7 @@ test('a dispatched click that navigates off the approved site is reported, not d
   const get = api.tabs.get;
   api.tabs.get = async id => left ? { ...(await get(id)), url: 'https://elsewhere.test/' } : get(id);
   const result = await executeUserApproved(executor, api, { ...scope('ref_click'), binding: snapshot.binding, snapshotId: snapshot.snapshotId, ref: snapshot.items[0].ref });
-  assert.deepEqual(result, { clicked: true, kind: 'trusted-input', delivery: 'confirmed', effect: 'observed', popupOwnership: 'uncertain', documentChanged: true, outOfScope: true });
+  assert.deepEqual(result, { clicked: true, kind: 'trusted-input', delivery: 'confirmed', effect: 'observed', documentChanged: true, outOfScope: true });
 });
 
 test('shared native executor preserves V1 screenshot and accepts V1.1 bound interactions', async () => {
@@ -323,4 +324,49 @@ test('gateway close marks its debugger detach as expected until tab removal is o
  assert.equal(executor.closingTabs.has(7),false);
  assert.equal(executor.leases.has(7),false);
  assert.equal(events.at(-1).event,'closed');
+});
+
+
+// 中文注释：不模拟 DOM、焦点、网络或导航效果；只有 Chrome 新标签事件能证明本次点击生效。
+for(const action of ['click','ref_click','interaction.click'])for(const provider of [false,true])test(`${action} observes popup-only effect (${provider?'provider':'manual origin'}) without replay`,async()=>{
+ const {Executor}=await load(),api=fixtureApi(),tabs=new Map(),executor=new Executor(api);
+ await executor.approve(task());
+ const targetUrl=provider?'https://accounts.google.com/o/oauth2/auth?private=canary':'https://accounts.example.test/login?private=canary';
+ const get=api.tabs.get,send=api.debugger.sendCommand;
+ api.tabs.get=async id=>tabs.has(id)?{...tabs.get(id)}:get(id);
+ api.tabs.query=async()=>[await get(7),...tabs.values()];
+ api.windows={get:async id=>({id,type:id===8?'popup':'normal'})};
+ let dispatches=0;
+ api.debugger.sendCommand=async(target,method,params={})=>{
+  const op=params.arguments?.[0]?.value;
+  if(target.tabId===8&&method==='Page.getFrameTree')return {frameTree:{frame:{id:'popup-main',loaderId:'popup-loader',url:targetUrl}}};
+  if(method==='Runtime.callFunctionOn'&&params.functionDeclaration?.startsWith('function effectProbe')){
+   if(op==='read')return {result:{value:false}};
+   return {result:{value:true}};
+  }
+  const reply=await send(target,method,params);
+  if(target.tabId===7&&(action==='click'&&method==='Runtime.callFunctionOn'&&op==='click'||action!=='click'&&method==='Input.dispatchMouseEvent'&&params.type==='mouseReleased')){
+   dispatches++;
+   const tab={id:8,openerTabId:7,windowId:8,url:targetUrl};tabs.set(8,tab);await executor.tabCreated(tab);
+   if(action==='click')return {result:{value:{clicked:true,kind:'dom-synthetic'}}};
+  }
+  return reply;
+ };
+ let extra;
+ if(action==='click')extra={selector:'#login'};
+ if(action==='ref_click'){
+  const snapshot=await executor.execute(scope('semantic_snapshot'));
+  extra={binding:snapshot.binding,snapshotId:snapshot.snapshotId,ref:snapshot.items[0].ref};
+ }
+ if(action==='interaction.click'){
+  const capture=await executor.execute(scope('interaction.capture'));
+  const bound=await executor.execute({...scope('interaction.bounds'),screenshotId:capture.id,selector:'#button'});
+  extra={screenshotId:capture.id,point:bound.imageCenter,expectedRef:bound.ref};
+ }
+ const result=await executor.execute(confirmOnce(executor,{...scope(action),...extra}));
+ assert.equal(result.effect,'observed');assert.equal(result.popupOpened.tabId,8);
+ assert.equal(result.popupOpened.origin,new URL(targetUrl).origin);
+ assert.equal(dispatches,1);assert.equal(api.state.url,'https://example.com/page');
+ assert.ok(!JSON.stringify(result).includes('canary'));
+ assert.equal(executor.leases.get(8),provider?'task-v2':undefined);
 });

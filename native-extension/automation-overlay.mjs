@@ -1,6 +1,18 @@
 const states={waiting:'Hermes 正在工作',running:'Hermes 正在工作',pausing:'正在暂停…',paused:'已暂停 · 你可以操作页面',resuming:'正在恢复…',stopping:'正在停止…',stopped:'已停止',disconnected:'与扩展的连接已断开',unknown:'状态待核查'};
 const interactionLabels={click:'准备点击',input:'正在输入',select:'正在选择',drag:'正在拖动'};
-const stepLabels={tabs:'读取标签页',new_tab:'打开新标签页',navigate:'打开网页',snapshot:'解析页面元素','page.parse':'解析页面结构','page.observe':'读取页面结构',click:'点击页面',fill:'填写内容',press:'按键',screenshot:'截取页面',semantic_snapshot:'解析页面元素',frame_catalog:'读取页面结构',ref_click:'点击元素',ref_fill:'填写元素',ref_press:'按键',ref_set_checked:'设置选项',ref_select_option:'选择选项',scroll:'滚动页面',back:'返回上一页'};
+export const stepLabels=Object.freeze({
+ tabs:'读取标签页',new_tab:'打开新标签页',navigate:'打开网页',back:'返回上一页',
+ snapshot:'扫描页面',semantic_snapshot:'扫描页面','page.parse':'扫描页面','page.observe':'查看页面结构',frame_catalog:'查看页面框架',
+ click:'点击页面',ref_click:'点击页面',fill:'输入内容',ref_fill:'输入内容',press:'按下按键',ref_press:'按下按键',
+ ref_set_checked:'设置复选框',ref_select_option:'选择选项',scroll:'滑动页面',screenshot:'截取页面',
+ 'interaction.capture':'截取页面','interaction.bounds':'查看元素位置','interaction.click':'点击页面',
+ 'interaction.drag_coordinates':'拖动页面元素','interaction.drag_elements':'拖动页面元素',
+ 'official.ready_state':'检查页面是否就绪','official.goto_url':'打开网页','official.new_tab':'打开新标签页',
+ 'files.upload':'选择上传文件','js.evaluate':'执行页面操作','cdp.send':'执行浏览器操作','cdp.events':'查看浏览器事件','cdp.input':'操作页面',
+ 'network.inspect':'查看网络请求',api_request:'请求网站数据',images:'查看页面图片',console:'查看页面运行记录',dialog:'处理页面对话框',
+ popup_catalog:'查看弹出窗口',popup_adopt:'接管弹出窗口','gateway.authorize':'授权浏览器连接','vault.authorize':'授权敏感信息填写','vault.fill':'填写敏感信息',
+ use_tab:'切换标签页',
+});
 const rectOk=r=>r&&[r.x,r.y,r.width,r.height].every(Number.isFinite)&&r.x>=0&&r.y>=0&&r.width>0&&r.height>0&&r.width<=100000&&r.height<=100000;
 const highlightRectOk=r=>r&&[r.left,r.top,r.width,r.height].every(Number.isFinite)&&r.width>0&&r.height>0&&r.width<=100000&&r.height<=100000;
 
@@ -9,6 +21,8 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  const host=doc.createElement('div');host.dataset.hermesAutomationOverlay='';host.dataset.hermesOverlayTask=taskId;host.dataset.hermesOverlayGeneration=String(generation);host.setAttribute?.('aria-hidden','false');
  Object.assign(host.style,{position:'fixed',inset:'0',zIndex:'2147483647',pointerEvents:'auto',background:'transparent'});
  const shadow=host.attachShadow({mode:'closed'});
+ const setText=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
+ const setStyles=(node,values)=>{for(const [key,value] of Object.entries(values))if(node.style[key]!==value)node.style[key]=value;};
  // 中文注释：透明遮罩拦截用户点击；执行页面动作时短暂让出命中测试。
  const veil=doc.createElement('div');veil.dataset.role='veil';veil.setAttribute?.('aria-hidden','true');
  Object.assign(veil.style,{position:'fixed',inset:'0',background:'rgba(13,35,25,.10)',pointerEvents:'none'});
@@ -58,6 +72,23 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  const recent=doc.createElement('details');Object.assign(recent.style,{marginTop:'8px',fontSize:'11px'});
  const recentTitle=doc.createElement('summary');recentTitle.textContent='最近步骤';recent.append(recentTitle);
  const recentList=doc.createElement('ol');Object.assign(recentList.style,{paddingLeft:'18px',margin:'6px 0 0'});recent.append(recentList);bar.append(recent);
+ let recentRows=[],waitingTextTimer=null;
+ const waitingDetail='页面暂不可点击 · Ctrl+Alt+Shift+F12 接管';
+ const roleLabels={button:'按钮',textbox:'输入框',searchbox:'搜索框',link:'链接',checkbox:'复选框',combobox:'下拉框',listbox:'下拉框',option:'选项',tab:'标签',menuitem:'菜单项',menuitemcheckbox:'菜单复选框',menuitemradio:'菜单单选项',radio:'单选框',switch:'开关',slider:'滑块',spinbutton:'数字输入框',treeitem:'树形项目'};
+ function describeStep(row){
+  const action=row.action,label=Object.hasOwn(stepLabels,action)?stepLabels[action]:'处理页面';
+  const target=typeof row.target==='string'?row.target.slice(0,80):'',separator=target.indexOf(' · ');
+  const role=separator<0?'':target.slice(0,separator),rawName=separator<0?'':target.slice(separator+3).trim();
+  const sensitive=target==='敏感字段'||rawName==='敏感字段';
+  const name=rawName&&rawName!=='名称未提供'&&!sensitive?`「${rawName}」`:'';
+  const roleLabel=Object.hasOwn(roleLabels,role)?roleLabels[role]:'';
+  const object=name+(roleLabel||'元素');
+  if(['fill','ref_fill','vault.fill'].includes(action))return sensitive||action==='vault.fill'?'填写敏感信息':`在${name||roleLabel||'输入框'}输入内容`;
+  if(['click','ref_click','interaction.click'].includes(action))return separator>=0?`点击${object}`:label;
+  if(action==='ref_set_checked')return `设置${name+(roleLabel||'复选框')}`;
+  if(action==='ref_select_option')return ['combobox','listbox'].includes(role)?`在${name}${roleLabel}选择选项`:name?`选择${name}`:label;
+  return label;
+ }
  host.tabIndex=-1;
  let removed=false,busy=false,hideDepth=0,hiddenHosts=null,activeHighlightToken=null,inputWindowTimer=null,inputWindowOpen=false,currentState='waiting',cursorTimer=null,dragTimer=null,cursorOperationToken=null,dragAtEnd=false,dragEndPoint=null,commandTimer=null,commandAbort=null,lastCommand=null;
  let cursorPoint={x:24,y:24};
@@ -101,9 +132,9 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  // 中文注释：元素反馈与扫描分别清理，旧元素淡出不能销毁下个读取使用的动画。
  function clearParsedElements(){
   clearTimeout(parsingTimer);clearTimeout(parsingFadeTimer);parsingTimer=parsingFadeTimer=null;
-  parsingElements.style.display='none';parsingElements.style.opacity='0';parsingElements.replaceChildren();
+  setStyles(parsingElements,{display:'none',opacity:'0'});if(parsingElements.children.length)parsingElements.replaceChildren();
  }
- function pauseParsingScan(){parsingScan.style.opacity='0';parsingBeam.style.animationPlayState='paused';}
+ function pauseParsingScan(){setStyles(parsingScan,{opacity:'0'});setStyles(parsingBeam,{animationPlayState:'paused'});}
  function clearParsing(){
   clearTimeout(parsingStartTimer);parsingStartTimer=null;parsingStep=null;
   pauseParsingScan();clearParsedElements();
@@ -145,7 +176,7 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  const cursorVisible=()=>!removed&&['waiting','running','pausing','resuming'].includes(currentState)&&doc.visibilityState!=='hidden';
  function cancelCursorMotion(){
   clearTimeout(cursorTimer);clearTimeout(dragTimer);cursorTimer=null;dragTimer=null;cursorOperationToken=null;dragAtEnd=false;
-  cursorHint.style.display='none';ripple.style.display='none';
+  setStyles(cursorHint,{display:'none'});setStyles(ripple,{display:'none'});
  }
  function moveCursor(point){
   const view=doc.defaultView;
@@ -154,7 +185,7 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
   cursorHint.style.transform=`translate(${cursorPoint.x+14}px,${cursorPoint.y+12}px)`;
  }
  function syncCursor(){
-  cursor.style.display=cursorVisible()?'block':'none';
+  setStyles(cursor,{display:cursorVisible()?'block':'none'});
   if(!cursorVisible())cancelCursorMotion();
  }
  function resizeCursor(){moveCursor(cursorPoint);syncCursor();}
@@ -265,7 +296,7 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
  function remove(){
   if(removed)return;
   if(activeHighlightToken)interactionSurface.clear({taskId,generation,...(documentId===null?{}:{documentId}),operationToken:activeHighlightToken});
-  removed=true;clearParsing();cancelCursorMotion();cursor.style.display='none';clearTimeout(commandTimer);commandTimer=null;commandAbort?.abort();commandAbort=null;observer?.disconnect();doc.defaultView?.removeEventListener?.('pageshow',recover);doc.defaultView?.removeEventListener?.('blur',checkFrameFocus,true);doc.removeEventListener?.('focusin',checkFrameFocus,true);doc.removeEventListener?.('visibilitychange',syncCursor);doc.defaultView?.removeEventListener?.('resize',resizeCursor);hiddenHosts=null;hideDepth=0;clearTimeout(inputWindowTimer);inputWindowTimer=null;host.remove();
+  removed=true;clearTimeout(waitingTextTimer);waitingTextTimer=null;clearParsing();cancelCursorMotion();cursor.style.display='none';clearTimeout(commandTimer);commandTimer=null;commandAbort?.abort();commandAbort=null;observer?.disconnect();doc.defaultView?.removeEventListener?.('pageshow',recover);doc.defaultView?.removeEventListener?.('blur',checkFrameFocus,true);doc.removeEventListener?.('focusin',checkFrameFocus,true);doc.removeEventListener?.('visibilitychange',syncCursor);doc.defaultView?.removeEventListener?.('resize',resizeCursor);hiddenHosts=null;hideDepth=0;clearTimeout(inputWindowTimer);inputWindowTimer=null;host.remove();
   for(const type of keyEvents)doc.defaultView?.removeEventListener?.(type,blockKeys,true);
  }
  // 中文注释：清理事件只能本地卸载浮层；即使网页主动触发，也不能授予任务权限或伪造暂停。
@@ -298,21 +329,34 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
     content_shield_unavailable:'页面内容保护状态无法确认，请检查扩展连接和设置',
     content_shield_unsupported:'此操作不支持当前内容保护模式',
     origin_denied:'目标网站不在任务授权范围',permission_denied:'浏览器权限不足',instance_unavailable:'浏览器已断开'};
-   recentList.replaceChildren(...steps.slice(-5).map(row=>{
-    const item=doc.createElement('li');const state=typeof row.result==='string'?row.result:'';
+   const available=[...recentRows];
+   const next=steps.slice(-5).map(row=>{
+    const state=typeof row.result==='string'?row.result:'';
     // 中文注释：结果未知仍显示未知；原因独立展示，任意页面异常文字不作为错误码输出。
     const reason=state==='unknown'||state==='failed'?row.errorCode:state;
     const code=typeof reason==='string'&&/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(reason)?reason:'';
     const failed=state!=='succeeded'&&state!=='pending';
-    item.textContent=`${String(row.time||'').slice(11,19)} ${String(row.action||'').slice(0,40)} · ${String(row.target||'').slice(0,80)} · ${Number(row.durationMs)||0}ms · ${state==='succeeded'?'成功':state==='pending'?'等待确认':state==='unknown'?'结果不确定':'失败'}`;
+    const time=new Date(row.time),localTime=Number.isFinite(time.getTime())?[time.getHours(),time.getMinutes(),time.getSeconds()].map(value=>String(value).padStart(2,'0')).join(':'):'';
+    const duration=Number(row.durationMs);
+    let text=`${describeStep(row)} · ${state==='succeeded'?'成功':state==='pending'?'等待确认':state==='unknown'?'结果不确定':'失败'}`;
     if(failed){
-     item.style.color='#ffaaa2';
      const readChanged=code==='content_shield_changed'&&['snapshot','semantic_snapshot','page.parse','page.observe','official.ready_state','frame_catalog'].includes(row.action);
      const explanation=readChanged?'读取期间页面或保护状态发生变化，本次未返回内容，请重新读取':Object.hasOwn(explanations,code)?explanations[code]:'请核对页面状态，不要重复提交';
-     item.textContent+=`${code?` [${code}]`:''}（${explanation}）`;
+     text+=`（${explanation}）`;
     }
-    return item;
-   }));
+    if(localTime)text+=` · ${localTime}`;
+    if(Number.isFinite(duration)&&duration>1000)text+=` · 用时 ${(duration/1000).toFixed(1)} 秒`;
+    const title=failed?code:'',key=JSON.stringify([text,title]);
+    const index=available.findIndex(entry=>entry.key===key);
+    if(index>=0)return available.splice(index,1)[0];
+    const item=doc.createElement('li');item.textContent=text;item.title=title;
+    if(failed)item.style.color='#ffaaa2';
+    return {key,item};
+   });
+   // 中文注释：滚动的五步窗口复用未变化行；相同回执不触碰列表，保留展开状态和节点。
+   for(const {item} of available)item.remove();
+   next.forEach(({item},index)=>{if(recentList.children[index]!==item)recentList.insertBefore(item,recentList.children[index]||null);});
+   recentRows=next;
   },
   update({state,step='',targetRect,holdMs,scrollDirection}={}){
    if(removed)return;
@@ -320,32 +364,38 @@ export function createAutomationOverlay({document:doc=globalThis.document,taskId
    clearTimeout(inputWindowTimer);inputWindowTimer=null;currentState=state;
    syncParsing(state,step);
    const recovery=state==='disconnected'||state==='unknown';
-   release.style.display=retry.style.display=recovery?'inline-block':'none';retry.disabled=!lastCommand;
-   stop.style.display=recovery?'none':'inline-block';
-   label.textContent=state==='pausing'?'等待当前步骤结束…':states[state]||states.unknown;
-   detail.textContent=recovery?'放开页面仅恢复本地输入，不代表任务已暂停；请核查任务状态':state==='paused'?'页面操作权已交给你':state==='running'&&step?`当前步骤：${stepLabels[step]||'处理页面'} · Ctrl+Alt+Shift+F12 接管`:state==='unknown'?'请核查 Hermes 中的任务状态':
-    '页面暂不可点击 · Ctrl+Alt+Shift+F12 接管';
+   for(const node of [release,retry])setStyles(node,{display:recovery?'inline-block':'none'});
+   if(retry.disabled!==!lastCommand)retry.disabled=!lastCommand;
+   setStyles(stop,{display:recovery?'none':'inline-block'});
+   setText(label,state==='pausing'?'等待当前步骤结束…':states[state]||states.unknown);
+   // 中文注释：只延迟等待文案；权限状态、派发窗口与接管提示仍即时更新。轮询不延长等待期限。
+   if(state==='waiting'&&detail.textContent.startsWith('当前步骤：')){
+    if(waitingTextTimer===null)waitingTextTimer=setTimeout(()=>{waitingTextTimer=null;if(!removed&&currentState==='waiting')setText(detail,waitingDetail);},400);
+   }else{
+    clearTimeout(waitingTextTimer);waitingTextTimer=null;
+    setText(detail,recovery?'放开页面仅恢复本地输入，不代表任务已暂停；请核查任务状态':state==='paused'?'页面操作权已交给你':state==='running'&&step?`当前步骤：${Object.hasOwn(stepLabels,step)?stepLabels[step]:'处理页面'} · Ctrl+Alt+Shift+F12 接管`:waitingDetail);
+   }
    // 中文注释：遮罩一直拦截用户点击和键盘，直到用户点“接管页面”；普通模式只在页面动作派发时放行，
    // 原始 CDP 只在输入派发的短窗口内放行，窗口到期由页面内计时器自行恢复拦截。
    const dispatching=['click','fill','press','ref_click','ref_fill','ref_press','ref_set_checked','ref_select_option','interaction.click','interaction.drag_coordinates','interaction.drag_elements','scroll'];
    const scriptInput=state==='running'&&step==='cdp.input';
    // 中文注释：派发瞬间状态栏及按钮也临时放行，否则位于栏下的页面目标被判为遮挡，指针点击也会落在栏上。
    const passThrough=state==='running'&&dispatching.includes(step)||scriptInput;
-   inputWindowOpen=passThrough;host.style.pointerEvents=state==='paused'||passThrough?'none':'auto';
+   inputWindowOpen=passThrough;setStyles(host,{pointerEvents:state==='paused'||passThrough?'none':'auto'});
    if(passThrough){
     const windowMs=Number.isInteger(holdMs)&&holdMs>0?Math.min(holdMs,10000):scriptInput?600:5000;
     inputWindowTimer=setTimeout(()=>{inputWindowTimer=null;overlay.reblock();},windowMs);
    }
-   for(const node of [bar,...controls])node.style.pointerEvents=passThrough?'none':'auto';
+   for(const node of [bar,...controls])setStyles(node,{pointerEvents:passThrough?'none':'auto'});
    if(!passThrough&&state!=='paused')checkFrameFocus();
-   veil.style.display=state==='paused'?'none':'block';border.style.display=state==='paused'?'none':'block';
-   takeover.style.display=state==='paused'||recovery?'none':'inline-block';resume.style.display=state==='paused'?'inline-block':'none';
-   if(rectOk(targetRect)){Object.assign(target.style,{display:'block',left:`${targetRect.x}px`,top:`${targetRect.y}px`,width:`${targetRect.width}px`,height:`${targetRect.height}px`});}
-   else target.style.display='none';
+   for(const node of [veil,border])setStyles(node,{display:state==='paused'?'none':'block'});
+   setStyles(takeover,{display:state==='paused'||recovery?'none':'inline-block'});setStyles(resume,{display:state==='paused'?'inline-block':'none'});
+   if(rectOk(targetRect)){setStyles(target,{display:'block',left:`${targetRect.x}px`,top:`${targetRect.y}px`,width:`${targetRect.width}px`,height:`${targetRect.height}px`});}
+   else setStyles(target,{display:'none'});
    syncCursor();
    if(cursorVisible()&&state==='running'&&step==='scroll'){
-    cursorHint.textContent=scrollDirection==='up'?'↑ 向上滚动':'↓ 向下滚动';cursorHint.style.display='block';
-   }else if(!activeHighlightToken)cursorHint.style.display='none';
+    setText(cursorHint,scrollDirection==='up'?'↑ 向上滚动':'↓ 向下滚动');setStyles(cursorHint,{display:'block'});
+   }else if(!activeHighlightToken)setStyles(cursorHint,{display:'none'});
   },
   async withHidden(fn){
    if(typeof fn!=='function')throw Error('screenshot callback required');

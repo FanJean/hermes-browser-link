@@ -80,7 +80,7 @@ function createFixture({pauseHighlight=false,captureError=false,overlayEvents=tr
  let shouldCaptureError=captureError;
  const api={
   // 中文注释：写动作先激活租用的工作页，再进入高亮准备和复核。
-  tabs:{get:async id=>({id,url:origin+'/',windowId:5,groupId:2,status:'complete'}),update:async()=>({active:true})},
+  tabs:{query:async()=>[await api.tabs.get(7)],get:async id=>({id,url:origin+'/',windowId:5,groupId:2,status:'complete'}),update:async()=>({active:true})},
   debugger:{
    ...(overlayEvents?{onEvent:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)}}:{}),
    onDetach:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)},
@@ -149,6 +149,25 @@ async function authorizeFull(executor){
  executor.setMode({...task,activeMode:'full',modeGeneration:2});
 }
 async function snapshotFor(executor){return executor.execute(request('semantic_snapshot'));}
+test('隔离世界注入复用中文映射，相同步骤和状态回执不产生状态栏 DOM 变更',async()=>{
+ const f=createFixture();await authorizeFull(f.executor);
+ try{
+  await snapshotFor(f.executor);
+  const injected=f.window.__hermesAutomationOverlay.overlay;
+  const bar=injected.host.shadowRoot.querySelector('[data-role="status"]'),list=bar.querySelector('ol'),detail=bar.children[2];
+  const entry=f.executor.tasks.get(task.id).overlays.get(7);
+  const steps=[{action:'page.parse',result:'succeeded'},{action:'official.ready_state',result:'pending'},{action:'vault.fill',target:'敏感字段',result:'succeeded'}];
+  assert.equal(await f.executor.overlayCall(7,entry,'log',{steps}),true);
+  assert.deepEqual([...list.children].map(node=>node.textContent),['扫描页面 · 成功','检查页面是否就绪 · 等待确认','填写敏感信息 · 成功']);
+  injected.update({state:'running',step:'click'});const first=detail.textContent;
+  injected.update({state:'waiting'});assert.equal(detail.textContent,first);assert.equal(injected.host.style.pointerEvents,'auto');
+  injected.update({state:'running',step:'vault.fill'});assert.match(detail.textContent,/当前步骤：填写敏感信息/);
+  const nodes=[...list.children],mutations=[],observer=new f.window.MutationObserver(records=>mutations.push(...records));observer.observe(bar,{subtree:true,childList:true,attributes:true,characterData:true});
+  injected.update({state:'running',step:'vault.fill'});
+  await f.executor.overlayCall(7,entry,'log',{steps:structuredClone(steps)});
+  assert.deepEqual([...list.children],nodes);assert.deepEqual([...mutations,...observer.takeRecords()],[]);observer.disconnect();
+ }finally{f.dom.window.close();}
+});
 // 中文注释：生产执行器与 Bridge 使用真实引用和节点范围，验证重放只交付原结果，不再次写入字段。
 test('目标级保护贯穿引用、输入和结果回放，伪造范围不能扩大权限',async()=>{
  const f=createFixture();f.executor.onContentShield=async()=>({enabled:true,rules:{}});await authorizeFull(f.executor);
